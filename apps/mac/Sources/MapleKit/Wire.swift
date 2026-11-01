@@ -1002,6 +1002,86 @@ public enum Wire {
         public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
+    public enum PushPlatform: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// Apple Push Notification service (iPhone, iPad).
+        case apns
+        /// Firebase Cloud Messaging (Android).
+        case fcm
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [PushPlatform] = [.apns, .fcm]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "apns": self = .apns
+            case "fcm": self = .fcm
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .apns: "apns"
+            case .fcm: "fcm"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: PushPlatform, b: PushPlatform) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
+    public enum PushEnvironment: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// A development build (APNs' sandbox).
+        case sandbox
+        /// An App Store or TestFlight build.
+        case production
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [PushEnvironment] = [.sandbox, .production]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "sandbox": self = .sandbox
+            case "production": self = .production
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .sandbox: "sandbox"
+            case .production: "production"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: PushEnvironment, b: PushEnvironment) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
     public enum HandReason: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Review rounds ran out.
         case reviewLoop
@@ -3882,6 +3962,24 @@ public enum Wire {
         }
     }
 
+    /// One of your phones registered for push notifications. Its token is never sent back.
+    public struct PushDevice: Codable, Hashable, Sendable {
+        /// Stands for the token (a hash of it): send it to push.unregister to remove a device you aren't holding.
+        public var id: String
+        public var platform: PushPlatform
+        public var environment: PushEnvironment
+        public var createdAt: UInt64
+        public var lastSeen: UInt64
+
+        public init(id: String, platform: PushPlatform, environment: PushEnvironment, createdAt: UInt64, lastSeen: UInt64) {
+            self.id = id
+            self.platform = platform
+            self.environment = environment
+            self.createdAt = createdAt
+            self.lastSeen = lastSeen
+        }
+    }
+
     /// Someone's quiet hours: a weekly schedule when nothing notifies them, on any of their devices.
     public struct QuietHours: Codable, Hashable, Sendable {
         /// An IANA time zone, like America/Toronto.
@@ -5469,6 +5567,30 @@ public enum Wire {
         }
     }
 
+    /// Register this phone's push token. Works while the factory's push relay is off, so phones are ready when an admin turns it on. At most 10 per person. Answered with `push.devices`, or an `error`.
+    public struct ClientMessagePushRegister: Codable, Hashable, Sendable {
+        public var platform: PushPlatform
+        public var token: String
+        public var environment: PushEnvironment
+
+        public init(platform: PushPlatform, token: String, environment: PushEnvironment) {
+            self.platform = platform
+            self.token = token
+            self.environment = environment
+        }
+    }
+
+    /// Remove one of your push devices, by its token or its id. Answered with `push.devices`.
+    public struct ClientMessagePushUnregister: Codable, Hashable, Sendable {
+        public var token: String?
+        public var id: String?
+
+        public init(token: String? = nil, id: String? = nil) {
+            self.token = token
+            self.id = id
+        }
+    }
+
     /// Follow a goal (it's in your sidebar) or stop following it.
     public struct ClientMessageGoalFollow: Codable, Hashable, Sendable {
         public var id: String
@@ -6184,6 +6306,9 @@ public enum Wire {
         case repoSetupStart(ClientMessageRepoSetupStart)
         case repoSetupCancel(ClientMessageRepoSetupCancel)
         case quietHoursSet(ClientMessageQuietHoursSet)
+        case pushRegister(ClientMessagePushRegister)
+        case pushUnregister(ClientMessagePushUnregister)
+        case pushDevices
         case goalFollow(ClientMessageGoalFollow)
         case goalArchive(ClientMessageGoalArchive)
         case machineSettings(ClientMessageMachineSettings)
@@ -6268,6 +6393,9 @@ public enum Wire {
             case "repo.setup.start": self = .repoSetupStart(try ClientMessageRepoSetupStart(from: decoder))
             case "repo.setup.cancel": self = .repoSetupCancel(try ClientMessageRepoSetupCancel(from: decoder))
             case "quietHours.set": self = .quietHoursSet(try ClientMessageQuietHoursSet(from: decoder))
+            case "push.register": self = .pushRegister(try ClientMessagePushRegister(from: decoder))
+            case "push.unregister": self = .pushUnregister(try ClientMessagePushUnregister(from: decoder))
+            case "push.devices": self = .pushDevices
             case "goal.follow": self = .goalFollow(try ClientMessageGoalFollow(from: decoder))
             case "goal.archive": self = .goalArchive(try ClientMessageGoalArchive(from: decoder))
             case "machine.settings": self = .machineSettings(try ClientMessageMachineSettings(from: decoder))
@@ -6392,6 +6520,14 @@ public enum Wire {
             case .quietHoursSet(let body):
                 try c.encode("quietHours.set", forKey: .type)
                 try body.encode(to: encoder)
+            case .pushRegister(let body):
+                try c.encode("push.register", forKey: .type)
+                try body.encode(to: encoder)
+            case .pushUnregister(let body):
+                try c.encode("push.unregister", forKey: .type)
+                try body.encode(to: encoder)
+            case .pushDevices:
+                try c.encode("push.devices", forKey: .type)
             case .goalFollow(let body):
                 try c.encode("goal.follow", forKey: .type)
                 try body.encode(to: encoder)
@@ -6833,6 +6969,20 @@ public enum Wire {
         }
     }
 
+    /// Your push devices, to your apps only.
+    public struct ServerToClientPushDevices: Codable, Hashable, Sendable {
+        public var devices: [PushDevice]
+
+        public init(devices: [PushDevice] = []) {
+            self.devices = devices
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            devices = try c.decodeIfPresent([PushDevice].self, forKey: .devices) ?? []
+        }
+    }
+
     /// Your quiet hours changed, to your apps only.
     public struct ServerToClientQuietHoursUpdated: Codable, Hashable, Sendable {
         /// None: cleared.
@@ -7088,6 +7238,7 @@ public enum Wire {
         case scoutUpdated(ServerToClientScoutUpdated)
         case repoSetupUpdated(ServerToClientRepoSetupUpdated)
         case followsUpdated(ServerToClientFollowsUpdated)
+        case pushDevices(ServerToClientPushDevices)
         case quietHoursUpdated(ServerToClientQuietHoursUpdated)
         case presence(ServerToClientPresence)
         case policyUpdated(ServerToClientPolicyUpdated)
@@ -7129,6 +7280,7 @@ public enum Wire {
             case "scout.updated": self = .scoutUpdated(try ServerToClientScoutUpdated(from: decoder))
             case "repo.setup.updated": self = .repoSetupUpdated(try ServerToClientRepoSetupUpdated(from: decoder))
             case "follows.updated": self = .followsUpdated(try ServerToClientFollowsUpdated(from: decoder))
+            case "push.devices": self = .pushDevices(try ServerToClientPushDevices(from: decoder))
             case "quietHours.updated": self = .quietHoursUpdated(try ServerToClientQuietHoursUpdated(from: decoder))
             case "presence": self = .presence(try ServerToClientPresence(from: decoder))
             case "policy.updated": self = .policyUpdated(try ServerToClientPolicyUpdated(from: decoder))
@@ -7198,6 +7350,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .followsUpdated(let body):
                 try c.encode("follows.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .pushDevices(let body):
+                try c.encode("push.devices", forKey: .type)
                 try body.encode(to: encoder)
             case .quietHoursUpdated(let body):
                 try c.encode("quietHours.updated", forKey: .type)

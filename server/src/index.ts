@@ -8,6 +8,7 @@ import { authenticateRunner, createEnrollment, enroll, MACHINE_ID, machineRow, r
 import { remove as removeIcon, serve as serveIcon, upload as uploadIcon } from "./icon.ts";
 import { remove as removeName, set as setName } from "./name.ts";
 import { get as getErrorReports, set as setErrorReports } from "./error-reports.ts";
+import { get as getPush, set as setPush } from "./push.ts";
 import { installScript } from "./install.ts";
 import { home, taskLink } from "./page.ts";
 import { githubWebhook, jiraWebhook, linearWebhook } from "./trackers.ts";
@@ -157,6 +158,13 @@ export default Sentry.withSentry((env: Env) => sentryOptions(env), {
     // Whether the factory sends error reports (src/error-reports.ts).
     if (path === "/api/error-reports" && request.method === "GET") return getErrorReports(env, sentry.projects.server.dsn);
     if (path === "/api/error-reports" && request.method === "PUT") return setErrorReports(request, env, me, sentry.projects.server.dsn);
+
+    // Mobile notifications through the maplefactory.dev push relay (src/push.ts).
+    if (path === "/api/push") {
+      const devices = async () => ((await (await orgHub(env).fetch("https://org/push-devices")).json()) as { devices: number }).devices;
+      if (request.method === "GET") return getPush(env, await devices());
+      if (request.method === "PUT") return setPush(request, env, me, devices, async () => { await orgHub(env).fetch("https://org/push-changed", { method: "POST" }); });
+    }
 
     const intake = await intakeApi(request, env, path, me);
     if (intake) return intake;

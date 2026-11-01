@@ -412,6 +412,32 @@ enum class FindingStatus(val raw: String) {
     object Serializer : WireEnumSerializer<FindingStatus>("FindingStatus", entries, { it.raw }, Unknown)
 }
 
+@Serializable(with = PushPlatform.Serializer::class)
+enum class PushPlatform(val raw: String) {
+    /** Apple Push Notification service (iPhone, iPad). */
+    Apns("apns"),
+    /** Firebase Cloud Messaging (Android). */
+    Fcm("fcm"),
+    /** A value this build doesn't know yet; newer servers may send them. */
+    Unknown("unknown"),
+    ;
+
+    object Serializer : WireEnumSerializer<PushPlatform>("PushPlatform", entries, { it.raw }, Unknown)
+}
+
+@Serializable(with = PushEnvironment.Serializer::class)
+enum class PushEnvironment(val raw: String) {
+    /** A development build (APNs' sandbox). */
+    Sandbox("sandbox"),
+    /** An App Store or TestFlight build. */
+    Production("production"),
+    /** A value this build doesn't know yet; newer servers may send them. */
+    Unknown("unknown"),
+    ;
+
+    object Serializer : WireEnumSerializer<PushEnvironment>("PushEnvironment", entries, { it.raw }, Unknown)
+}
+
 @Serializable(with = HandReason.Serializer::class)
 enum class HandReason(val raw: String) {
     /** Review rounds ran out. */
@@ -1769,6 +1795,17 @@ data class QuietWindow(
     val end: Int,
 )
 
+/** One of your phones registered for push notifications. Its token is never sent back. */
+@Serializable
+data class PushDevice(
+    /** Stands for the token (a hash of it): send it to push.unregister to remove a device you aren't holding. */
+    val id: String,
+    val platform: PushPlatform,
+    val environment: PushEnvironment,
+    val createdAt: Long,
+    val lastSeen: Long,
+)
+
 /** Someone's quiet hours: a weekly schedule when nothing notifies them, on any of their devices. */
 @Serializable
 data class QuietHours(
@@ -2566,6 +2603,21 @@ sealed class ClientMessage {
         /** None: no quiet hours. */
         val quietHours: dev.maplefactory.wire.QuietHours? = null,
     ) : ClientMessage()
+    /** Register this phone's push token. Works while the factory's push relay is off, so phones are ready when an admin turns it on. At most 10 per person. Answered with `push.devices`, or an `error`. */
+    @Serializable
+    data class PushRegister(
+        val platform: dev.maplefactory.wire.PushPlatform,
+        val token: String,
+        val environment: dev.maplefactory.wire.PushEnvironment,
+    ) : ClientMessage()
+    /** Remove one of your push devices, by its token or its id. Answered with `push.devices`. */
+    @Serializable
+    data class PushUnregister(
+        val token: String? = null,
+        val id: String? = null,
+    ) : ClientMessage()
+    /** List your push devices. Answered with `push.devices`. */
+    data object PushDevices : ClientMessage()
     /** Follow a goal (it's in your sidebar) or stop following it. */
     @Serializable
     data class GoalFollow(
@@ -2953,6 +3005,9 @@ sealed class ClientMessage {
             "repo.setup.start" -> json.decodeFromJsonElement(RepoSetupStart.serializer(), body)
             "repo.setup.cancel" -> json.decodeFromJsonElement(RepoSetupCancel.serializer(), body)
             "quietHours.set" -> json.decodeFromJsonElement(QuietHoursSet.serializer(), body)
+            "push.register" -> json.decodeFromJsonElement(PushRegister.serializer(), body)
+            "push.unregister" -> json.decodeFromJsonElement(PushUnregister.serializer(), body)
+            "push.devices" -> PushDevices
             "goal.follow" -> json.decodeFromJsonElement(GoalFollow.serializer(), body)
             "goal.archive" -> json.decodeFromJsonElement(GoalArchive.serializer(), body)
             "machine.settings" -> json.decodeFromJsonElement(MachineSettings.serializer(), body)
@@ -3033,6 +3088,9 @@ sealed class ClientMessage {
             is RepoSetupStart -> "repo.setup.start" to json.encodeToJsonElement(RepoSetupStart.serializer(), value)
             is RepoSetupCancel -> "repo.setup.cancel" to json.encodeToJsonElement(RepoSetupCancel.serializer(), value)
             is QuietHoursSet -> "quietHours.set" to json.encodeToJsonElement(QuietHoursSet.serializer(), value)
+            is PushRegister -> "push.register" to json.encodeToJsonElement(PushRegister.serializer(), value)
+            is PushUnregister -> "push.unregister" to json.encodeToJsonElement(PushUnregister.serializer(), value)
+            is PushDevices -> "push.devices" to null
             is GoalFollow -> "goal.follow" to json.encodeToJsonElement(GoalFollow.serializer(), value)
             is GoalArchive -> "goal.archive" to json.encodeToJsonElement(GoalArchive.serializer(), value)
             is MachineSettings -> "machine.settings" to json.encodeToJsonElement(MachineSettings.serializer(), value)
@@ -3221,6 +3279,11 @@ sealed class ServerToClient {
     data class FollowsUpdated(
         val follows: List<dev.maplefactory.wire.GoalFollow> = emptyList(),
     ) : ServerToClient()
+    /** Your push devices, to your apps only. */
+    @Serializable
+    data class PushDevices(
+        val devices: List<dev.maplefactory.wire.PushDevice> = emptyList(),
+    ) : ServerToClient()
     /** Your quiet hours changed, to your apps only. */
     @Serializable
     data class QuietHoursUpdated(
@@ -3351,6 +3414,7 @@ sealed class ServerToClient {
             "scout.updated" -> json.decodeFromJsonElement(ScoutUpdated.serializer(), body)
             "repo.setup.updated" -> json.decodeFromJsonElement(RepoSetupUpdated.serializer(), body)
             "follows.updated" -> json.decodeFromJsonElement(FollowsUpdated.serializer(), body)
+            "push.devices" -> json.decodeFromJsonElement(PushDevices.serializer(), body)
             "quietHours.updated" -> json.decodeFromJsonElement(QuietHoursUpdated.serializer(), body)
             "presence" -> json.decodeFromJsonElement(Presence.serializer(), body)
             "policy.updated" -> json.decodeFromJsonElement(PolicyUpdated.serializer(), body)
@@ -3388,6 +3452,7 @@ sealed class ServerToClient {
             is ScoutUpdated -> "scout.updated" to json.encodeToJsonElement(ScoutUpdated.serializer(), value)
             is RepoSetupUpdated -> "repo.setup.updated" to json.encodeToJsonElement(RepoSetupUpdated.serializer(), value)
             is FollowsUpdated -> "follows.updated" to json.encodeToJsonElement(FollowsUpdated.serializer(), value)
+            is PushDevices -> "push.devices" to json.encodeToJsonElement(PushDevices.serializer(), value)
             is QuietHoursUpdated -> "quietHours.updated" to json.encodeToJsonElement(QuietHoursUpdated.serializer(), value)
             is Presence -> "presence" to json.encodeToJsonElement(Presence.serializer(), value)
             is PolicyUpdated -> "policy.updated" to json.encodeToJsonElement(PolicyUpdated.serializer(), value)

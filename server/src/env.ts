@@ -63,4 +63,8 @@ export interface Env {
   MERGE_GRACE_MS?: string;
   /** Where error reports go: unset for Maple Factory's own Sentry project (web/sentry.json), "off", or a DSN. */
   SENTRY_DSN?: string;
+  /** "off" locks Settings › General's mobile notifications off (push.ts). */
+  PUSH_RELAY?: string;
+  /** The push relay (default https://maplefactory.dev); tests point it at a fake one. */
+  PUSH_RELAY_URL?: string;
 }

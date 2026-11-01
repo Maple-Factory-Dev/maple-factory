@@ -339,6 +339,30 @@ pub enum FindingStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub enum PushPlatform {
+    /// Apple Push Notification service (iPhone, iPad).
+    Apns,
+    /// Firebase Cloud Messaging (Android).
+    Fcm,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PushEnvironment {
+    /// A development build (APNs' sandbox).
+    Sandbox,
+    /// An App Store or TestFlight build.
+    Production,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum HandReason {
     /// Review rounds ran out.
     ReviewLoop,
@@ -2007,6 +2031,18 @@ pub struct QuietWindow {
     pub end: u16,
 }
 
+/// One of your phones registered for push notifications. Its token is never sent back.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushDevice {
+    /// Stands for the token (a hash of it): send it to push.unregister to remove a device you aren't holding.
+    pub id: String,
+    pub platform: PushPlatform,
+    pub environment: PushEnvironment,
+    pub created_at: u64,
+    pub last_seen: u64,
+}
+
 /// Someone's quiet hours: a weekly schedule when nothing notifies them, on any of their devices.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2826,6 +2862,24 @@ pub enum ClientMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         quiet_hours: Option<QuietHours>,
     },
+    /// Register this phone's push token. Works while the factory's push relay is off, so phones are ready when an admin turns it on. At most 10 per person. Answered with `push.devices`, or an `error`.
+    #[serde(rename = "push.register")]
+    PushRegister {
+        platform: PushPlatform,
+        token: String,
+        environment: PushEnvironment,
+    },
+    /// Remove one of your push devices, by its token or its id. Answered with `push.devices`.
+    #[serde(rename = "push.unregister")]
+    PushUnregister {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        token: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
+    /// List your push devices. Answered with `push.devices`.
+    #[serde(rename = "push.devices")]
+    PushDevices,
     /// Follow a goal (it's in your sidebar) or stop following it.
     #[serde(rename = "goal.follow")]
     GoalFollow {
@@ -3397,6 +3451,12 @@ pub enum ServerToClient {
     FollowsUpdated {
         #[serde(default)]
         follows: Vec<GoalFollow>,
+    },
+    /// Your push devices, to your apps only.
+    #[serde(rename = "push.devices")]
+    PushDevices {
+        #[serde(default)]
+        devices: Vec<PushDevice>,
     },
     /// Your quiet hours changed, to your apps only.
     #[serde(rename = "quietHours.updated")]
