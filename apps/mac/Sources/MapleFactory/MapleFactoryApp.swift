@@ -64,8 +64,10 @@ struct MapleFactoryApp: App {
             // a group placed after .appInfo would hang off the one this replaces.
             CommandGroup(replacing: .appInfo) {
                 AboutMenuItem()
-                Button("Check for Updates…") { Updater.shared.checkForUpdates() }
-                    .disabled(!Updater.shared.canCheck)
+                // As the About window's button: a check, or maplefactory.dev for a build that can't update itself.
+                Button("Check for Updates…") { AboutView.checkForUpdates() }
+                    .keyboardShortcut("u", modifiers: [.command, .shift])
+                    .disabled((Updater.shared.available || Updater.shared.isDemo) && !Updater.shared.canCheckNow)
             }
             CommandGroup(after: .sidebar) {
                 // Jump to any task, goal or page, or run a common action.
