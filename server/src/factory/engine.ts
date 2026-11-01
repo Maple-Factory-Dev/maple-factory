@@ -9,7 +9,7 @@ import type { Env } from "../env.ts";
 import { ArtifactKindValues, PriorityValues, RoleValues } from "../wire.ts";
 import type {
   Artifact, ArtifactKind, ChangeRequest, CheckRun, ClientMessage, Comment, DiffCommit, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
-  McpConnector, Priority, PromptAdditions, ServerToRunner, SessionEnd, Task, WorktreeScripts,
+  Classification, McpConnector, Priority, PromptAdditions, RiskLevel, ServerToRunner, SessionEnd, Task, WorktreeScripts,
 } from "../wire.ts";
 import { audit, machineHub } from "../util.ts";
 import { isAttachmentKey, pullAttachments } from "../attachments.ts";
@@ -1472,7 +1472,7 @@ export class Engine {
     const org = this.store.prompts();
     const others = role === "reviewer" ? [] : this.moving(task);
     const repoPrompts = this.store.repoPrompts(taskRepo(task, goal));
-    const prompt = role === "planner" ? plannerPrompt(task, goal, org, others, repoPrompts, this.store.policy().areas) : role === "builder" ? builderPrompt(task, goal, resumed, org, others, repoPrompts, checkCommands(this.store.scriptsFor(taskRepo(task, goal))), this.budget(task)) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main", org, repoPrompts, this.budget(task));
+    const prompt = role === "planner" ? plannerPrompt(task, goal, org, others, repoPrompts, this.store.policy().areas) : role === "builder" ? builderPrompt(task, goal, resumed, org, others, repoPrompts, checkCommands(this.store.scriptsFor(taskRepo(task, goal))), this.budget(task)) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main", org, repoPrompts, this.budget(task), this.store.policy().classifier ?? null);
     const existing = Boolean(priv.worktree && task.machine === machine.id);
     const command: ServerToRunner = {
       type: "session.open",
@@ -2697,6 +2697,16 @@ export class Engine {
         const review = task.autoReview ?? fail("There's no review open.");
         const round = review.rounds.at(-1) ?? fail("There's no review round open.");
         if (round.verdict !== "inProgress") fail("This round is already in.");
+        const classifier = this.store.policy().classifier;
+        let classification: Classification | null = null;
+        if (classifier?.enabled && classifier.prompt.trim()) {
+          // Asked for by the prompt's Risk classification section: without it, the reviewer calls again.
+          if (a.classification == null) fail("Your org's risk classifier is on: call submit_review again with `classification` (level, humanReview, reasons).");
+          const c = obj(a.classification);
+          const level = ["low", "medium", "high"].includes(c.level as string) ? (c.level as RiskLevel) : fail("classification.level is low, medium or high.");
+          if (typeof c.humanReview !== "boolean") fail("classification.humanReview is true or false.");
+          classification = { level, humanReview: c.humanReview as boolean, reasons: arr(c.reasons).map(String).filter((r) => r.trim()), round: round.number, at: now() };
+        }
         const check = (x: unknown): ReviewCheck => {
           const c = obj(x);
           const verdict = ["met", "partial", "missed"].includes(c.verdict as string) ? (c.verdict as ReviewCheck["verdict"]) : "partial";
@@ -2730,6 +2740,13 @@ export class Engine {
         round.verdict = a.verdict === "passed" && !serious ? "passed" : "changesRequested";
         round.found = found.length;
         round.at = now();
+        if (classification) {
+          // The latest round wins; re-assess so the level, reviews and auto-merge reflect it before the toast and merge.
+          task.classification = classification;
+          this.applyPolicy(task);
+          this.event(task, "reviewer", `classified it ${classification.level} risk; ${classification.humanReview ? "recommends a human review" : "no human review needed"}`);
+          this.stat(task, "review.classified", { round: round.number, level: classification.level, humanReview: classification.humanReview, reasons: classification.reasons }, null, s.role);
+        }
         const fixed = arr(a.fixed).length;
         const reviewed = () => this.stat(task, "review.round", { number: round.number, verdict: round.verdict, found: found.length, fixed, findings: found.map(findingDetail) }, null, s.role);
         this.closeWorker(task, "done");

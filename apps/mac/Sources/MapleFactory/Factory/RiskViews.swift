@@ -307,6 +307,21 @@ struct RiskPolicyEditor: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
+            group("Risk classifier") {
+                Toggle(isOn: $state.policy.classifierEnabled) {
+                    Text("Grade each built change").font(.system(size: 12.5)).foregroundStyle(Theme.text)
+                }
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                ClassifierPromptField(prompt: state.policy.classifierPrompt) { state.policy.classifierPrompt = $0 }
+                Text(state.policy.classifierEnabled && state.policy.classifierPrompt.isEmpty
+                    ? "Give the classifier a prompt before it's turned on."
+                    : "The reviewer grades the change against this prompt. It can raise the risk and ask for a person's review; it never lowers what the policy asks for.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             group("Risk checks") {
                 Text("A change's risk is the highest of the planner's read, each check it trips, and medium over the PR budget. Path checks match the diff's files; the planner cites rules that apply.")
                     .font(.system(size: 11.5))
@@ -534,6 +549,29 @@ private struct RiskRuleField: View {
     private func commit() {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty, trimmed != rule { save(trimmed) }
+    }
+}
+
+/// The risk classifier's prompt, saved when editing ends so a half-typed prompt isn't sent on every keystroke.
+private struct ClassifierPromptField: View {
+    let prompt: String
+    let save: (String) -> Void
+    @SwiftUI.State private var text = ""
+
+    var body: some View {
+        TextField("Changes that touch payments, user data or the public API need a person's review.", text: $text, axis: .vertical)
+            .textFieldStyle(.roundedBorder)
+            .font(.system(size: 12))
+            .lineLimit(3...8)
+            .onAppear { text = prompt }
+            .onChange(of: prompt) { _, new in text = new }
+            .onSubmit(commit)
+            .onDisappear(perform: commit)
+    }
+
+    private func commit() {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed != prompt { save(trimmed) }
     }
 }
 

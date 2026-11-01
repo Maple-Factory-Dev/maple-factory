@@ -46,7 +46,7 @@ struct SensitiveArea: Identifiable {
 
 /// One reason the server gave for a task's risk level (Wire.RiskFactor).
 struct RiskFactor: Identifiable, Equatable {
-    enum Source { case planner, check, size, acceptance }
+    enum Source { case planner, check, size, classifier, acceptance }
     let source: Source
     let label: String
     let level: RiskLevel
@@ -77,6 +77,9 @@ struct RiskPolicy {
     var taskMinutes = 60
     /// Dollars of agent work a task gets before it asks for a hand; nil is no cost limit.
     var taskCostUsd: Double?
+    /// The reviewer grades each built change against this prompt; it can raise the risk and ask for a person's review.
+    var classifierEnabled = false
+    var classifierPrompt = ""
 
     func assess(_ task: FactoryTask, acceptance: RiskAcceptance? = nil) -> RiskAssessment? {
         guard let footprint = task.footprint else { return nil }
@@ -88,7 +91,10 @@ struct RiskPolicy {
         let sizeLevel: RiskLevel = overFiles || overLines ? .medium : .low
         let level = max(areaLevel, sizeLevel, task.plannedRisk)
         // A goal that has accepted risk up to this level lets the factory merge without human review.
-        let accepted = acceptance.map { level <= $0.autoMergeUpTo } ?? false
+        // The classifier asking for a person's review overrides acceptance, as on the server.
+        let humanReview = classifierEnabled && task.classifierReview
+        let accepted = !humanReview && (acceptance.map { level <= $0.autoMergeUpTo } ?? false)
+        let reviews = accepted ? 0 : finalReviews[level, default: 1]
 
         return RiskAssessment(
             level: level,
@@ -100,8 +106,8 @@ struct RiskPolicy {
             overFiles: overFiles,
             overLines: overLines,
             approvals: planApprovals[level, default: 1],
-            reviews: accepted ? 0 : finalReviews[level, default: 1],
-            autoMerge: autoMerges && (accepted || autoMerge[level, default: false]),
+            reviews: humanReview ? max(reviews, 1) : reviews,
+            autoMerge: !humanReview && autoMerges && (accepted || autoMerge[level, default: false]),
             acceptance: accepted && autoMerges ? acceptance : nil,
             suggestedSplit: overFiles || overLines
                 ? max(Int((Double(footprint.files) / Double(maxFiles)).rounded(.up)),

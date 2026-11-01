@@ -123,6 +123,7 @@ import SwiftUI
         task.areas = t.risk?.areas ?? []
         task.riskFactors = (t.risk?.factors ?? []).map(riskFactor)
         task.plannedRisk = t.risk.map { riskLevel($0.level) } ?? .low
+        task.classifierReview = t.classification?.humanReview ?? false
         task.pr = t.pr.map { pr in
             var request = PullRequest(number: pr.number.int, state: prState(pr.state), checks: pr.checks.map(check))
             request.link = pr.url.flatMap(URL.init(string:))
@@ -280,6 +281,7 @@ import SwiftUI
         case .planner: .planner
         case .size: .size
         case .acceptance: .acceptance
+        case .classifier: .classifier
         case .check, .other: .check
         }
         return RiskFactor(source: source, label: f.label, level: riskLevel(f.level), detail: f.detail, files: f.files ?? [])
@@ -309,6 +311,8 @@ import SwiftUI
         policy.scoutItems = p.scoutItems.map(Int.init) ?? 3
         policy.taskMinutes = p.taskMinutes.map(Int.init) ?? 60
         policy.taskCostUsd = p.taskCostUsd
+        policy.classifierEnabled = p.classifier?.enabled ?? false
+        policy.classifierPrompt = p.classifier?.prompt ?? ""
         return policy
     }
 
@@ -323,7 +327,9 @@ import SwiftUI
             autoMerges: policy.autoMerges,
             scoutItems: UInt32(policy.scoutItems),
             taskMinutes: UInt32(max(0, policy.taskMinutes)),
-            taskCostUsd: policy.taskCostUsd
+            taskCostUsd: policy.taskCostUsd,
+            classifier: policy.classifierEnabled || !policy.classifierPrompt.isEmpty
+                ? Wire.RiskClassifier(enabled: policy.classifierEnabled, prompt: policy.classifierPrompt) : nil
         )
     }
 

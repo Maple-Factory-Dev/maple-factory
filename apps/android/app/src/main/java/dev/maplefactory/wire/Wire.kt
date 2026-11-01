@@ -573,6 +573,8 @@ enum class RiskFactorSource(val raw: String) {
     Size("size"),
     /** A goal's acceptance of risk up to a level. */
     Acceptance("acceptance"),
+    /** The org's risk classifier: the reviewer graded the built change against the org's prompt. */
+    Classifier("classifier"),
     /** A value this build doesn't know yet; newer servers may send them. */
     Unknown("unknown"),
     ;
@@ -1324,6 +1326,18 @@ data class RiskFactor(
     val files: List<String>? = null,
 )
 
+/** The reviewer's grade of a built change against the org's risk classifier prompt. */
+@Serializable
+data class Classification(
+    val level: RiskLevel,
+    /** Whether it says a person should review the change; yes makes at least one final review required. */
+    val humanReview: Boolean,
+    val reasons: List<String> = emptyList(),
+    /** The review round it came from; the latest round wins. */
+    val round: Long,
+    val at: Long,
+)
+
 @Serializable
 data class Risk(
     val level: RiskLevel,
@@ -1447,6 +1461,8 @@ data class Task(
     val mergeAt: Long? = null,
     /** Overlaps with other in-flight tasks and conflicts with its base, kept current as tasks merge. */
     val mergeForecast: MergeForecast? = null,
+    /** The risk classifier's grade of the built change, when the org's policy turns it on. */
+    val classification: Classification? = null,
 )
 
 /** A risk check: code that raises a change's risk when touched (paths), or a plain-language rule the planner judges (rule). */
@@ -1459,6 +1475,14 @@ data class SensitiveArea(
     val enabled: Boolean,
     /** A plain-language check, like "changes the public HTTP API"; the planner names it in risk.areas when it applies. */
     val rule: String? = null,
+)
+
+/** An org prompt the reviewer grades each built change against; it can only raise the risk and ask for a human review. */
+@Serializable
+data class RiskClassifier(
+    val enabled: Boolean,
+    /** What the reviewer weighs, e.g. "changes that touch payments or user data need a person". */
+    val prompt: String,
 )
 
 /** The org's rules for how much sign-off a change needs, by its risk. */
@@ -1482,6 +1506,8 @@ data class RiskPolicy(
     val taskMinutes: Long? = null,
     /** Dollars of agent work a task gets before it asks for a hand. None: no cost limit. */
     val taskCostUsd: Double? = null,
+    /** The optional risk classifier. None: off. */
+    val classifier: RiskClassifier? = null,
 )
 
 /** An MCP server the factory adds to every session, alongside its own `maple` server. */

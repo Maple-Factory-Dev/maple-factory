@@ -43,6 +43,8 @@ export function formFromPolicy(p) {
     scoutItems: p.scoutItems ?? 3,
     taskMinutes: p.taskMinutes ?? 60,
     taskCostUsd: p.taskCostUsd ?? "",
+    classifierOn: !!p.classifier?.enabled,
+    classifierPrompt: p.classifier?.prompt ?? "",
     checks: (p.areas ?? []).map((a) => ({
       name: a.name,
       level: a.level,
@@ -91,6 +93,10 @@ export function policyFromForm(form, base) {
     scoutItems: clampInt(form.scoutItems, 1, 10, base.scoutItems ?? 3),
     taskMinutes: taskMinutes(form.taskMinutes, base.taskMinutes ?? 60),
     taskCostUsd: taskCost(form.taskCostUsd, base.taskCostUsd ?? null),
+    // Off with no prompt keeps it left out (or clears one that was there); a form without the fields keeps base's.
+    ...(form.classifierOn === undefined ? {}
+      : form.classifierOn || form.classifierPrompt?.trim() ? { classifier: { enabled: !!form.classifierOn, prompt: (form.classifierPrompt ?? "").trim() } }
+      : base.classifier ? { classifier: null } : {}),
   };
 }
 
@@ -533,7 +539,7 @@ export function createSettings({ state, h, send, toast, render, ago }) {
     const d = draft("policy", formFromPolicy(state.policy));
     const f = d.value;
     const set = (fn) => { fn(f); render(); };
-    const problem = checksProblem(f.checks);
+    const problem = checksProblem(f.checks) ?? (f.classifierOn && !f.classifierPrompt.trim() ? "Give the risk classifier a prompt to grade changes against." : null);
     const num = (key, value, min, max, onset) => keep(`policy:${key}`, h("input", { type: "number", inputmode: "numeric", class: "set-num", min, max, value,
       oninput: (e) => set(() => onset(e.target.value === "" ? "" : e.target.valueAsNumber)) }));
     return [
@@ -572,6 +578,15 @@ export function createSettings({ state, h, send, toast, render, ago }) {
         f.checks.length ? f.checks.map((c, i) => riskCheckRow(f, c, i, set)) : h("p", { class: "muted", style: "margin:0" }, "No risk checks: only the planner's read and the size count."),
         h("div", { class: "row" },
           h("button", { type: "button", class: "btn small", onclick: () => set((x) => x.checks.push({ name: "", level: "medium", enabled: true, kind: "rule", paths: "", rule: "" })) }, "Add check"))),
+      h("h2", {}, "Risk classifier"),
+      h("div", { class: "card set-card" },
+        toggle("Grade each built change", "The reviewer also grades the change against your prompt below. It can raise the risk level and ask for a person's review (at least one final review, no auto-merge); it never lowers what the policy asks for.",
+          f.classifierOn, (on) => set((x) => (x.classifierOn = on))),
+        h("label", { class: "set-row stacked" },
+          h("span", { class: "set-label" }, h("span", {}, "Classifier prompt"),
+            h("span", { class: "set-detail" }, "What the reviewer weighs when it grades the change's risk and decides whether a person should review it.")),
+          keep("policy:classifierPrompt", h("textarea", { rows: "4", "aria-label": "Classifier prompt", placeholder: "Changes that touch payments, user data or the public API need a person's review.",
+            oninput: (e) => set(() => (f.classifierPrompt = e.target.value)) }, f.classifierPrompt)))),
       h("h2", {}, "Scout"),
       h("div", { class: "card set-card" },
         field("Items per Scout run", "The most leftovers one run turns into drafted plans (1–10).", num("scoutItems", f.scoutItems, 1, 10, (v) => (f.scoutItems = v))),

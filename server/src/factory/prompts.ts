@@ -1,7 +1,7 @@
 // What each factory session is told. Agents report back only through the `maple` MCP tools
 // (tools.ts); the prompts say which, and when to stop.
 
-import type { Goal, PromptAdditions, Role, SensitiveArea, Task } from "../wire.ts";
+import type { Goal, PromptAdditions, RiskClassifier, Role, SensitiveArea, Task } from "../wire.ts";
 import { goalRepos, taskRepo } from "./repos.ts";
 import type { BudgetUse } from "./policy.ts";
 
@@ -183,7 +183,20 @@ function checksSection(checks: string[]): string {
   return `\n\n## Checks\nThese must exit 0 in the worktree before \`finish\` is accepted; run them yourself first and fix what they find:\n${checks.map((c) => `- \`${c}\``).join("\n")}\nIf one fails when you finish, nothing is committed or pushed and its output is typed into this session: fix it, then call \`finish\` again.`;
 }
 
-export function reviewerPrompt(task: Task, goal: Goal | null, base: string, org: PromptAdditions | null = null, repo: PromptAdditions | null = null, budget: BudgetUse | null = null): string {
+/** The org's risk classifier, when its policy turns it on: the reviewer grades the diff against the org's prompt. */
+function classifySection(c: RiskClassifier | null): string {
+  if (!c?.enabled || !c.prompt.trim()) return "";
+  return `## Risk classification
+Your org asks you to grade this change's risk against its own guidance:
+
+${c.prompt.trim()}
+
+Judge the diff against that guidance and fill \`classification\` in \`submit_review\` (required): \`level\` low, medium or high; \`humanReview\` true when a person should review the change before it merges; \`reasons\`, a short line each. It can only add sign-off, never remove what the policy already asks for.
+
+`;
+}
+
+export function reviewerPrompt(task: Task, goal: Goal | null, base: string, org: PromptAdditions | null = null, repo: PromptAdditions | null = null, budget: BudgetUse | null = null, classifier: RiskClassifier | null = null): string {
   const done = task.doneWhen
     .map((d, i) => `${i + 1}. ${d.text} — ${d.evidence?.attested ? `ATTESTED by ${d.evidence.by}: ${d.evidence.reason ?? "(no reason given)"}` : d.evidence ? `evidence (${d.evidence.kind}): ${d.evidence.summary}${d.evidence.output.length ? "\n   " + d.evidence.output.slice(-15).join("\n   ") : ""}` : "NO EVIDENCE"}`)
     .join("\n");
@@ -208,7 +221,7 @@ Review the change with \`git diff origin/${base}...HEAD\` (and \`git log origin/
 2. Are the proofs real? One check per Done when item: does the evidence actually show it? An ATTESTED item was signed off by a person themselves: accept it as proven, don't flag its proof as not real.
 3. Code: bugs, missing cases, risky changes.
 
-Then call \`submit_review\` once: verdict "passed" only with no blocker or major findings, otherwise "changesRequested".
+${classifySection(classifier)}Then call \`submit_review\` once: verdict "passed" only with no blocker or major findings, otherwise "changesRequested".
 List \`fixed\` with the ids of earlier findings this round resolves. End your turn after it succeeds.
 ${ARTIFACTS(task, "reviewer")}
 ${THREADS}`;

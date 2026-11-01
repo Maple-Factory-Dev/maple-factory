@@ -90,27 +90,39 @@ export function assess(task: Task, policy: RiskPolicy, acceptance: RiskAcceptanc
     detail: `${over ? "Over" : "Within"} the PR budget of ${policy.maxFiles} files and ${policy.maxLines} lines`,
     files: null,
   });
+  // The org's classifier, once the reviewer has graded the built change: it can only add gates, never remove them.
+  const graded = policy.classifier?.enabled ? task.classification : null;
+  if (graded) {
+    factors.push({
+      source: "classifier",
+      label: graded.humanReview ? "Risk classifier: wants a person to review" : "Risk classifier",
+      level: graded.level,
+      detail: graded.reasons.length ? graded.reasons.join("; ") : null,
+      files: null,
+    });
+  }
   const level = factors.reduce<RiskLevel>((l, f) => max(l, f.level), "low");
-  const accepted = acceptance ? ORDER.indexOf(level) <= ORDER.indexOf(acceptance.upTo) : false;
+  const human = !!graded?.humanReview;
+  const accepted = !human && acceptance ? ORDER.indexOf(level) <= ORDER.indexOf(acceptance.upTo) : false;
   if (acceptance) {
     factors.push({
       source: "acceptance",
       label: `Goal accepts risk up to ${acceptance.upTo}`,
       level: acceptance.upTo,
-      detail: accepted ? `Accepted by ${acceptance.by}: no final review needed` : `Accepted by ${acceptance.by}, but this change is ${level}`,
+      detail: accepted ? `Accepted by ${acceptance.by}: no final review needed` : human ? `Accepted by ${acceptance.by}, but the risk classifier wants a person to review` : `Accepted by ${acceptance.by}, but this change is ${level}`,
       files: null,
     });
   }
-  // Highest first; ties keep their order (planner, checks, size, acceptance).
+  // Highest first; ties keep their order (planner, checks, size, classifier, acceptance).
   factors.sort((a, b) => ORDER.indexOf(b.level) - ORDER.indexOf(a.level));
   return {
     level,
     areas: areas.map((a) => a.name),
     factors,
     approvals: policy.planApprovals[level] ?? 1,
-    reviews: accepted ? 0 : (policy.finalReviews[level] ?? 1),
-    // Off for the whole org beats both the level's checkbox and a goal's acceptance.
-    autoMerge: policy.autoMerges !== false && (accepted || (policy.autoMerge[level] ?? false)),
+    reviews: accepted ? 0 : Math.max(policy.finalReviews[level] ?? 1, human ? 1 : 0),
+    // Off for the whole org beats both the level's checkbox and a goal's acceptance; so does the classifier asking for a person.
+    autoMerge: !human && policy.autoMerges !== false && (accepted || (policy.autoMerge[level] ?? false)),
     accepted,
   };
 }
@@ -125,6 +137,7 @@ export function validPolicy(p: RiskPolicy): string | null {
   for (const level of ORDER) {
     if (!(p.planApprovals[level] >= 0) || !(p.finalReviews[level] >= 0)) return `Say how many approvals and reviews ${level} risk needs.`;
   }
+  if (p.classifier?.enabled && !p.classifier.prompt?.trim()) return "Give the risk classifier a prompt to grade changes against.";
   const names = new Set<string>();
   for (const a of p.areas) {
     const name = a.name?.trim().toLowerCase();

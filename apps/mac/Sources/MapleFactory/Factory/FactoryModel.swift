@@ -233,6 +233,8 @@ struct FactoryTask: Identifiable {
     var areas: [String] = []
     /// Why the server gave it the risk it has (live only).
     var riskFactors: [RiskFactor] = []
+    /// The org's risk classifier asked for a person's review of the built change (live only).
+    var classifierReview = false
     /// The session working on it right now (live only).
     struct Worker: Equatable {
         let role: String

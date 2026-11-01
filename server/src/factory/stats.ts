@@ -16,6 +16,7 @@ export type StatKind =
   | "hand.resolved" // detail: reason, openMs, option
   | "prompt.answered" // detail: choice, tool
   | "review.round" // detail: number, verdict, found, findings [{kind, severity, file, text}], fixed
+  | "review.classified" // detail: round, level, humanReview, reasons
   | "session.restarted" // detail: cause
   | "session.ended" // detail: cause (an end nobody chose that stopped the task)
   | "merged" // detail: auto, cycleMs
