@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { Store } from "../src/factory/store.ts";
-import { capacityOf, capsFor, machineStatus, meters, resetText, since, sortMachines, span, usageRows, windowLabel } from "../web/app/machines.js";
+import { canManage, capacityOf, capsFor, machineStatus, meters, pauseSettings, pauseUntil, resetText, resumeSettings, since, sortMachines, span, teammatesTasks, usageRows, windowLabel } from "../web/app/machines.js";
 
 const NOW = Date.UTC(2026, 9, 31, 12);
 const MIN = 60_000;
@@ -171,4 +171,59 @@ test("a timed pause that's run out reads as resumed, a new-work pause included",
   store.saveSettings("m2", { ...base, paused: true, pauseNew: true, pausedUntil: Date.now() + H });
   assert.equal(store.settings("m2").paused, true);
   assert.equal(store.settings("m2").pauseNew, true);
+});
+
+test("paused for new work says so, and that tasks already here keep going", () => {
+  const st = status(machine({ settings: settings({ paused: true, pauseNew: true, pausedUntil: NOW + H }), sessions: [session("s1", "MF-1")] }));
+  assert.deepEqual(st, { kind: "paused", label: "Paused for new work", detail: "until Sat 2:00 PM · tasks already here keep going · 1 of 2 working" });
+  assert.equal(status(machine({ settings: settings({ paused: true, pauseNew: true }) })).detail, "until resumed · tasks already here keep going");
+  // pauseNew without paused isn't a pause.
+  assert.equal(status(machine({ settings: settings({ pauseNew: true }) })).kind, "idle");
+  assert.equal(status(machine({ settings: settings({ paused: true, pauseNew: false }) })).label, "Paused");
+});
+
+test("canManage: the owner or an admin, nobody else", () => {
+  const m = machine();
+  assert.equal(canManage(m, { login: "andrea", role: "member" }), true);
+  assert.equal(canManage(m, { login: "bob", role: "admin" }), true);
+  assert.equal(canManage(m, { login: "bob", role: "member" }), false);
+  assert.equal(canManage(m, null), false);
+});
+
+test("pauseUntil: an hour on, 8am next, or none", () => {
+  const at = (y: number, mo: number, d: number, h: number, mi = 0) => new Date(y, mo, d, h, mi).getTime();
+  const evening = at(2026, 9, 31, 21, 30);
+  assert.equal(pauseUntil("hour", evening), evening + H);
+  assert.equal(pauseUntil("tomorrow", evening), at(2026, 10, 1, 8));
+  // Before 8am, "until tomorrow" is this morning at 8, as the apps do.
+  assert.equal(pauseUntil("tomorrow", at(2026, 9, 31, 6)), at(2026, 9, 31, 8));
+  assert.equal(pauseUntil("tomorrow", at(2026, 9, 31, 8)), at(2026, 10, 1, 8));
+  assert.equal(pauseUntil("resume", evening), null);
+});
+
+test("pauseSettings and resumeSettings keep slots and caps, and set only the pause", () => {
+  const own = { capacity: 3, teamSlots: 2, lendIdle: true, loadCap: 0.6, paused: false, sessionCap: 0.9, weeklyCap: 0.7, agentCaps: [{ agent: "codex", session: 0.5, weekly: null }], capsTeamOnly: true };
+  const m = machine({ settings: own });
+  const newWork = pauseSettings(m, { scope: "new", until: NOW + H });
+  assert.deepEqual(newWork, { ...own, paused: true, pausedUntil: NOW + H, pauseNew: true });
+  const all = pauseSettings(m, { scope: "all", until: null });
+  assert.deepEqual(all, { ...own, paused: true, pausedUntil: null, pauseNew: false });
+  const resumed = resumeSettings(machine({ settings: newWork }));
+  assert.deepEqual(resumed, { ...own, paused: false, pausedUntil: null, pauseNew: false });
+  // No settings yet: the server's defaults.
+  assert.deepEqual(pauseSettings(machine({ settings: null }), { scope: "all", until: null }), { teamSlots: 0, lendIdle: false, loadCap: 0.85, paused: true, pausedUntil: null, pauseNew: false });
+  // The machine's own settings aren't changed.
+  assert.equal(own.paused, false);
+});
+
+test("teammatesTasks: others' tasks working here, not reviewers or the owner's", () => {
+  const m = machine();
+  const tasks = [
+    { id: "MF-1", owner: "bob", worker: { machine: "m1", role: "builder" } },
+    { id: "MF-2", owner: "andrea", worker: { machine: "m1", role: "builder" } },
+    { id: "MF-3", owner: "bob", worker: { machine: "m1", role: "reviewer" } },
+    { id: "MF-4", owner: "bob", worker: { machine: "m2", role: "builder" } },
+    { id: "MF-5", owner: "bob", worker: null },
+  ];
+  assert.deepEqual(teammatesTasks(m, tasks).map((t) => t.id), ["MF-1"]);
 });
