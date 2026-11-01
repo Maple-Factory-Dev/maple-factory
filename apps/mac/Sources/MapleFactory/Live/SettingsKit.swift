@@ -8,6 +8,11 @@ enum SettingsKit {
     static let sidebarBG = Color(light: 0xE8E5E7, dark: 0x211E25)
     static let groupStroke = Color(light: .black.opacity(0.06), dark: .white.opacity(0.06))
     static let caption = Font.system(size: 11.5)
+    /// The Settings window hides its title bar and runs content up under it (`HiddenTitleBar`), so
+    /// the traffic-light strip is this tall at the top of both the sidebar and the panes.
+    static let titlebarInset: CGFloat = 40
+    /// Where a pane's header starts: below the title-bar strip, with room to breathe.
+    static let paneTopInset: CGFloat = titlebarInset + 20
 }
 
 /// One pane: a scrolling page with a large title, an optional subtitle, then its sections.
@@ -33,11 +38,27 @@ struct SettingsPane<Content: View>: View {
             }
             .font(.system(size: 13))
             .padding(.horizontal, 36)
-            .padding(.top, 32)
+            .padding(.top, SettingsKit.paneTopInset)
             .padding(.bottom, 36)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .scrollContentBackground(.hidden)
+        // A headless run's `-scroll bottom` shows a pane scrolled under the title bar.
+        .defaultScrollAnchor(AppDefaults.string(forKey: "scroll") == "bottom" ? .bottom : .top)
+        .overlay(alignment: .top) { SettingsTitlebarFade() }
+    }
+}
+
+/// Covers the title-bar strip at the top of a pane, so scrolled content fades out under the
+/// traffic lights instead of running into them.
+struct SettingsTitlebarFade: View {
+    var body: some View {
+        LinearGradient(stops: [.init(color: SettingsKit.paneBG, location: 0),
+                               .init(color: SettingsKit.paneBG, location: 0.55),
+                               .init(color: SettingsKit.paneBG.opacity(0), location: 1)],
+                       startPoint: .top, endPoint: .bottom)
+            .frame(height: SettingsKit.titlebarInset)
+            .allowsHitTesting(false)
     }
 }
 

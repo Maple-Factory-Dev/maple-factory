@@ -130,7 +130,7 @@ struct OrgSettingsView: View {
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Room for the traffic lights.
-            Color.clear.frame(height: 40)
+            Color.clear.frame(height: SettingsKit.titlebarInset)
             accountHeader.padding(.horizontal, 12)
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
@@ -214,11 +214,16 @@ struct OrgSettingsView: View {
 /// The Settings window without a title bar: the sidebar runs up under the traffic lights.
 private struct HiddenTitleBar: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView { View() }
-    func updateNSView(_ view: NSView, context: Context) {}
+    /// SwiftUI's Settings scene can restore its title bar after the view first lands, so hide it again.
+    func updateNSView(_ view: NSView, context: Context) { (view as? View)?.hide() }
 
     final class View: NSView {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
+            hide()
+        }
+
+        func hide() {
             guard let window else { return }
             window.styleMask.insert(.fullSizeContentView)
             window.titleVisibility = .hidden
