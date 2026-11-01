@@ -102,18 +102,12 @@ struct AboutView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 12)
             Spacer(minLength: 16)
-            HStack(alignment: .lastTextBaseline, spacing: 10) {
-                Text("Andrea")
-                    .font(.system(size: 20, weight: .medium, design: .serif))
-                    .italic()
-                    .foregroundStyle(Theme.text)
-                if let logo = Self.logo(dark: colorScheme == .dark) {
-                    Image(nsImage: logo)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(height: 36)
-                        .accessibilityLabel("afomera.dev")
-                }
+            if let logo = Self.logo(dark: colorScheme == .dark) {
+                Image(nsImage: logo)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(height: 36)
+                    .accessibilityLabel("afomera.dev")
             }
             Text("© \(String(Self.year)) Andrea Fomera")
                 .font(.system(size: 11))
