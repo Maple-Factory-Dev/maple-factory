@@ -2,6 +2,8 @@ import SwiftUI
 
 /// A live session drawn from its event stream (MF-199/MF-201): messages, tool cards, prompts as buttons and a composer.
 struct NativeSessionView: View {
+    /// A headless script's step: `[verb, argument…]` (see AppState's `native:` demo action).
+    static let demo = Notification.Name("NativeSessionView.demo")
     @Environment(FactoryClient.self) private var client
     let machineID: String
     let sessionID: String
@@ -60,6 +62,10 @@ struct NativeTerminalToggle: View {
         .labelsHidden()
         .fixedSize()
         .help("Show this session as a chat (Native) or as its terminal")
+        .onReceive(NotificationCenter.default.publisher(for: NativeSessionView.demo)) { note in
+            guard let args = note.object as? [String], args.first == "mode", args.count > 1, let picked = SessionViewMode(rawValue: args[1]) else { return }
+            mode = picked
+        }
     }
 }
 
@@ -145,6 +151,9 @@ private struct ThinkingRow: View {
         }
         .font(.system(size: 12.5).italic())
         .foregroundStyle(Theme.textMuted)
+        .onReceive(NotificationCenter.default.publisher(for: NativeSessionView.demo)) { note in
+            if (note.object as? [String])?.first == "think" { open = true }
+        }
     }
 }
 
@@ -211,6 +220,10 @@ struct ToolCard: View {
         }
         .background(RoundedRectangle(cornerRadius: 9).fill(Theme.cardBG))
         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Theme.stroke))
+        .onReceive(NotificationCenter.default.publisher(for: NativeSessionView.demo)) { note in
+            guard let args = note.object as? [String], args.first == "open", args.count > 1 else { return }
+            if args[1] == call.name || args[1] == call.callId { open = true }
+        }
     }
 
     private func diffView(_ lines: [NativeDiffLine]) -> some View {
@@ -282,6 +295,10 @@ struct NativePromptCard: View {
         .background(RoundedRectangle(cornerRadius: 10).fill(Theme.State.awaitingApproval.opacity(0.1)))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.State.awaitingApproval.opacity(0.4)))
         .padding(.horizontal, 14).padding(.bottom, 8)
+        .onReceive(NotificationCenter.default.publisher(for: NativeSessionView.demo)) { note in
+            guard let args = note.object as? [String], args.first == "key", args.count > 1, answering == nil else { return }
+            send(args[1])
+        }
     }
 }
 
@@ -363,6 +380,15 @@ struct NativeComposer: View {
             .padding(.horizontal, 12).padding(.bottom, 12).padding(.top, 8)
         }
         .onAppear { focused = true }
+        .onReceive(NotificationCenter.default.publisher(for: NativeSessionView.demo)) { note in
+            guard let args = note.object as? [String], let verb = args.first else { return }
+            switch verb {
+            case "type": text = args.dropFirst().joined(separator: ":")
+            case "send": submit()
+            case "down": if !matches.isEmpty { selected = (selected + 1) % matches.count }
+            default: break
+            }
+        }
     }
 
     private var picker: some View {
