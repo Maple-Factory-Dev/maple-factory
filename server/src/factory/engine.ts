@@ -29,7 +29,7 @@ import { findingDetail, type StatKind } from "./stats.ts";
 import type { Intake } from "./intake.ts";
 import type { Secrets } from "../secrets.ts";
 import { agentsIn, mentionsIn } from "./mentions.ts";
-import { appSettingsUrl, checkLog, checks, closePullRequest, createPullRequest, deleteBranch, reopenPullRequest, GitHubError, type GitHubApp, githubApp, installedRepos, enqueuePullRequest, mergePullRequest, mergeQueueRequired, needsMergeQueue, PERMISSIONS, pullRequestState, repoToken, rerunCheck, rerunFailed, reviewThreads } from "../github.ts";
+import { addAssignees, appSettingsUrl, approvePullRequest, needsReviews, requestReviewers, requiredApprovals, checkLog, checks, closePullRequest, createPullRequest, deleteBranch, reopenPullRequest, GitHubError, type GitHubApp, githubApp, installedRepos, enqueuePullRequest, mergePullRequest, mergeQueueRequired, needsMergeQueue, PERMISSIONS, pullRequestState, repoToken, rerunCheck, rerunFailed, reviewThreads } from "../github.ts";
 
 const MAX_REVIEW_ROUNDS = 5;
 /// Restarts after ends nobody chose (sleep, lost tmux, an update) before a person is asked.
@@ -71,7 +71,12 @@ type Hooks = {
   wakeIn(ms: number): void;
   /** Slack's bot token, and where to note what Slack refused: for @Maple. */
   slack?: { token(): Promise<string | null>; problem(text: string): void };
+  /** A member's GitHub user token from their sign-in (auth.ts userToken), to approve a pull request as them; null: none that works. */
+  userToken?(login: string): Promise<string | null>;
 };
+
+/** How a "didn't merge" for missing approving reviews starts: a builder can't fix that, so it goes to a person. */
+const REVIEWS_WANTED = "GitHub wants an approving review";
 
 /** What a runner says while Claude Code waits on its folder-trust prompt (runner/src/trust.rs). */
 const TRUST_PROMPT = "Claude Code is asking whether to trust this folder";
@@ -756,7 +761,9 @@ export class Engine {
         task.reviews.push(who);
         this.event(task, who, "approved the changes");
         this.save(task);
-        await this.autoMerge(task);
+        // On GitHub too, as them, before a merge that may need it; the Factory approval counts either way.
+        await this.approveOnGitHub(task.id, who);
+        await this.autoMerge(this.store.task(task.id) ?? task);
         return;
       }
       case "task.requestReview": {
@@ -1797,6 +1804,10 @@ export class Engine {
         task.pr.number = pr.number;
         task.pr.url = pr.url;
         this.event(task, "factory", `opened pull request #${pr.number} on ${owner}/${repo}`);
+        this.save(task);
+        await this.assignOwner(id, app, owner, repo, pr.number);
+        task = this.store.task(id);
+        if (!task?.pr) return;
       }
       this.store.savePrivate(task.id, { ...this.store.private(task.id), gh: { owner, repo }, prOpenedAt: now() });
       this.save(task);
@@ -1807,6 +1818,61 @@ export class Engine {
       this.event(t, "factory", `couldn't open a pull request on ${owner}/${repo}: ${(e as Error).message}`);
       this.save(t);
     }
+  }
+
+  /** Makes the task's owner the pull request's assignee and, when its base branch's rules require approving
+   *  reviews, asks them for one. Best-effort: what GitHub refused goes on the timeline. */
+  private async assignOwner(id: string, app: GitHubApp, owner: string, repo: string, number: number) {
+    const task = this.store.task(id);
+    if (!task?.pr) return;
+    const who = task.owner;
+    // The factory's own account (or a bot's) can't be assigned or asked to review.
+    if (!who || who === "factory" || /\[bot\]$/i.test(who) || (this.env.GITHUB_APP_SLUG && who.toLowerCase() === this.env.GITHUB_APP_SLUG.toLowerCase())) return;
+    const notes: string[] = [];
+    try {
+      await addAssignees(app, owner, repo, number, [who]);
+      notes.push(`assigned @${who} to pull request #${number}`);
+    } catch (e) {
+      notes.push(`couldn't assign @${who} to pull request #${number}: ${(e as Error).message}`);
+    }
+    try {
+      const needed = await requiredApprovals(app, owner, repo, task.pr.base);
+      if (needed > 0) {
+        await requestReviewers(app, owner, repo, number, [who]);
+        notes.push(`asked @${who} to review pull request #${number} (${task.pr.base} requires ${needed} approving review${needed === 1 ? "" : "s"})`);
+      }
+    } catch (e) {
+      notes.push(`couldn't ask @${who} to review pull request #${number}: ${(e as Error).message}`);
+    }
+    const t = this.store.task(id);
+    if (!t) return;
+    for (const n of notes) this.event(t, "factory", n);
+    this.save(t);
+  }
+
+  /** Approves the task's pull request on GitHub as `who`, with their own token, pinned to the reviewed head. With no
+   *  token for them, or a refusal, the timeline says so and how to fix it. */
+  private async approveOnGitHub(id: string, who: string) {
+    const app = githubApp(this.env);
+    const task = this.store.task(id);
+    const gh = task && this.store.private(id).gh;
+    if (!app || !task?.pr?.number || !task.pr.url || !gh || task.pr.state !== "open") return;
+    const pr = task.pr;
+    let note: string;
+    try {
+      const token = (await this.hooks.userToken?.(who)) ?? null;
+      if (!token) note = `couldn't approve pull request #${pr.number} on GitHub as @${who}: the factory has no GitHub sign-in for them; sign in again to approve on GitHub`;
+      else {
+        await approvePullRequest(app, token, gh.owner, gh.repo, pr.number, pr.head ?? null, `Approved on Maple Factory (${task.id}).`);
+        note = `approved pull request #${pr.number} on GitHub`;
+      }
+    } catch (e) {
+      note = `couldn't approve pull request #${pr.number} on GitHub as @${who}: ${(e as Error).message}; sign in again to approve on GitHub`;
+    }
+    const t = this.store.task(id);
+    if (!t) return;
+    this.event(t, who, note);
+    this.save(t);
   }
 
   /** Whether a task's CI may still change: checks running, or none yet on a fresh pull request. */
@@ -1987,7 +2053,8 @@ export class Engine {
       const why = msg.message ?? "no reason given";
       // With the policy's say-so, a builder fixes it (a few times at most) before a person is asked.
       const tries = this.store.private(task.id).mergeFixes ?? 0;
-      const autoFix = this.store.policy().autoFixMerges !== false;
+      // A builder can't give it the reviews GitHub wants: that goes straight to a person.
+      const autoFix = this.store.policy().autoFixMerges !== false && !why.startsWith(REVIEWS_WANTED);
       if (autoFix && tries < MERGE_FIX_TRIES) {
         const n = tries + 1;
         this.store.savePrivate(task.id, { ...this.store.private(task.id), mergeFixes: n });
@@ -2003,9 +2070,10 @@ export class Engine {
       // The runner's message already says it didn't merge; GitHub's may not.
       const gaveUp = autoFix ? ` (after ${MERGE_FIX_TRIES} tries)` : "";
       const summary = (/merge/i.test(why) ? why : `It didn't merge into ${task.pr.base}: ${why}`) + gaveUp;
+      const reviews = why.startsWith(REVIEWS_WANTED);
       this.raise(task, "factory", "mergeFailed", summary, [
-        { title: MERGE_FIX, detail: `A builder updates the branch from ${task.pr.base}, resolves the conflicts and pushes; review and approvals run again.`, recommended: true },
-        { title: MERGE_RETRY, detail: "Merge it again as it is.", recommended: false },
+        { title: MERGE_FIX, detail: `A builder updates the branch from ${task.pr.base}, resolves the conflicts and pushes; review and approvals run again.`, recommended: !reviews },
+        { title: MERGE_RETRY, detail: reviews ? "Merge it again once it's approved on GitHub." : "Merge it again as it is.", recommended: reviews },
         { title: "Cancel it", detail: "Stop the task; its branch stays.", recommended: false },
       ]);
       this.save(task);
@@ -2844,7 +2912,10 @@ export class Engine {
           .then((m) => ({ queued: null, sha: m.sha }), (e) => (needsMergeQueue(e) ? enqueue() : Promise.reject(e)));
       }
     } catch (e) {
-      this.merged({ type: "task.merged", taskId, ok: false, commit: null, message: (e as Error).message });
+      const message = needsReviews(e)
+        ? `${REVIEWS_WANTED} before it merges into ${pr.base} (${(e as Error).message}). Approve pull request #${pr.number} on GitHub, or sign in to the factory again and approve the changes here so the factory approves it on GitHub as you.`
+        : (e as Error).message;
+      this.merged({ type: "task.merged", taskId, ok: false, commit: null, message });
       return;
     }
     if (outcome.queued != null) return this.inMergeQueue(taskId, pr, outcome.queued);

@@ -8,7 +8,7 @@ import type { Env } from "./env.ts";
 import { PROTOCOL_VERSION, IntegrationKindValues, type ClientMessage, type IntegrationKind, type Presence, type Machine, type MachineUpdate, type AgentLoginStatus, type Member, type RunnerRelease, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type SessionShare, type EndedSession, type GitHubStatus, type Task } from "./wire.ts";
 import { machineRows, offlineMachine } from "./machines.ts";
 import { audit, machineHub } from "./util.ts";
-import { maySignIn, recheckEvery, revoked, revokeMember, stillMember, toMember, type MemberRow } from "./auth.ts";
+import { maySignIn, recheckEvery, revoked, revokeMember, stillMember, toMember, userToken, type MemberRow } from "./auth.ts";
 import { Store } from "./factory/store.ts";
 import { Secrets } from "./secrets.ts";
 import { Integrations } from "./integrations/store.ts";
@@ -79,6 +79,7 @@ export class OrgHub extends DurableObject<Env> {
         token: async () => (await this.integrations.config("slack"))?.botToken ?? null,
         problem: (text) => ctx.waitUntil(this.integrationEvent("slack", text)),
       },
+      userToken: (login) => userToken(env, login),
     }, this.intake, this.secrets);
   }
 
