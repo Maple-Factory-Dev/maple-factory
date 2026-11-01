@@ -5,6 +5,10 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## Unreleased
+
+Weekly dependency refresh: uuid 1.29 and 33 semver-compatible updates (cc, syn, ureq, log, wasm-bindgen, icu, rustls-native-certs and more). reqwest 0.13 is a breaking release and is deferred to its own task.
+
 ## 0.87.0 — 2026-11-01
 
 Proof screenshots and recordings upload at full size (up to 20 MB and 95 MB) instead of being shrunk first, and the runner keeps up with the factory's protocol for recurring tasks.
