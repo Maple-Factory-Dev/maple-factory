@@ -53,6 +53,7 @@ struct StatisticsView: View {
                 case "open": section = "findings"
                 case "back": section = nil
                 case "list": withAnimation(.snappy(duration: 0.4)) { proxy.scrollTo("findings-list", anchor: .top) }
+                case "merged": proxy.scrollTo("merged-by-people", anchor: .top)
                 default: break
                 }
             }
@@ -104,7 +105,7 @@ struct StatisticsView: View {
     @ViewBuilder private func content(_ s: Wire.StatsSummary) -> some View {
         let t = s.totals
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: narrow ? 2 : 6), spacing: 14) {
-            StatTile(label: "Merged", value: "\(t.merged)", detail: t.autoMerged > 0 ? "\(t.autoMerged) auto-merged" : "\(t.created) created")
+            StatTile(label: "Merged", value: "\(t.merged)", detail: mergedDetail(t))
             StatTile(label: "Cycle time", value: duration(t.cycleMedianMs), detail: "median, to merge")
             StatTile(label: "First-try plans", value: percent(t.firstTryApproval), detail: t.avgPlanVersions.map { String(format: "%.1f versions on average", $0) } ?? "no approvals yet")
             StatTile(label: "Hands raised", value: "\(t.handsRaised)", detail: t.handOpenMedianMs.map { "up \(duration($0)) (median)" } ?? "\(t.handsOpen) up now")
@@ -128,6 +129,8 @@ struct StatisticsView: View {
             BarList(title: "Session ends and restarts", note: "\(t.restarts) restarted", rows: s.restartsByCause, label: endCause, trailing: { _ in nil })
         }
 
+        if let m = s.manualMerges { manualMerges(m).id("merged-by-people") }
+
         costCard(s).id("cost")
 
         if !s.goals.isEmpty { goalTable(s.goals) }
@@ -138,6 +141,154 @@ struct StatisticsView: View {
             Label("\(s.inferred) of these touchpoints were worked out from older tasks' history, from before statistics were recorded.", systemImage: "clock.arrow.circlepath")
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.textMuted)
+        }
+    }
+
+    /// "12 auto · 35 by people", or how many were created when nothing merged.
+    private func mergedDetail(_ t: Wire.StatsTotals) -> String {
+        if t.merged == 0 { return "\(t.created) created" }
+        return "\(t.autoMerged) auto · \(t.merged - t.autoMerged) by people"
+    }
+
+    /// The merges people made: why the factory didn't, whether they went in as is or after changes, and the latest.
+    private func manualMerges(_ m: Wire.StatsManualMerges) -> some View {
+        StatsCard {
+            VStack(alignment: .leading, spacing: 16) {
+                cardTitle("Merged by people", note: m.total == 0 ? nil : counted(m.total, "merge"))
+                if m.total == 0 {
+                    Text("Every merge in this range was the factory's own.")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(Theme.textMuted)
+                } else {
+                    twoUp {
+                        reasonBars(m)
+                        changeSplit(m)
+                    }
+                    if !m.recent.isEmpty {
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text("Recent")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Theme.textMuted)
+                                .padding(.bottom, 4)
+                            ForEach(Array(m.recent.prefix(8).enumerated()), id: \.offset) { i, r in
+                                if i > 0 { Divider().overlay(Theme.stroke) }
+                                manualRow(r)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func reasonBars(_ m: Wire.StatsManualMerges) -> some View {
+        let top = max(1, m.byReason.map(\.count).max() ?? 1)
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("Why it wasn't automatic")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.textMuted)
+            ForEach(m.byReason, id: \.key) { row in
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack {
+                        Text(manualReason(row.key, level: nil)).foregroundStyle(Theme.text)
+                        Spacer()
+                        Text("\(row.count)").font(.system(size: 12.5, design: .monospaced)).foregroundStyle(Theme.text)
+                    }
+                    .font(.system(size: 12.5))
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Theme.fill)
+                            Capsule().fill(Theme.accent).frame(width: max(4, geo.size.width * CGFloat(row.count) / CGFloat(top)))
+                        }
+                    }
+                    .frame(height: 6)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func changeSplit(_ m: Wire.StatsManualMerges) -> some View {
+        let total = max(1, m.asIs + m.withChanges)
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("As is or after changes")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.textMuted)
+            GeometryReader { geo in
+                HStack(spacing: 2) {
+                    if m.asIs > 0 {
+                        Rectangle().fill(Theme.State.merged).frame(width: max(4, (geo.size.width - 2) * CGFloat(m.asIs) / CGFloat(total)))
+                    }
+                    if m.withChanges > 0 {
+                        Rectangle().fill(Theme.accent)
+                    }
+                }
+                .clipShape(Capsule())
+            }
+            .frame(height: 10)
+            HStack(spacing: 16) {
+                legend(Theme.State.merged, "Merged as is", m.asIs, total)
+                legend(Theme.accent, "After changes", m.withChanges, total)
+            }
+            Text("Changes are change requests and review requests people sent while it was in review.")
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textFaint)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func legend(_ color: Color, _ label: String, _ n: UInt32, _ total: UInt32) -> some View {
+        HStack(spacing: 6) {
+            Circle().fill(color).frame(width: 8, height: 8)
+            Text(label).foregroundStyle(Theme.textMuted)
+            Text("\(n)").foregroundStyle(Theme.text).monospacedDigit()
+            Text(percent(Double(n) / Double(total))).foregroundStyle(Theme.textFaint).monospacedDigit()
+        }
+        .font(.system(size: 12.5))
+    }
+
+    private func manualRow(_ r: Wire.StatsManualMergeRow) -> some View {
+        HStack(spacing: 10) {
+            Text(r.task)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(Theme.textMuted)
+                .frame(width: 70, alignment: .leading)
+            Text(r.title)
+                .foregroundStyle(Theme.text)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 8)
+            Text(manualReason(r.reason, level: r.level))
+                .foregroundStyle(Theme.textMuted)
+                .lineLimit(1)
+            if let by = r.by {
+                Text("by \(by)")
+                    .foregroundStyle(Theme.textFaint)
+                    .lineLimit(1)
+            }
+            Text(r.changes == 0 ? "as is" : counted(r.changes, "change"))
+                .foregroundStyle(r.changes == 0 ? Theme.State.merged : Theme.accent)
+                .frame(minWidth: 70, alignment: .trailing)
+        }
+        .font(.system(size: 12.5))
+        .padding(.vertical, 8)
+        .contentShape(Rectangle())
+        .onTapGesture { if state.isLive { state.openFocus(r.task) } }
+        .help("Open \(r.task)")
+    }
+
+    /// A readable reason; a risk row names its level: "Medium risk".
+    private func manualReason(_ key: String, level: String?) -> String {
+        switch key {
+        case "autoMergeOff": "Auto-merge is off"
+        case "classifier": "Classifier wanted a person"
+        case "risk": level.map { "\($0.capitalized) risk" } ?? "Risk level not auto-merged"
+        case "held": "Held by a person"
+        case "mergedFirst": "Merged before the countdown"
+        case "github": "Merged on GitHub"
+        case "unknown": "Not recorded"
+        default: key
         }
     }
 
@@ -650,7 +801,32 @@ extension Wire.StatsSummary {
             costByAgent: [.init(key: "claude · claude-opus-5-5", sessions: 121, costUsd: 371.9, tokens: 236_000_000, unpriced: 0),
                           .init(key: "claude · claude-sonnet-5-5", sessions: 34, costUsd: 40.7, tokens: 41_400_000, unpriced: 0),
                           .init(key: "codex · gpt-6.1", sessions: 31, costUsd: 0, tokens: 41_000_000, unpriced: 31)],
-            findings: .sample(now: now)
+            findings: .sample(now: now),
+            manualMerges: .sample(now: now)
+        )
+    }
+}
+
+extension Wire.StatsManualMerges {
+    /// The sample month's 35 merges by people: why, and how many went in as is.
+    static func sample(now: UInt64) -> Wire.StatsManualMerges {
+        let hour: UInt64 = 3_600_000
+        let row = { (task: String, title: String, hoursAgo: UInt64, by: String?, reason: String, level: String?, changes: UInt32) in
+            Wire.StatsManualMergeRow(task: task, title: title, at: now - hoursAgo * hour, by: by, reason: reason, level: level, changes: changes)
+        }
+        return .init(
+            total: 35, asIs: 22, withChanges: 13,
+            byReason: [.init(key: "risk", count: 17), .init(key: "classifier", count: 7), .init(key: "held", count: 5),
+                       .init(key: "mergedFirst", count: 3), .init(key: "github", count: 2), .init(key: "unknown", count: 1)],
+            recent: [
+                row("ATL-150", "Sign out across all devices", 2, "maya", "risk", "high", 3),
+                row("BIL-212", "Proration on plan change", 5, "sam", "risk", "medium", 0),
+                row("ONB-19", "Invite-teammates step", 9, "maya", "held", "low", 1),
+                row("ATL-141", "Replace jsonwebtoken with jose", 20, "jo", "classifier", "low", 0),
+                row("BIL-93", "Usage-based metering pipeline", 31, "sam", "risk", "medium", 2),
+                row("ONB-21", "Workspace templates picker", 44, "jo", "mergedFirst", "low", 0),
+                row("ATL-144", "Extract auth middleware from route handlers", 70, nil, "github", "low", 0),
+            ]
         )
     }
 }
