@@ -2488,6 +2488,8 @@ final class AppState {
             // The Detail panel's Reviewers row: `request:<id>:<login>`, and `reviewersask:<id>` opens its picker.
             case "request" where parts.count > 2: requestReviewers(parts[1], add: [parts[2]])
             case "reviewersask": NotificationCenter.default.post(name: ReviewersRow.demoOpen, object: parts[1])
+            // Machines → Add machine: `addmachine:shell` or `addmachine:cloud-init` opens it on that option.
+            case "addmachine": NotificationCenter.default.post(name: LiveMachinesView.demoAdd, object: parts.count > 1 ? parts[1] : nil)
             case "backlog": sendToBacklog(parts[1])
             case "plan": plan(parts[1])
             case "review": approveChanges(parts[1])

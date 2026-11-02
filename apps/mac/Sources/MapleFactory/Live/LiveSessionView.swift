@@ -266,6 +266,15 @@ struct AddMachineSheet: View {
     /// "Add this Mac": what it's doing now, or that it's done.
     @State private var thisMac: String?
     @State private var addingThisMac = false
+    @State private var method: Method
+
+    init(method: Method = .shell) {
+        _method = State(initialValue: method)
+    }
+    /// The cloud-init user-data for the current code, fetched from the factory.
+    @State private var snippet: String?
+    @State private var snippetError: String?
+    @State private var snippetCopied = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -282,6 +291,155 @@ struct AddMachineSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
+            Picker("", selection: $method) {
+                Text("Shell command").tag(Method.shell)
+                Text("Linux server (cloud-init)").tag(Method.cloudInit)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            if method == .cloudInit {
+                cloudInitSection
+            } else {
+                shellSection
+            }
+
+            HStack {
+                Spacer()
+                Text("Done")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.text)
+                    .padding(.horizontal, 14)
+                    .frame(height: 30)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Theme.fill).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke)))
+                    .contentShape(Rectangle())
+                    .onTapGesture { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(width: 560)
+        .task { await newCode() }
+        .task(id: cloudInitKey) { await loadCloudInit() }
+    }
+
+    enum Method: String, Hashable, Identifiable {
+        case shell, cloudInit
+        var id: String { rawValue }
+    }
+
+    /// What the cloud-init snippet depends on: switching to it, or a new code, (re)fetches it.
+    private var cloudInitKey: String? { method == .cloudInit ? enrollment?.code : nil }
+
+    private func newCode() async {
+        error = nil
+        copied = nil
+        snippetCopied = false
+        do { enrollment = try await client.enrollment() } catch { self.error = FactoryClient.describe(error) }
+    }
+
+    /// GET /cloud-init.yaml?code=… from the factory, so the snippet carries the factory's own origin.
+    private func loadCloudInit() async {
+        guard method == .cloudInit, let server = client.server, let code = enrollment?.code else { return }
+        snippet = nil
+        snippetError = nil
+        var components = URLComponents(url: server.appendingPathComponent("cloud-init.yaml"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "code", value: code)]
+        do {
+            let (data, response) = try await URLSession.shared.data(from: components.url!)
+            let body = String(decoding: data, as: UTF8.self)
+            if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+                snippetError = "The factory answered \(http.statusCode): \(body.trimmingCharacters(in: .whitespacesAndNewlines))"
+            } else {
+                snippet = body
+            }
+        } catch {
+            snippetError = error.localizedDescription
+        }
+    }
+
+    /// A Linux server from a cloud: user-data to paste when creating the droplet or VM.
+    @ViewBuilder private var cloudInitSection: some View {
+        Text("Paste this as user-data when you create the droplet or VM. The box makes a maple user, installs git, tmux, Node and the agent CLIs, and joins the factory as yours.")
+            .font(.system(size: 13))
+            .foregroundStyle(Theme.textMuted)
+            .fixedSize(horizontal: false, vertical: true)
+
+        if let enrollment {
+            ZStack(alignment: .topTrailing) {
+                ScrollView {
+                    Text(snippet ?? snippetError ?? "Loading…")
+                        .font(.system(size: 11.5, design: .monospaced))
+                        .foregroundStyle(snippetError == nil ? Color(hex: 0xD8DCE3) : Theme.State.cancelled)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                }
+                .frame(height: 260)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Term.bg))
+                if let snippet {
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(snippet, forType: .string)
+                        snippetCopied = true
+                    } label: {
+                        Label(snippetCopied ? "Copied" : "Copy", systemImage: snippetCopied ? "checkmark" : "doc.on.doc")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Theme.text)
+                            .padding(.horizontal, 10)
+                            .frame(height: 26)
+                            .background(RoundedRectangle(cornerRadius: 7).fill(Theme.fill).overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.stroke)))
+                    }
+                    .buttonStyle(.plain)
+                    .padding(8)
+                }
+            }
+            expiryRow(enrollment)
+            Text("Then ssh in as maple and run `claude` to sign in (/login); Codex signs in from the machine's page, or with `codex login --device-auth` over ssh.")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.textFaint)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if let error {
+            Label(error, systemImage: "exclamationmark.circle.fill")
+                .font(.system(size: 12.5))
+                .foregroundStyle(Theme.State.cancelled)
+        } else {
+            ProgressView().controlSize(.small)
+        }
+    }
+
+    /// "Code ABCD-EFGH · runs out in 14 min (3:42 PM)", counting down, red once it's run out.
+    private func expiryRow(_ enrollment: FactoryClient.Enrollment) -> some View {
+        let expires = Date(timeIntervalSince1970: enrollment.expiresAt / 1000)
+        return TimelineView(.periodic(from: .now, by: 1)) { context in
+            let left = expires.timeIntervalSince(context.date)
+            let clock = expires.formatted(date: .omitted, time: .shortened)
+            HStack(spacing: 6) {
+                Text("Code").foregroundStyle(Theme.textMuted)
+                Text(enrollment.code).font(.system(size: 13, weight: .semibold, design: .monospaced)).foregroundStyle(Theme.text)
+                Text("·").foregroundStyle(Theme.textFaint)
+                Group {
+                    if left <= 0 {
+                        Text("ran out at \(clock)")
+                    } else if left < 60 {
+                        Text("runs out in \(Int(left)) s (\(clock))")
+                    } else {
+                        Text("runs out in \(Int((left / 60).rounded(.up))) min (\(clock))")
+                    }
+                }
+                .foregroundStyle(left <= 0 ? Theme.State.cancelled : Theme.textMuted)
+                Spacer()
+                Text("New code")
+                    .foregroundStyle(Theme.accent)
+                    .contentShape(Rectangle())
+                    .onTapGesture { Task { await newCode() } }
+            }
+            .font(.system(size: 12))
+        }
+    }
+
+    /// Any Mac or Linux machine with a shell: the install.sh one-liner.
+    @ViewBuilder private var shellSection: some View {
             Text("Or run this on the Mac or Linux machine you're adding: it installs the runner and joins the machine as yours. The code works once, for 15 minutes.")
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.textMuted)
@@ -329,25 +487,6 @@ struct AddMachineSheet: View {
             } else {
                 ProgressView().controlSize(.small)
             }
-
-            HStack {
-                Spacer()
-                Text("Done")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Theme.text)
-                    .padding(.horizontal, 14)
-                    .frame(height: 30)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Theme.fill).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke)))
-                    .contentShape(Rectangle())
-                    .onTapGesture { dismiss() }
-                    .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(24)
-        .frame(width: 560)
-        .task {
-            do { enrollment = try await client.enrollment() } catch { self.error = FactoryClient.describe(error) }
-        }
     }
 
     /// This Mac: already in the factory, or one click to add it with the runner and tmux the app carries.

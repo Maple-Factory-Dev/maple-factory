@@ -64,6 +64,27 @@
         </ol>
 
         <p class="deploy-alt">Rather use the terminal? <code>npx maple-factory install</code> does all three, turns R2 on with you if it isn’t, and keeps the factory on signed stable or beta releases.</p>
+
+        <div class="deploy-extra" id="cloud-init">
+          <h2>Add a Linux server with cloud-init</h2>
+          <p>Making a droplet or VM for the factory? Paste the factory’s cloud-init snippet as its user-data and the box comes up already in the factory: a <code>maple</code> user with git, tmux, Node LTS and the agent CLIs, lingering on, and the runner running as maple’s service. Get it from the Mac app under Machines → Add machine → Linux server (cloud-init), with your code filled in, or fetch it yourself:</p>
+          <pre class="doc-code"><code>curl https://&lt;your factory&gt;/cloud-init.yaml?code=XXXX-XXXX</code></pre>
+          <p>It works as user-data on DigitalOcean, Hetzner, AWS, Multipass and anywhere else that runs cloud-init on Ubuntu or Debian. Trimmed, it looks like this:</p>
+          <pre class="doc-code"><code>#cloud-config
+users:
+  - default
+  - name: maple
+    shell: /bin/bash
+packages: [git, tmux, curl, ca-certificates]
+runcmd:
+  - |
+    curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+    apt-get install -y nodejs
+    npm install -g @anthropic-ai/claude-code @openai/codex
+    loginctl enable-linger maple
+    sudo -iu maple sh -c 'curl -fsSL https://&lt;your factory&gt;/install.sh | sh -s -- XXXX-XXXX'</code></pre>
+          <p class="deploy-note">The code works once and runs out 15 minutes after it was made, so create the box right away; the app shows when yours runs out. Agents still sign in by hand: <code>ssh maple@&lt;host&gt;</code> and run <code>claude</code> (then <code>/login</code>); Codex signs in from the machine’s page in the app, or with <code>codex login --device-auth</code>.</p>
+        </div>
       </div>
     </section>
   </main>

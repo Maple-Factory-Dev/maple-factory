@@ -437,6 +437,11 @@ section { position: relative; }
 .download-cta { margin: 32px 0 10px; }
 .access .access-mac { margin-top: 20px; font-size: 15px; }
 .deploy-alt { margin-top: 32px; color: var(--ink-2); font-size: 15.5px; }
+.deploy-extra { margin-top: 56px; padding-top: 40px; border-top: 1px solid var(--line); }
+.deploy-extra h2 { font-size: 28px; }
+.deploy-extra > p { margin-top: 14px; color: var(--ink-2); }
+.deploy-extra code { overflow-wrap: anywhere; }
+.deploy-extra .doc-code code { overflow-wrap: normal; }
 @media (max-width: 560px) {
   .deploy { padding: 56px 0 80px; }
   .deploy-steps li { padding: 20px 18px 20px 62px; }
