@@ -111,6 +111,7 @@ struct TaskDetailView: View {
         ForEach(task.mockups, id: \.id) { mockup in
             Card("Mockup: \(mockup.title)", icon: "photo.on.rectangle") { MockupView(task: task, mockup: mockup, compose: $compose) }
         }
+        if !task.artifacts.isEmpty { ArtifactsSection(task: task) }
     }
 }
 
