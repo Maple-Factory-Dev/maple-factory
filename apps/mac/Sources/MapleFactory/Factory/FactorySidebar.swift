@@ -213,7 +213,7 @@ struct FactorySidebar: View {
         let isMe = person.id == FactoryData.me.id
 
         return row(selected: false) {
-            AgentAvatar(agent: person, size: 21, online: online, mobile: mobile, shape: .roundedSquare)
+            AgentAvatar(agent: person, size: 21, online: online, mobile: mobile)
                 .frame(width: 20)
                 .opacity(online ? 1 : 0.55)
             HStack(spacing: 4) {

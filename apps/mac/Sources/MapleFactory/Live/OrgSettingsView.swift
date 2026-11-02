@@ -171,7 +171,7 @@ struct OrgSettingsView: View {
                         .font(.system(size: 16))
                         .foregroundStyle(.white)
                         .frame(width: 34, height: 34)
-                        .background(Circle().fill(Color.gray.gradient))
+                        .background(AgentAvatar.personShape(size: 34).fill(Color.gray.gradient))
                 }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(client.me.map { $0.name ?? "@\($0.login)" } ?? "Not signed in")

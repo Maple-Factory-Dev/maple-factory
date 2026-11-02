@@ -6,18 +6,25 @@ struct AgentAvatar: View {
     var online = false
     /// Online only on a phone: a small phone badge stands in for the green dot.
     var mobile = false
-    /// Circle everywhere by default; the sidebar's People rows use a rounded square.
-    var shape: AvatarShape = .circle
 
     enum AvatarShape: Equatable { case circle, roundedSquare }
     /// Corner radius of the rounded-square shape, as a share of the avatar's size.
     static let squareCornerRatio: CGFloat = 0.28
 
-    private var clip: AnyShape {
-        shape == .roundedSquare
-            ? AnyShape(RoundedRectangle(cornerRadius: size * Self.squareCornerRatio, style: .continuous))
-            : AnyShape(Circle())
+    /// People are rounded squares; bots stay round.
+    static func shape(for agent: Agent) -> AvatarShape { agent.isHuman ? .roundedSquare : .circle }
+
+    /// The rounded square every person avatar (and its ring or backing) uses.
+    static func personShape(size: CGFloat) -> RoundedRectangle {
+        RoundedRectangle(cornerRadius: size * squareCornerRatio, style: .continuous)
     }
+
+    /// The avatar's outline at `size`, for rings and backings drawn around it.
+    static func outline(for agent: Agent, size: CGFloat) -> AnyShape {
+        shape(for: agent) == .roundedSquare ? AnyShape(personShape(size: size)) : AnyShape(Circle())
+    }
+
+    private var clip: AnyShape { Self.outline(for: agent, size: size) }
 
     /// People show initials (or their GitHub picture over them); bots show a robot in their role's color.
     enum Face: Equatable { case initials, robot }
@@ -76,10 +83,10 @@ struct AvatarPair: View {
         HStack(spacing: -size * 0.3) {
             if let agent {
                 AgentAvatar(agent: agent, size: size)
-                    .background(Circle().fill(Theme.cardBG).padding(-1.5))
+                    .background(AgentAvatar.outline(for: agent, size: size + 3).fill(Theme.cardBG).padding(-1.5))
             }
             AgentAvatar(agent: owner, size: size)
-                .background(Circle().fill(Theme.cardBG).padding(-1.5))
+                .background(AgentAvatar.outline(for: owner, size: size + 3).fill(Theme.cardBG).padding(-1.5))
         }
     }
 }
@@ -93,7 +100,7 @@ struct Facepile: View {
         HStack(spacing: -size * 0.28) {
             ForEach(people) { person in
                 AgentAvatar(agent: person, size: size)
-                    .overlay(Circle().stroke(ringColor, lineWidth: 2))
+                    .overlay(AgentAvatar.outline(for: person, size: size).stroke(ringColor, lineWidth: 2))
             }
         }
     }
