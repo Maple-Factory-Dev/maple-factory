@@ -137,7 +137,13 @@ final class RecurringTests: XCTestCase {
     /// Repeats = Once at a time hides Every and saves a one-off; Run Now on a one-off removes it.
     func testOneOffScheduledTasks() {
         open(goal: "g-app", title: "Mobile app")
-        openRecurring()
+        openMenu()
+        let scheduled = app.buttons["goal-recurring"]
+        XCTAssertTrue(scheduled.waitForExistence(timeout: 5), "no Scheduled in the … menu")
+        XCTAssertEqual(scheduled.label, "Scheduled (3)")
+        snap("goal-menu-scheduled")
+        scheduled.tap()
+        XCTAssertTrue(app.navigationBars["Recurring / Scheduled"].waitForExistence(timeout: 10), "Recurring / Scheduled didn't open")
         let release = row("rec-release")
         XCTAssertTrue(release.waitForExistence(timeout: 5), "no one-off row")
         XCTAssertTrue(app.descendants(matching: .any)["recurring-once-rec-release"].exists, "the one-off has no calendar icon")
@@ -157,6 +163,7 @@ final class RecurringTests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any)["recurring-every"].exists, "Once still shows Every")
         XCTAssertTrue(app.staticTexts["Runs at"].exists, "no Runs at date")
         XCTAssertTrue(app.staticTexts["It starts one task then, and is removed; the task is the record."].exists)
+        snap("scheduled-editor-once-blank")
         app.textFields["recurring-title"].tap()
         app.textFields["recurring-title"].typeText("Ship the beta")
         app.textViews["recurring-prompt"].tap()
