@@ -338,7 +338,14 @@ enum FactoryData {
                                 agent: agents[2], owner: chris, detail: "1 check not run here", diff: (96, 14), span: 8...14, updated: "6m", footprint: (4, 110, false), areas: ["Onboarding"],
                                 pr: PullRequest(number: 501, state: .open, checks: CICheck.standard()))
             t.machine = "droplet"
-            t.checksNotRun = [Wire.TaskNotRun(command: "xcodebuild test -scheme Atlas", reason: "needs macos", kind: .requirement, status: .open, machine: "droplet", at: 0)]
+            // GitHub Actions covers two more (`→ gha:mac-build`, `→ gha:mac-ui-tests`): one proved, one failed (MF-337).
+            t.checksNotRun = [
+                Wire.TaskNotRun(command: "xcodebuild test -scheme Atlas", reason: "needs macos", kind: .requirement, status: .open, machine: "droplet", at: 0),
+                Wire.TaskNotRun(command: "swift test --filter MapleKitTests", reason: "proved by gha:mac-build", kind: .requirement, status: .covered, machine: "droplet", at: 0, resolvedAt: 0,
+                                cover: "mac-build", url: "https://github.com/Maple-Factory-Dev/maple-factory/actions/runs/1/job/2"),
+                Wire.TaskNotRun(command: "xcodebuild test -scheme AtlasUITests", reason: "gha:mac-ui-tests failed", kind: .requirement, status: .failed, machine: "droplet", at: 0, resolvedAt: 0,
+                                cover: "mac-ui-tests", url: "https://github.com/Maple-Factory-Dev/maple-factory/actions/runs/1/job/3"),
+            ]
             return t
         }(),
         FactoryTask(id: "ONB-21", goal: "Onboarding revamp", title: "Workspace templates picker", state: .planning,
