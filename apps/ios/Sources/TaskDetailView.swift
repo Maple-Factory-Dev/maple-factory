@@ -9,7 +9,8 @@ struct TaskDetailView: View {
     @Environment(FactoryStore.self) private var store
     let id: String
 
-    @State private var section: Section = .overview
+    /// `-taskSection Review` opens on that section (screenshots).
+    @State private var section: Section = Section(rawValue: UserDefaults.standard.string(forKey: "taskSection") ?? "") ?? .overview
     @State private var compose: Compose?
 
     enum Section: String, CaseIterable { case overview = "Overview", review = "Review", diff = "Diff", timeline = "Timeline" }
@@ -727,6 +728,7 @@ struct ReviewSection: View {
                         }
                     }
                 }
+                NotRunRows(task: task)
                 if pr.checks.contains(where: { $0.status == .failed }), pr.state == .open || pr.state == .draft, pr.url != nil {
                     Button {
                         store.rerunFailedChecks(task.id)
@@ -738,6 +740,47 @@ struct ReviewSection: View {
                 }
                 if let link = pr.url.flatMap(URL.init(string:)) { Link("Open on GitHub", destination: link).font(.callout) }
             }
+        }
+    }
+}
+
+/// The checks its machine couldn't run (`needs macos`): grey "Not run here" rows, not failures, each
+/// open (holding auto-merge) until a person waives it with a note.
+private struct NotRunRows: View {
+    @Environment(FactoryStore.self) private var store
+    let task: Wire.Task
+    @State private var waiving: Wire.TaskNotRun?
+    @State private var note = ""
+
+    var body: some View {
+        ForEach(task.checksNotRun ?? [], id: \.command) { item in
+            HStack(alignment: .firstTextBaseline) {
+                Image(systemName: item.status == .waived ? "checkmark.circle" : "minus.circle").foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.command).font(.callout.monospaced()).foregroundStyle(.secondary)
+                    Text("Not run here: \(item.reason)").font(.caption).foregroundStyle(.secondary)
+                    if item.status == .waived {
+                        Text("Waived by \(item.by ?? "someone"): \(item.note ?? "")").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                if item.status == .open {
+                    Button("Waive…") { note = ""; waiving = item }
+                        .font(.caption)
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("waive-\(item.command)")
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("not-run-\(item.command)")
+        }
+        .alert("Waive this check?", isPresented: Binding(get: { waiving != nil }, set: { if !$0 { waiving = nil } }), presenting: waiving) { item in
+            TextField("Why it's fine without it", text: $note)
+            Button("Cancel", role: .cancel) {}
+            Button("Waive") { store.waiveCheck(task.id, command: item.command, note: note.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                .disabled(note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        } message: { item in
+            Text("`\(item.command)` wasn't run (\(item.reason)). Say why it's fine to merge without it.")
         }
     }
 }
