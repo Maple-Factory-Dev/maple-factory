@@ -523,6 +523,8 @@ export interface Check {
   job?: number | null;
   /** Its page on GitHub: the job's, or where a commit status points. */
   url?: string | null;
+  /** Completed as skipped or neutral: shown as passed, but never proof of anything (MF-337). */
+  skipped?: boolean;
 }
 
 const RUN_FAILED = new Set(["failure", "timed_out", "cancelled", "action_required", "startup_failure"]);
@@ -556,6 +558,7 @@ export async function checks(app: GitHubApp, owner: string, repo: string, sha: s
       id,
       job: actions ? id : null,
       url: str(r.html_url) ?? str(r.details_url),
+      ...(done && (r.conclusion === "skipped" || r.conclusion === "neutral") ? { skipped: true } : {}),
     });
   }
   const statuses = await call(app, "GET", `/repos/${seg(owner)}/${seg(repo)}/commits/${seg(sha)}/status?per_page=100`, auth);
