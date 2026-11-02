@@ -1326,6 +1326,8 @@ extension FactoryStore {
                                  shareable: false, agent: item.agent, repo: item.repo)
             feed.apply(.taskUpdated(.init(task: task)))
             update(m.id) { $0.lastTask = task.id; $0.lastRunAt = DemoData.now }
+            // A one-off is done once its task starts, the way the server removes it.
+            if item.once == true { feed.apply(.recurringDeleted(.init(id: m.id))) }
         case .recurringDelete(let m):
             feed.apply(.recurringDeleted(.init(id: m.id)))
         default:

@@ -54,11 +54,17 @@ enum DemoData {
         return feed
     }
 
-    /// Two on Mobile app (yours to change), one paused with a last run; one on Kit's Public API (read-only as a member).
+    /// Three on Mobile app (yours to change): one paused with a last run, and a one-off (`once`) tomorrow at 9:00;
+    /// one on Kit's Public API (read-only as a member).
     private static func recurring() -> [Wire.Recurring] {
         let week: UInt32 = 7 * 24 * 60
         func ahead(_ minutes: Double) -> UInt64 { now + UInt64(minutes * 60_000) }
+        let cal = Calendar.current
+        let tomorrow = cal.date(byAdding: .day, value: 1, to: Date(timeIntervalSince1970: Double(now) / 1000)) ?? Date()
+        let release = UInt64((cal.date(bySettingHour: 9, minute: 0, second: 0, of: tomorrow) ?? tomorrow).timeIntervalSince1970 * 1000)
         return [
+            Wire.Recurring(id: "rec-release", goal: "g-app", title: "Cut the release branch", brief: "Cut release/next from main, bump the build number and open the release PR.",
+                           agent: "claude", every: week, unit: .weeks, firstAt: release, timeZone: "America/New_York", nextAt: release, paused: false, by: me, once: true),
             Wire.Recurring(id: "rec-deps", goal: "g-app", title: "Check for dependency updates", brief: "Update the Swift packages and CocoaPods to their latest minor versions; fix anything that breaks.",
                            agent: "claude", every: 2 * week, unit: .weeks, firstAt: ago(60 * 24 * 12), timeZone: "America/New_York", nextAt: ahead(60 * 26), paused: false, by: me),
             Wire.Recurring(id: "rec-crash", goal: "g-app", title: "Triage new crash reports", brief: "Read this week's new Sentry issues and propose a task for each real crash.",

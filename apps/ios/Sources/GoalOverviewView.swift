@@ -3,7 +3,7 @@ import SwiftUI
 
 /// A goal's page: an Overview like the Mac's, sorted by what you should do next (MF-324). What's
 /// waiting on you, what's up next, what's moving, and what landed lately; every task, Backlog and older
-/// ones included, is under All tasks. Auto-merge, archiving, Edit goal and Recurring sit behind the … menu.
+/// ones included, is under All tasks. Auto-merge, archiving, Edit goal and Scheduled (recurring and one-off tasks) sit behind the … menu.
 struct GoalView: View {
     @Environment(FactoryStore.self) private var store
     @Environment(\.dismiss) private var dismiss
@@ -11,7 +11,7 @@ struct GoalView: View {
     @State private var composing = UserDefaults.standard.bool(forKey: "newTask")
     /// `-editGoal YES` opens the Edit goal sheet, for screenshots.
     @State private var editingGoal = UserDefaults.standard.bool(forKey: "editGoal")
-    /// `-recurring YES` opens the goal's recurring tasks, for screenshots.
+    /// `-recurring YES` opens the goal's recurring and scheduled tasks, for screenshots.
     @State private var showRecurring = UserDefaults.standard.bool(forKey: "recurring")
     /// `-goalSettings YES` opens Goal settings, for screenshots.
     @State private var showSettings = UserDefaults.standard.bool(forKey: "goalSettings")
@@ -78,7 +78,7 @@ struct GoalView: View {
                     .accessibilityIdentifier("editGoal")
             }
             Button { showRecurring = true } label: {
-                Label("Recurring (\(store.recurring(goal: id).count))", systemImage: "clock.arrow.circlepath")
+                Label("Scheduled (\(store.recurring(goal: id).count))", systemImage: "clock.arrow.circlepath")
             }
             .accessibilityIdentifier("goal-recurring")
             Button { showSettings = true } label: { Label("Goal settings", systemImage: "gearshape") }
