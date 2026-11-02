@@ -1171,6 +1171,11 @@ export const structs: Record<string, Struct> = {
     fields: { weekday: "u16", hour: "u16", merges: "u32", hands: "u32" },
     fieldDocs: { weekday: "0 is Sunday … 6 Saturday.", hour: "0–23." },
   },
+  StatsCalendarDay: {
+    doc: "One local day of the merges calendar, in the summary's `timeZone`.",
+    fields: { day: "string", merges: "u32" },
+    fieldDocs: { day: "YYYY-MM-DD, local." },
+  },
   StatsGoalRow: {
     fields: { goal: "string", name: "string", tasks: "u32", merged: "u32", hands: "u32", steers: "u32", reviewRounds: "u32", cycleMedianMs: "u64?", activeCycleMedianMs: "u64?", idleMedianMs: "u64?" },
     fieldDocs: {
@@ -1305,11 +1310,13 @@ export const structs: Record<string, Struct> = {
       findings: "StatsFindings?",
       manualMerges: "StatsManualMerges?",
       hours: "StatsHourCell[]?",
+      calendar: "StatsCalendarDay[]?",
       timeZone: "string?",
     },
     fieldDocs: {
       hours: "All 168 weekday × hour cells of the window's merges and hands, in `timeZone`; none from a server older than it.",
-      timeZone: "The IANA zone `hours` is bucketed in: the `tz` stats.get asked for, or UTC when it gave none or an unknown one.",
+      calendar: "Merges per local day from the Sunday 52 weeks back through today, in `timeZone` and the goal, whatever `days` is; none from a server older than it.",
+      timeZone: "The IANA zone `hours` and `calendar` are bucketed in: the `tz` stats.get asked for, or UTC when it gave none or an unknown one.",
       manualMerges: "Merges people made, by reason; none from a server older than it.",
       costByRole: "planner, builder, reviewer, …",
       costByAgent: "Keyed \"agent · model\".",

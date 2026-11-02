@@ -179,6 +179,11 @@ export class Store {
     return this.statRows("SELECT * FROM stats_events WHERE at >= ? ORDER BY at", since);
   }
 
+  /** Only the merges since `since` (when and which goal), for the year-long merges calendar without loading every event. */
+  statMerges(since = 0): { at: number; goal: string }[] {
+    return this.sql.exec<{ at: number; goal: string }>("SELECT at, goal FROM stats_events WHERE kind = 'merged' AND at >= ? ORDER BY at", since).toArray();
+  }
+
   /** The review rounds, steers and review requests `tasks` had before `before`: a merge's earlier rounds,
    *  for review rounds per merge, and the changes people asked for, for merged as is or after changes. */
   statRoundsBefore(tasks: string[], before: number): StatEvent[] {

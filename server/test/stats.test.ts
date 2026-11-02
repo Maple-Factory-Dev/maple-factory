@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { findingArea, findingDetail, inferEvents, manualReason, median, statsWindow, summarize, type StatEvent } from "../src/factory/stats.ts";
+import { findingArea, findingDetail, inferEvents, manualReason, median, mergeCalendar, statsWindow, summarize, type StatEvent } from "../src/factory/stats.ts";
 import { Store } from "../src/factory/store.ts";
 
 const DAY = 86_400_000;
@@ -574,4 +574,59 @@ test("summarize: active and idle medians over merges that carry the split; cycle
   assert.equal(before.totals.cycleMedianMs, 40 * H);
   assert.equal(before.totals.activeCycleMedianMs, null);
   assert.equal(before.totals.idleMedianMs, null);
+});
+
+test("merges calendar: Sunday 52 weeks back through today, local days, the goal, zeros filled in", () => {
+  const now = Date.parse("2026-11-01T03:00:00Z"); // Sun 1 Nov 03:00 UTC · Sat 31 Oct 23:00 EDT
+  const merges = [
+    { at: Date.parse("2026-10-31T14:00:00Z"), goal: "g1" }, // Sat 31 Oct everywhere here
+    { at: Date.parse("2026-11-01T02:00:00Z"), goal: "g1" }, // Sun 1 Nov UTC · Sat 31 Oct 22:00 EDT
+    { at: Date.parse("2026-11-01T02:30:00Z"), goal: "g2" }, // another goal
+    { at: Date.parse("2026-03-04T12:00:00Z"), goal: "g1" }, // a lone day months back
+    { at: Date.parse("2025-01-01T12:00:00Z"), goal: "g1" }, // before the calendar starts
+  ];
+  const sum = (c: { merges: number }[]) => c.reduce((a, d) => a + d.merges, 0);
+  const day = (c: { day: string; merges: number }[], d: string) => c.find((x) => x.day === d)?.merges;
+
+  const utc = mergeCalendar(merges, now, "UTC");
+  assert.equal(utc.at(-1)!.day, "2026-11-01"); // today, a Sunday in UTC: a week of one day
+  assert.equal(utc[0].day, "2025-11-02");
+  assert.equal(utc.length, 365);
+  assert.equal(day(utc, "2026-10-31"), 1);
+  assert.equal(day(utc, "2026-11-01"), 2);
+
+  const ny = mergeCalendar(merges, now, "America/New_York");
+  assert.equal(ny.at(-1)!.day, "2026-10-31"); // still Saturday evening in New York
+  assert.equal(ny[0].day, "2025-10-26");
+  assert.equal(ny.length, 371);
+  assert.equal(day(ny, "2026-10-31"), 3);
+  assert.equal(day(ny, "2026-11-01"), undefined);
+
+  const g1 = mergeCalendar(merges, now, "America/New_York", "g1");
+  assert.equal(day(g1, "2026-10-31"), 2);
+  assert.equal(sum(g1), 3);
+  assert.equal(day(g1, "2026-03-04"), 1);
+  assert.equal(day(g1, "2026-03-05"), 0); // gaps are zeros, not missing
+
+  for (const c of [utc, ny, g1, mergeCalendar(merges, now, "Mars/Olympus")]) {
+    assert.ok(c.length >= 365 && c.length <= 371);
+    assert.equal(new Date(`${c[0].day}T00:00:00Z`).getUTCDay(), 0);
+    for (let i = 1; i < c.length; i++) assert.equal(Date.parse(`${c[i].day}T00:00:00Z`) - Date.parse(`${c[i - 1].day}T00:00:00Z`), DAY);
+  }
+  assert.deepEqual(mergeCalendar(merges, now, "Mars/Olympus"), utc);
+
+  // summarize: whatever the window, and none without the merges.
+  const s = summarize([], [], { days: 1, now, tz: "America/New_York", goal: "g2", calendarMerges: merges });
+  assert.equal(s.calendar!.length, 371);
+  assert.equal(sum(s.calendar!), 1);
+  assert.equal(summarize([], [], { days: 7, now }).calendar, undefined);
+});
+
+test("statMerges reads only merges since the cut-off", () => {
+  const store = new Store(sqlStorage());
+  const base = { task: "T-1", goal: "g1", role: null, actor: null, detail: {} };
+  store.recordStat({ ...base, at: 100, kind: "merged" });
+  store.recordStat({ ...base, at: 200, kind: "steer" });
+  store.recordStat({ ...base, at: 300, kind: "merged", goal: "g2" });
+  assert.deepEqual(store.statMerges(150).map((m) => ({ ...m })), [{ at: 300, goal: "g2" }]);
 });

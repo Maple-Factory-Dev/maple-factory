@@ -1415,6 +1415,13 @@ export interface StatsHourCell {
   hands: number;
 }
 
+/** One local day of the merges calendar, in the summary's `timeZone`. */
+export interface StatsCalendarDay {
+  /** YYYY-MM-DD, local. */
+  day: string;
+  merges: number;
+}
+
 export interface StatsGoalRow {
   goal: string;
   name: string;
@@ -1632,7 +1639,9 @@ export interface StatsSummary {
   manualMerges?: StatsManualMerges | null;
   /** All 168 weekday × hour cells of the window's merges and hands, in `timeZone`; none from a server older than it. */
   hours?: StatsHourCell[] | null;
-  /** The IANA zone `hours` is bucketed in: the `tz` stats.get asked for, or UTC when it gave none or an unknown one. */
+  /** Merges per local day from the Sunday 52 weeks back through today, in `timeZone` and the goal, whatever `days` is; none from a server older than it. */
+  calendar?: StatsCalendarDay[] | null;
+  /** The IANA zone `hours` and `calendar` are bucketed in: the `tz` stats.get asked for, or UTC when it gave none or an unknown one. */
   timeZone?: string | null;
 }
 

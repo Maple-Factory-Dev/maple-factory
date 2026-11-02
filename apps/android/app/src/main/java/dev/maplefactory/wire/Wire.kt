@@ -2124,6 +2124,14 @@ data class StatsHourCell(
     val hands: Long,
 )
 
+/** One local day of the merges calendar, in the summary's `timeZone`. */
+@Serializable
+data class StatsCalendarDay(
+    /** YYYY-MM-DD, local. */
+    val day: String,
+    val merges: Long,
+)
+
 @Serializable
 data class StatsGoalRow(
     val goal: String,
@@ -2358,7 +2366,9 @@ data class StatsSummary(
     val manualMerges: StatsManualMerges? = null,
     /** All 168 weekday × hour cells of the window's merges and hands, in `timeZone`; none from a server older than it. */
     val hours: List<StatsHourCell>? = null,
-    /** The IANA zone `hours` is bucketed in: the `tz` stats.get asked for, or UTC when it gave none or an unknown one. */
+    /** Merges per local day from the Sunday 52 weeks back through today, in `timeZone` and the goal, whatever `days` is; none from a server older than it. */
+    val calendar: List<StatsCalendarDay>? = null,
+    /** The IANA zone `hours` and `calendar` are bucketed in: the `tz` stats.get asked for, or UTC when it gave none or an unknown one. */
     val timeZone: String? = null,
 )
 
