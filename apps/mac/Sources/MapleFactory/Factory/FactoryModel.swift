@@ -250,6 +250,8 @@ struct FactoryTask: Identifiable {
     var machine: String? = nil
     /// Machine tags it needs (macos, xcode…): only a machine with every one takes it (live only).
     var requires: [String] = []
+    /// Checks its last push couldn't run on that machine (`needs macos`): open until a person waives them.
+    var checksNotRun: [Wire.TaskNotRun] = []
     /// Its last pushed commit (live only).
     var pushed: String? = nil
     /// Its git branch, once it has one (live only).

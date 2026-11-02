@@ -2313,6 +2313,22 @@ final class AppState {
         withAnimation(.snappy(duration: 0.25)) { _ = keptWhole.insert(id) }
     }
 
+    /// Waives a check the task's machine couldn't run (`needs macos`), with why that's fine.
+    func waiveCheck(_ id: String, command: String, note: String) {
+        if let client, isLive {
+            client.send(.taskWaiveCheck(.init(id: id, command: command, note: note)))
+            return
+        }
+        withAnimation(.snappy(duration: 0.25)) {
+            update(id) { task in
+                guard let i = task.checksNotRun.firstIndex(where: { $0.command == command && $0.status == .open }) else { return }
+                task.checksNotRun[i].status = .waived
+                task.checksNotRun[i].note = note
+                task.checksNotRun[i].by = "you"
+            }
+        }
+    }
+
     /// Stops the auto-merge counting down on a task; a person merges it instead.
     func holdMerge(_ id: String) {
         if let client, isLive {

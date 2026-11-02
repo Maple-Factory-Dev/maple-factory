@@ -19,6 +19,147 @@ extension AppState {
     }
 }
 
+/// The repo's checks on its last push: CI's, passed or not, and the ones its machine couldn't run
+/// (`needs macos`) in grey, not red. Those stay open, holding auto-merge, until a person waives them with a note.
+struct ChecksSection: View {
+    let task: FactoryTask
+    @Environment(AppState.self) private var state
+    @State private var waiving: Wire.TaskNotRun?
+
+    private var ran: [CICheck] { task.pr?.checks ?? [] }
+    private var open: Int { task.checksNotRun.filter { $0.status == .open }.count }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                SectionLabel(title: "Checks")
+                Text(summary)
+                    .font(.system(size: 11.5, weight: .medium).monospacedDigit())
+                    .foregroundStyle(Theme.textMuted)
+                Spacer()
+            }
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(ran.enumerated()), id: \.element.id) { index, check in
+                    ranRow(check)
+                    Hairline().padding(.leading, 36)
+                }
+                ForEach(Array(task.checksNotRun.enumerated()), id: \.element.command) { index, item in
+                    NotRunRow(item: item) { waiving = item }
+                    if index < task.checksNotRun.count - 1 { Hairline().padding(.leading, 36) }
+                }
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Theme.cardBG)
+                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.stroke))
+            )
+            if open > 0 {
+                Text("Auto-merge waits until \(open == 1 ? "it's" : "they're") run on a machine that can, or waived with a note.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textMuted)
+            }
+        }
+        .sheet(item: $waiving) { item in
+            WaiveCheckSheet(item: item) { note in state.waiveCheck(task.id, command: item.command, note: note) }
+        }
+    }
+
+    private var summary: String {
+        let passed = ran.filter { $0.status == .passed }.count
+        var parts = ran.isEmpty ? [] : ["\(passed) passed"]
+        parts.append("\(task.checksNotRun.count) not run here")
+        return parts.joined(separator: " · ")
+    }
+
+    private func ranRow(_ check: CICheck) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: check.status == .passed ? "checkmark.circle.fill" : check.status == .failed ? "xmark.circle.fill" : "circle.dotted")
+                .font(.system(size: 13))
+                .foregroundStyle(check.status == .passed ? Theme.State.merged : check.status == .failed ? Theme.State.cancelled : Theme.textMuted)
+                .frame(width: 16)
+            Text(check.name).font(.system(size: 12.5, design: .monospaced)).foregroundStyle(Theme.text)
+            Spacer()
+            Text(check.status == .passed ? "Passed" : check.status == .failed ? "Failed" : "Running")
+                .font(.system(size: 11.5)).foregroundStyle(Theme.textMuted)
+        }
+        .padding(.horizontal, 12)
+        .frame(minHeight: 36)
+    }
+}
+
+/// One check that wasn't run: grey, with why ("Not run here: needs macos"), and Waive… while it's open.
+private struct NotRunRow: View {
+    let item: Wire.TaskNotRun
+    let waive: () -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: item.status == .waived ? "checkmark.circle" : "minus.circle")
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.textFaint)
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.command).font(.system(size: 12.5, design: .monospaced)).foregroundStyle(Theme.textMuted)
+                Text("Not run here: \(item.reason)\(item.machine.map { " (on \($0))" } ?? "")")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textMuted)
+                if item.status == .waived {
+                    Text("Waived by \(item.by ?? "someone"): \(item.note ?? "")")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer()
+            if item.status == .open {
+                Button("Waive…", action: waive)
+                    .controlSize(.small)
+                    .help("Waive this check with a note saying why it's fine without it.")
+            } else {
+                Text("Waived").font(.system(size: 11.5)).foregroundStyle(Theme.textMuted)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+    }
+}
+
+/// Asks why it's fine to merge without a check, then waives it.
+private struct WaiveCheckSheet: View {
+    let item: Wire.TaskNotRun
+    let waive: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var note = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Waive `\(item.command)`?").font(.system(size: 14, weight: .semibold))
+            Text("It wasn't run (\(item.reason)). Say why it's fine to merge without it; the note goes on the task.")
+                .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                .fixedSize(horizontal: false, vertical: true)
+            TextField("e.g. CI runs xcodebuild on every PR", text: $note, axis: .vertical)
+                .lineLimit(2...5)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Waive") {
+                    waive(note.trimmingCharacters(in: .whitespacesAndNewlines))
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(18)
+        .frame(width: 400)
+    }
+}
+
+extension Wire.TaskNotRun: Identifiable {
+    public var id: String { command }
+}
+
 /// The acceptance checks a plan commits to, and — once building — the evidence the agent attached for each.
 struct DoneWhenSection: View {
     let task: FactoryTask

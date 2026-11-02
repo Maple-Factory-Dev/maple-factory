@@ -369,7 +369,13 @@ struct TaskFocusView: View {
                 }
             }
         case .doneWhen:
-            if !task.doneWhen.isEmpty { DoneWhenSection(task: task).id(section.anchor) }
+            if !task.doneWhen.isEmpty || !task.checksNotRun.isEmpty {
+                VStack(alignment: .leading, spacing: 22) {
+                    if !task.doneWhen.isEmpty { DoneWhenSection(task: task) }
+                    if !task.checksNotRun.isEmpty { ChecksSection(task: task) }
+                }
+                .id(section.anchor)
+            }
         case .autoReview:
             if let review = task.autoReview, !(task.state == .cancelled && review.rounds.isEmpty) {
                 AutoReviewSection(task: task, review: review).id(section.anchor)
