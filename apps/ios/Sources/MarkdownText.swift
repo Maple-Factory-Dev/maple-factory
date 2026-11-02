@@ -3,8 +3,9 @@ import SwiftUI
 
 /// Markdown as the Mac's MarkdownPreview shows it, for comments, change requests and briefs: headings,
 /// lists and task lists, quotes, code blocks and rules, with inline bold, italic, code and links.
-/// Attached images (`![name](/attachments/…)`) show as thumbnails that open full size; attached files as
-/// a paperclip row.
+/// Attached images and files (`![name](path)`, `[name](/attachments/…)`) go through AttachmentGallery, as
+/// the brief's do: each run of them is one grid of thumbnails that open the viewer, inline videos and
+/// Quick Look chips.
 struct MarkdownText: View {
     let source: String
     var font: Font = .callout
@@ -13,15 +14,20 @@ struct MarkdownText: View {
         let blocks = MarkdownBlock.parse(source)
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(Self.grouped(blocks).enumerated()), id: \.offset) { _, group in
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(Array(group.enumerated()), id: \.offset) { _, block in view(for: block) }
+                if let attachments = Self.attachments(group) {
+                    AttachmentGallery(attachments: attachments)
+                } else {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(Array(group.enumerated()), id: \.offset) { _, block in view(for: block) }
+                    }
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// Runs of list items sit closer together than the paragraphs around them.
+    /// Runs of list items sit closer together than the paragraphs around them; a run of attachments
+    /// becomes one gallery.
     private static func grouped(_ blocks: [MarkdownBlock]) -> [[MarkdownBlock]] {
         func isListItem(_ block: MarkdownBlock) -> Bool {
             switch block {
@@ -31,13 +37,29 @@ struct MarkdownText: View {
         }
         var groups: [[MarkdownBlock]] = []
         for block in blocks {
-            if isListItem(block), let last = groups.last?.last, isListItem(last) {
+            if let last = groups.last?.last,
+               (isListItem(block) && isListItem(last)) || (attachment(block) != nil && attachment(last) != nil) {
                 groups[groups.count - 1].append(block)
             } else {
                 groups.append([block])
             }
         }
         return groups
+    }
+
+    /// An image or file block as the gallery shows it.
+    private static func attachment(_ block: MarkdownBlock) -> LinkedAttachment? {
+        switch block {
+        case let .image(alt, path): LinkedAttachment(name: alt, path: path, image: true)
+        case let .file(name, path): LinkedAttachment(name: name, path: path, image: false)
+        default: nil
+        }
+    }
+
+    /// A group that is all attachments, or nil.
+    private static func attachments(_ group: [MarkdownBlock]) -> [LinkedAttachment]? {
+        let attachments = group.compactMap(attachment)
+        return attachments.count == group.count && !attachments.isEmpty ? attachments : nil
     }
 
     @ViewBuilder private func view(for block: MarkdownBlock) -> some View {
@@ -85,10 +107,8 @@ struct MarkdownText: View {
             Text(Self.inline(text)).font(font).fixedSize(horizontal: false, vertical: true)
         case .rule:
             Divider()
-        case let .image(alt, path):
-            AttachmentImage(alt: alt, path: path)
-        case let .file(name, path):
-            AttachmentFileRow(name: name, path: path)
+        case .image, .file:
+            EmptyView() // Drawn by AttachmentGallery, as its group.
         }
     }
 
@@ -105,80 +125,5 @@ struct MarkdownText: View {
             }
         }
         return result
-    }
-}
-
-/// An image in Markdown: an attachment loaded with your token (the app's mark stands in for it in the
-/// demo, which stores nothing), or one on the web. A thumbnail that opens full screen.
-struct AttachmentImage: View {
-    @Environment(FactoryStore.self) private var store
-    let alt: String
-    let path: String
-    @State private var image: UIImage?
-    @State private var failed = false
-    @State private var expanded = false
-
-    var body: some View {
-        Button { expanded = image != nil } label: {
-            Group {
-                if let image {
-                    Image(uiImage: image).resizable().scaledToFill()
-                } else {
-                    ZStack {
-                        Rectangle().fill(.quaternary)
-                        if failed { Image(systemName: "photo").foregroundStyle(.secondary) } else { ProgressView() }
-                    }
-                }
-            }
-            .frame(width: 160, height: 120)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(alt.isEmpty ? "Image" : alt)
-        .accessibilityIdentifier("markdown.image")
-        .task(id: path) { await load() }
-        .fullScreenCover(isPresented: $expanded) {
-            NavigationStack {
-                ZStack {
-                    Color.black.ignoresSafeArea()
-                    if let image { Image(uiImage: image).resizable().scaledToFit() }
-                }
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { expanded = false } } }
-                .navigationTitle(alt)
-                .navigationBarTitleDisplayMode(.inline)
-            }
-        }
-    }
-
-    private func load() async {
-        if store.status == .demo, path.hasPrefix("/attachments/") {
-            image = UIImage(named: "Mark")
-            return
-        }
-        let data: Data?
-        if path.hasPrefix("/") {
-            data = await store.attachment(path)
-        } else if let url = URL(string: path), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
-            data = try? await URLSession.shared.data(from: url).0
-        } else {
-            data = nil
-        }
-        image = data.flatMap(UIImage.init(data:))
-        failed = image == nil
-    }
-}
-
-/// A file attached in Markdown (`[name](/attachments/…)`): a paperclip row with its name.
-struct AttachmentFileRow: View {
-    let name: String
-    let path: String
-
-    var body: some View {
-        Label(name, systemImage: "paperclip")
-            .font(.callout)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary.opacity(0.6)))
-            .accessibilityIdentifier("markdown.file")
     }
 }

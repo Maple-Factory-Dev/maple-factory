@@ -828,8 +828,9 @@ final class FactoryStore {
 
     /// An attachment's bytes (/attachments/<id>/<name>), with your token.
     func attachment(_ path: String) async -> Data? {
-        // The demo's attachments: the app's mark for any image, a line of text for anything else.
-        if status == .demo, path.hasPrefix("/attachments/demo/") {
+        // The demo's attachments (its samples and its own uploads): the artifact file if there is one, the
+        // app's mark for any image, a line of text for anything else.
+        if status == .demo, path.hasPrefix("/attachments/") {
             try? await Task.sleep(for: .seconds(0.2))
             if let file = DemoData.artifactFile(path) { return file }
             if LinkedAttachment.kind(of: path, image: false) == .image { return UIImage(named: "Mark")?.pngData() }
