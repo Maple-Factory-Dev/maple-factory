@@ -2422,6 +2422,15 @@ pub struct StatsHourCell {
     pub hands: u32,
 }
 
+/// One local day of the merges calendar, in the summary's `timeZone`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsCalendarDay {
+    /// YYYY-MM-DD, local.
+    pub day: String,
+    pub merges: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatsGoalRow {
@@ -2714,7 +2723,10 @@ pub struct StatsSummary {
     /// All 168 weekday × hour cells of the window's merges and hands, in `timeZone`; none from a server older than it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hours: Option<Vec<StatsHourCell>>,
-    /// The IANA zone `hours` is bucketed in: the `tz` stats.get asked for, or UTC when it gave none or an unknown one.
+    /// Merges per local day from the Sunday 52 weeks back through today, in `timeZone` and the goal, whatever `days` is; none from a server older than it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calendar: Option<Vec<StatsCalendarDay>>,
+    /// The IANA zone `hours` and `calendar` are bucketed in: the `tz` stats.get asked for, or UTC when it gave none or an unknown one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub time_zone: Option<String>,
 }

@@ -4605,6 +4605,18 @@ public enum Wire {
         }
     }
 
+    /// One local day of the merges calendar, in the summary's `timeZone`.
+    public struct StatsCalendarDay: Codable, Hashable, Sendable {
+        /// YYYY-MM-DD, local.
+        public var day: String
+        public var merges: UInt32
+
+        public init(day: String, merges: UInt32) {
+            self.day = day
+            self.merges = merges
+        }
+    }
+
     public struct StatsGoalRow: Codable, Hashable, Sendable {
         public var goal: String
         public var name: String
@@ -5006,10 +5018,12 @@ public enum Wire {
         public var manualMerges: StatsManualMerges?
         /// All 168 weekday × hour cells of the window's merges and hands, in `timeZone`; none from a server older than it.
         public var hours: [StatsHourCell]?
-        /// The IANA zone `hours` is bucketed in: the `tz` stats.get asked for, or UTC when it gave none or an unknown one.
+        /// Merges per local day from the Sunday 52 weeks back through today, in `timeZone` and the goal, whatever `days` is; none from a server older than it.
+        public var calendar: [StatsCalendarDay]?
+        /// The IANA zone `hours` and `calendar` are bucketed in: the `tz` stats.get asked for, or UTC when it gave none or an unknown one.
         public var timeZone: String?
 
-        public init(days: UInt32, goal: String? = nil, since: UInt64, generatedAt: UInt64, inferred: UInt32, totals: StatsTotals, handsByReason: [StatsCount] = [], findingsByKind: [StatsCount] = [], findingsBySeverity: [StatsCount] = [], restartsByCause: [StatsCount] = [], prompts: [StatsCount] = [], reviewVerdicts: [StatsCount] = [], daily: [StatsDay] = [], goals: [StatsGoalRow] = [], agents: [StatsAgentRow] = [], topTasks: [StatsTaskRow] = [], costTotal: StatsCostRow? = nil, costByRole: [StatsCostRow] = [], costByAgent: [StatsCostRow] = [], findings: StatsFindings? = nil, manualMerges: StatsManualMerges? = nil, hours: [StatsHourCell]? = nil, timeZone: String? = nil) {
+        public init(days: UInt32, goal: String? = nil, since: UInt64, generatedAt: UInt64, inferred: UInt32, totals: StatsTotals, handsByReason: [StatsCount] = [], findingsByKind: [StatsCount] = [], findingsBySeverity: [StatsCount] = [], restartsByCause: [StatsCount] = [], prompts: [StatsCount] = [], reviewVerdicts: [StatsCount] = [], daily: [StatsDay] = [], goals: [StatsGoalRow] = [], agents: [StatsAgentRow] = [], topTasks: [StatsTaskRow] = [], costTotal: StatsCostRow? = nil, costByRole: [StatsCostRow] = [], costByAgent: [StatsCostRow] = [], findings: StatsFindings? = nil, manualMerges: StatsManualMerges? = nil, hours: [StatsHourCell]? = nil, calendar: [StatsCalendarDay]? = nil, timeZone: String? = nil) {
             self.days = days
             self.goal = goal
             self.since = since
@@ -5032,6 +5046,7 @@ public enum Wire {
             self.findings = findings
             self.manualMerges = manualMerges
             self.hours = hours
+            self.calendar = calendar
             self.timeZone = timeZone
         }
 
@@ -5059,6 +5074,7 @@ public enum Wire {
             findings = try c.decodeIfPresent(StatsFindings.self, forKey: .findings)
             manualMerges = try c.decodeIfPresent(StatsManualMerges.self, forKey: .manualMerges)
             hours = try c.decodeIfPresent([StatsHourCell].self, forKey: .hours)
+            calendar = try c.decodeIfPresent([StatsCalendarDay].self, forKey: .calendar)
             timeZone = try c.decodeIfPresent(String.self, forKey: .timeZone)
         }
     }
