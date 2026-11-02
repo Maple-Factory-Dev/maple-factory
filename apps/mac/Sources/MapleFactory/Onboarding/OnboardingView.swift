@@ -316,10 +316,10 @@ struct OnboardingView: View {
                 HStack(spacing: -10) {
                     if let member = signedIn?.member {
                         MemberAvatar(member: member, size: 52)
-                            .overlay(Circle().stroke(Theme.editorBG, lineWidth: 3))
+                            .overlay(AgentAvatar.personShape(size: 52).stroke(Theme.editorBG, lineWidth: 3))
                     } else {
                         AgentAvatar(agent: FactoryData.me, size: 52)
-                            .overlay(Circle().stroke(Theme.editorBG, lineWidth: 3))
+                            .overlay(AgentAvatar.personShape(size: 52).stroke(Theme.editorBG, lineWidth: 3))
                     }
                     MapleMark(size: 52)
                         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.editorBG, lineWidth: 3))

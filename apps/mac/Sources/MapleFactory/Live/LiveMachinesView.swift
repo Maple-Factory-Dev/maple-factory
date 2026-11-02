@@ -1053,14 +1053,14 @@ struct MemberAvatar: View {
     var body: some View {
         let initials = (member.name ?? member.login).split(separator: " ").prefix(2).compactMap(\.first).map(String.init).joined().uppercased()
         ZStack {
-            Circle().fill(Theme.accent.opacity(0.85))
+            AgentAvatar.personShape(size: size).fill(Theme.accent.opacity(0.85))
             Text(initials).font(.system(size: size * 0.4, weight: .semibold)).foregroundStyle(.white)
             if let avatar = member.avatarUrl, let url = URL(string: avatar) {
                 AsyncImage(url: url) { image in image.resizable().scaledToFill() } placeholder: { Color.clear }
             }
         }
         .frame(width: size, height: size)
-        .clipShape(Circle())
+        .clipShape(AgentAvatar.personShape(size: size))
     }
 }
 

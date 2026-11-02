@@ -23,7 +23,7 @@ struct PersonHoverCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                AgentAvatar(agent: person, size: 40, online: online, mobile: mobile, shape: .roundedSquare)
+                AgentAvatar(agent: person, size: 40, online: online, mobile: mobile)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(person.name)
                         .font(.system(size: 13, weight: .semibold))

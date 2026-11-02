@@ -55,6 +55,15 @@ import Testing
         #expect(AgentAvatar.face(for: FactoryData.reviewer) == .robot)
     }
 
+    @Test func peopleAreSquareAndBotsStayRound() {
+        #expect(AgentAvatar.shape(for: Agent(name: "Ada Lovelace", color: .orange, isHuman: true)) == .roundedSquare)
+        #expect(AgentAvatar.shape(for: FactoryData.me) == .roundedSquare)
+        for role in ["planner", "builder", "reviewer", "other"] {
+            #expect(AgentAvatar.shape(for: LiveAdapter.role(role)) == .circle)
+        }
+        #expect(AgentAvatar.shape(for: FactoryData.reviewer) == .circle)
+    }
+
     @Test func eachRoleHasItsOwnColor() {
         let colors = ["planner", "builder", "reviewer", "other"].map { hex(LiveAdapter.role($0).color) }
         #expect(Set(colors).count == 4)
