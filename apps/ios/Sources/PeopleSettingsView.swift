@@ -71,6 +71,5 @@ struct PeopleSettingsView: View {
                 .accessibilityIdentifier("member-menu-\(member.login)")
             }
         }
-        .accessibilityIdentifier("member-\(member.login)")
     }
 }

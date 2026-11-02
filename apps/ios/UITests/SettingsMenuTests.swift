@@ -22,7 +22,7 @@ final class SettingsMenuTests: XCTestCase {
         XCTAssertFalse(element(app, "hold-badge-acme/api").exists)
         api.swipeLeft()
         app.buttons["Hold merges"].firstMatch.tap()
-        let reason = app.textFields["hold-reason"]
+        let reason = app.alerts.textFields.firstMatch
         XCTAssertTrue(reason.waitForExistence(timeout: 5))
         reason.typeText("Incident #7")
         app.alerts.buttons["Hold merges"].tap()
@@ -55,14 +55,14 @@ final class SettingsMenuTests: XCTestCase {
         let value = app.secureTextFields["secret-value"]
         value.tap(); value.typeText("https://example")
         app.buttons["save-secret"].tap()
-        let added = element(app, "secret-acme/api-SENTRY_DSN")
+        let added = element(app, "secret-acme/app-SENTRY_DSN")
         XCTAssertTrue(added.waitForExistence(timeout: 5), "the new secret is listed under the first repo")
         XCTAssertFalse(added.label.contains("https://example"), "values are never shown")
         snap(app, "secrets")
         added.swipeLeft()
         app.buttons["Delete"].firstMatch.tap()
         app.sheets.buttons["Delete"].firstMatch.tap()
-        XCTAssertTrue(waitGone(element(app, "secret-acme/api-SENTRY_DSN")), "deleting removes it")
+        XCTAssertTrue(waitGone(element(app, "secret-acme/app-SENTRY_DSN")), "deleting removes it")
         back(app)
 
         // Merging: turn off automatic merges.
@@ -107,13 +107,15 @@ final class SettingsMenuTests: XCTestCase {
     func testScreenshots() throws {
         guard ProcessInfo.processInfo.environment["SHOTS"] != nil else { throw XCTSkip("set TEST_RUNNER_SHOTS to save screenshots") }
         for role in ["admin", "member"] {
-            for appearance in [XCUIDeviceAppearance.light, .dark] {
+            for appearance in [XCUIDevice.Appearance.light, .dark] {
                 XCUIDevice.shared.appearance = appearance
+                sleep(2) // Let the simulator switch before the app launches.
                 let mode = appearance == .dark ? "dark" : "light"
                 for pane in ["menu", "repos", "people", "secrets", "merging"] {
                     if role == "member" && pane == "menu" { continue }
                     let app = pane == "menu" ? launch("-tab", "settings", "-demoRole", role) : launch("-settings", pane, "-demoRole", role)
                     XCTAssertTrue(app.navigationBars.firstMatch.waitForExistence(timeout: 20))
+                    XCUIDevice.shared.appearance = appearance
                     snap(app, "\(role)-\(pane)-\(mode)")
                     app.terminate()
                 }
