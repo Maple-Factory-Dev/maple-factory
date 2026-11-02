@@ -44,6 +44,7 @@ struct ArtifactsSection: View {
                         ForEach(task.artifacts) { chip($0, on: $0.id == artifact.id) }
                     }
                 }
+                .accessibilityIdentifier("artifact.chips")
                 ArtifactViewer(artifact: artifact).id(artifact.id)
             }
         }

@@ -536,9 +536,8 @@ extension DemoData {
     private static let chart = """
     <!doctype html><html><head><style>body{margin:0;font:15px -apple-system,sans-serif;color:#1d2025;background:#fff}h3{margin:14px 16px 4px;font-size:16px}
     p{margin:4px 16px;color:#6a707a}canvas{display:block;margin:10px 16px}a{color:#3b6fd8}</style></head><body>
-    <h3>Invoice totals by month</h3><p>Drawn by this page's script</p><canvas id="c" height="180"></canvas>
-    <p id="net">Network: checking…</p>
-    <p><a id="out" href="https://example.com/">Open example.com</a></p>
+    <h3>Invoice totals by month</h3><p>Drawn by this page's script · <a id="out" href="https://example.com/">Open example.com</a></p>
+    <p id="net">Network: checking…</p><canvas id="c" height="180"></canvas>
     <script>
     const totals = [92, 104, 118, 111, 131, 147], c = document.getElementById("c"), x = c.getContext("2d"), h = 160, max = 160;
     const w = Math.max(240, Math.min(520, innerWidth - 32)), step = w / totals.length;
