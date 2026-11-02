@@ -266,7 +266,11 @@ struct AddMachineSheet: View {
     /// "Add this Mac": what it's doing now, or that it's done.
     @State private var thisMac: String?
     @State private var addingThisMac = false
-    @State private var method: Method = .shell
+    @State private var method: Method
+
+    init(method: Method = .shell) {
+        _method = State(initialValue: method)
+    }
     /// The cloud-init user-data for the current code, fetched from the factory.
     @State private var snippet: String?
     @State private var snippetError: String?
@@ -319,7 +323,10 @@ struct AddMachineSheet: View {
         .task(id: cloudInitKey) { await loadCloudInit() }
     }
 
-    enum Method: Hashable { case shell, cloudInit }
+    enum Method: String, Hashable, Identifiable {
+        case shell, cloudInit
+        var id: String { rawValue }
+    }
 
     /// What the cloud-init snippet depends on: switching to it, or a new code, (re)fetches it.
     private var cloudInitKey: String? { method == .cloudInit ? enrollment?.code : nil }

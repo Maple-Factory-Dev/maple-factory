@@ -6,7 +6,10 @@ struct LiveMachinesView: View {
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
     @State private var open: OpenSession?
-    @State private var adding = false
+    /// Add machine is open, on this option.
+    @State private var adding: AddMachineSheet.Method?
+    /// The demo script's `addmachine:<shell|cloud-init>`.
+    static let demoAdd = Notification.Name("LiveMachinesView.demoAdd")
     /// A session asked for on this machine; it opens as soon as the runner reports it.
     @State private var awaiting: (machine: String, known: Set<String>)?
 
@@ -38,7 +41,10 @@ struct LiveMachinesView: View {
             self.awaiting = nil
             withAnimation(.snappy) { open = OpenSession(machine: machine.id, id: new.session.id) }
         }
-        .sheet(isPresented: $adding) { AddMachineSheet() }
+        .sheet(item: $adding) { AddMachineSheet(method: $0) }
+        .onReceive(NotificationCenter.default.publisher(for: Self.demoAdd)) { note in
+            adding = (note.object as? String) == "cloud-init" ? .cloudInit : .shell
+        }
     }
 
     /// Tasks that could run but have no slot yet, oldest first, with why.
@@ -132,7 +138,7 @@ struct LiveMachinesView: View {
                 .frame(height: 30)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Theme.fill).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke)))
                 .contentShape(Rectangle())
-                .onTapGesture { adding = true }
+                .onTapGesture { adding = .shell }
             }
             Text("The machines enrolled in \(client.org.isEmpty ? "this factory" : client.org). Sessions run in tmux on each machine and stream here; open one to watch or type into it.")
                 .font(.system(size: 13.5))
@@ -185,7 +191,7 @@ struct LiveMachinesView: View {
                 .frame(height: 32)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Theme.accent))
                 .contentShape(Rectangle())
-                .onTapGesture { adding = true }
+                .onTapGesture { adding = .shell }
         }
         .padding(24)
         .frame(maxWidth: 560, alignment: .leading)
