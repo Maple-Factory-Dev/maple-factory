@@ -163,25 +163,38 @@ final class GoalOverviewTests: XCTestCase {
         snap("goal-all-tasks-drafts-dark")
     }
 
-    /// MF-339: the Goals list shows each goal as prefix chip, name and counts, with no lead avatar;
-    /// the lead is still on the goal's overview.
+    /// MF-339: the Goals list shows each goal as prefix chip, name and counts, with no lead avatar.
+    /// MF-350: the goal page's header leaves out the lead and repo too; they're in Goal settings' About.
+    /// Light, then dark.
     func testGoalsListRowHasNoLeadAvatar() {
-        XCUIDevice.shared.appearance = .light
-        app.launchArguments = ["-demo", "YES", "-tab", "goals", "-goalOverview.landedOpen", "NO"]
-        app.launch()
-        let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Mobile app")).firstMatch
-        XCTAssertTrue(row.waitForExistence(timeout: 60), "no Mobile app row in the Goals list")
-        XCTAssertTrue(row.label.contains("open ·"), "the row lost its open/done counts: \(row.label)")
-        XCTAssertFalse(row.label.contains("andrea"), "the row still shows the lead: \(row.label)")
-        XCTAssertFalse(row.descendants(matching: .any)["avatar-andrea"].exists, "the row still has the lead's avatar")
-        XCTAssertFalse(app.descendants(matching: .any)["avatar-andrea"].exists, "a goal row still has the lead's avatar")
-        snap("goals-list-no-lead")
+        for appearance in [XCUIDevice.Appearance.light, .dark] {
+            let mode = appearance == .dark ? "dark" : "light"
+            app.terminate()
+            XCUIDevice.shared.appearance = appearance
+            app.launchArguments = ["-demo", "YES", "-tab", "goals", "-goalOverview.landedOpen", "NO"]
+            app.launch()
+            let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Mobile app")).firstMatch
+            XCTAssertTrue(row.waitForExistence(timeout: 60), "no Mobile app row in the Goals list")
+            XCTAssertTrue(row.label.contains("open ·"), "the row lost its open/done counts: \(row.label)")
+            XCTAssertFalse(row.label.contains("andrea"), "the row still shows the lead: \(row.label)")
+            XCTAssertFalse(app.descendants(matching: .any)["avatar-andrea"].exists, "a goal row still has the lead's avatar")
+            snap("goals-list-no-lead-\(mode)")
 
-        row.tap()
-        XCTAssertTrue(app.navigationBars["Mobile app"].waitForExistence(timeout: 10), "the row didn't open the goal")
-        XCTAssertTrue(app.descendants(matching: .any)["avatar-andrea"].waitForExistence(timeout: 5), "the overview lost the lead's avatar")
-        XCTAssertTrue(app.staticTexts["andrea"].exists, "the overview lost the lead's name")
-        snap("goal-overview-lead")
+            row.tap()
+            XCTAssertTrue(app.navigationBars["Mobile app"].waitForExistence(timeout: 10), "the row didn't open the goal")
+            XCTAssertTrue(app.buttons["goal-menu"].waitForExistence(timeout: 5), "no … menu on the goal")
+            XCTAssertFalse(app.descendants(matching: .any)["avatar-andrea"].exists, "the overview still has the lead's avatar")
+            XCTAssertFalse(app.staticTexts["andrea"].exists, "the overview still shows the lead's name")
+            snap("goal-overview-no-lead-\(mode)")
+
+            app.buttons["goal-menu"].tap()
+            app.buttons["goal-settings"].tap()
+            let lead = app.descendants(matching: .any)["goal-settings-lead"]
+            XCTAssertTrue(lead.waitForExistence(timeout: 5), "Goal settings has no lead")
+            XCTAssertTrue(lead.label.contains("andrea"), "Goal settings' lead isn't andrea: \(lead.label)")
+            XCTAssertTrue(app.descendants(matching: .any)["goal-settings-repo"].firstMatch.exists, "Goal settings has no repo")
+            snap("goal-settings-about-\(mode)")
+        }
     }
 
     private func snap(_ name: String) {
