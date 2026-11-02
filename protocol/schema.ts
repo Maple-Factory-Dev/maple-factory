@@ -116,6 +116,7 @@ export const enums: Record<string, Enum> = {
     doc: "How soon a task should be done.",
     values: { p0: "Do it right away.", p1: "Next.", p2: "Soon.", p3: "When there's room." },
   },
+  AppleChecksState: { values: { waiting: "Waiting for a machine with the tags.", running: "A machine is running them.", passed: "They all passed on its head.", failed: "One failed on its head." } },
   FindingStatus: { values: { open: "Open.", fixed: "Fixed (see fixedIn).", disputed: "The builder disagrees." } },
   PushPlatform: {
     values: { apns: "Apple Push Notification service (iPhone, iPad).", fcm: "Firebase Cloud Messaging (Android)." },
@@ -785,8 +786,10 @@ export const structs: Record<string, Struct> = {
       classification: "Classification?",
       findings: "Findings?",
       requires: "string[]?",
+      appleChecks: "AppleChecks?",
     },
     fieldDocs: {
+      appleChecks: "Checks its building machine skipped (they need macos, xcode…), run on a machine that has the tags for its current head. Merge waits for them to pass.",
       requires: "Machine tags the task needs (macos, xcode…): only a machine with every one of them takes it. Set by the planner and the repo's path rules; none: any machine.",
       findings: "A research task's answer: set when the planner answered the brief's question instead of planning a change, which closes it. None: not a research task (or an older server).",
       classification: "The risk classifier's grade of the built change, when the org's policy turns it on.",
@@ -924,6 +927,18 @@ export const structs: Record<string, Struct> = {
     doc: "One of a repo's checks, run in a task's worktree before its finish is committed.",
     fields: { command: "string", code: "i32?", timedOut: "bool", ms: "u64", output: "string" },
     fieldDocs: { code: "Its exit code; none: it was killed by a signal or couldn't start.", output: "The end of what it printed (stdout and stderr)." },
+  },
+  AppleChecks: {
+    doc: "Checks the machine that built a task couldn't run (they need macos, xcode…), handed to a machine that has the tags. Tied to one head commit: a new push starts them again.",
+    fields: { state: "AppleChecksState", head: "string", commands: "string[]", needs: "string[]", machine: "string?", reason: "string?", checks: "CheckRun[]", at: "u64", message: "string?" },
+    fieldDocs: {
+      commands: "The handed-off check commands, tags stripped.",
+      needs: "Every machine tag those checks need together.",
+      machine: "The machine running them (running) or that ran them (passed/failed).",
+      reason: "While waiting: why no machine has taken them yet.",
+      checks: "Their results, in order, once they ran; the last one failed when the state is failed.",
+      message: "Why the run failed outside any check (the head couldn't be fetched, say).",
+    },
   },
   DiffStat: { fields: { path: "string", added: "u32", removed: "u32" } },
   DiffCommit: {
@@ -1451,6 +1466,11 @@ export const unions: Record<string, Union> = {
           checks: "The repo's checks that ran, in order; the last one failed when the finish stopped on a check (nothing committed or pushed).",
         },
       },
+      "task.proved": {
+        doc: "The answer to `task.prove`: the handed-off checks' results on that head.",
+        fields: { taskId: "string", jobId: "string", head: "string", ok: "bool", checks: "CheckRun[]", message: "string?" },
+        fieldDocs: { message: "Why it couldn't run them (the head couldn't be fetched, say)." },
+      },
       "task.diff": {
         doc: "What a task's branch changes against its base: line counts per file and the unified patch.",
         fields: { taskId: "string", ok: "bool", files: "DiffStat[]", patch: "string", truncated: "bool", message: "string?", commits: "DiffCommit[]?" },
@@ -1549,6 +1569,15 @@ export const unions: Record<string, Union> = {
         fieldDocs: {
           fallback: "Push with the machine's own credentials (no GitHub App).",
           checks: "The repo's checks (commands, one per line) to run in the worktree before committing; any failing stops the finish.",
+        },
+      },
+      "task.prove": {
+        doc: "A proof job: fetch the branch at exactly `head` into a temporary worktree, run only `checks` there, answer with `task.proved` and remove the worktree. No agent session.",
+        fields: { taskId: "string", jobId: "string", repo: "string?", repoDir: "string?", branch: "string", head: "string", base: "string?", checks: "string" },
+        fieldDocs: {
+          repo: "owner/name on GitHub, to find or clone the checkout when this machine has no repoDir for it.",
+          repoDir: "A checkout of the repo on this machine, when the factory knows one.",
+          checks: "The commands, one per line, tags stripped.",
         },
       },
       "task.diff": {

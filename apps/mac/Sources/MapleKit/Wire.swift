@@ -1048,6 +1048,54 @@ public enum Wire {
         public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
+    public enum AppleChecksState: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// Waiting for a machine with the tags.
+        case waiting
+        /// A machine is running them.
+        case running
+        /// They all passed on its head.
+        case passed
+        /// One failed on its head.
+        case failed
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [AppleChecksState] = [.waiting, .running, .passed, .failed]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "waiting": self = .waiting
+            case "running": self = .running
+            case "passed": self = .passed
+            case "failed": self = .failed
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .waiting: "waiting"
+            case .running: "running"
+            case .passed: "passed"
+            case .failed: "failed"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: AppleChecksState, b: AppleChecksState) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
     public enum FindingStatus: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Open.
         case open
@@ -3496,8 +3544,10 @@ public enum Wire {
         public var findings: Findings?
         /// Machine tags the task needs (macos, xcode…): only a machine with every one of them takes it. Set by the planner and the repo's path rules; none: any machine.
         public var requires: [String]?
+        /// Checks its building machine skipped (they need macos, xcode…), run on a machine that has the tags for its current head. Merge waits for them to pass.
+        public var appleChecks: AppleChecks?
 
-        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, suggestedTitle: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, requested: [String] = [], comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], stages: [StageSpan] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], artifacts: [Artifact] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, scoutedFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, priority: Priority? = nil, followUpOf: String? = nil, mergeAt: UInt64? = nil, mergeForecast: MergeForecast? = nil, classification: Classification? = nil, findings: Findings? = nil, requires: [String]? = nil) {
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, suggestedTitle: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, requested: [String] = [], comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], stages: [StageSpan] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], artifacts: [Artifact] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, scoutedFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, priority: Priority? = nil, followUpOf: String? = nil, mergeAt: UInt64? = nil, mergeForecast: MergeForecast? = nil, classification: Classification? = nil, findings: Findings? = nil, requires: [String]? = nil, appleChecks: AppleChecks? = nil) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -3556,6 +3606,7 @@ public enum Wire {
             self.classification = classification
             self.findings = findings
             self.requires = requires
+            self.appleChecks = appleChecks
         }
 
         public init(from decoder: Decoder) throws {
@@ -3618,6 +3669,7 @@ public enum Wire {
             classification = try c.decodeIfPresent(Classification.self, forKey: .classification)
             findings = try c.decodeIfPresent(Findings.self, forKey: .findings)
             requires = try c.decodeIfPresent([String].self, forKey: .requires)
+            appleChecks = try c.decodeIfPresent(AppleChecks.self, forKey: .appleChecks)
         }
     }
 
@@ -3887,6 +3939,50 @@ public enum Wire {
             self.timedOut = timedOut
             self.ms = ms
             self.output = output
+        }
+    }
+
+    /// Checks the machine that built a task couldn't run (they need macos, xcode…), handed to a machine that has the tags. Tied to one head commit: a new push starts them again.
+    public struct AppleChecks: Codable, Hashable, Sendable {
+        public var state: AppleChecksState
+        public var head: String
+        /// The handed-off check commands, tags stripped.
+        public var commands: [String]
+        /// Every machine tag those checks need together.
+        public var needs: [String]
+        /// The machine running them (running) or that ran them (passed/failed).
+        public var machine: String?
+        /// While waiting: why no machine has taken them yet.
+        public var reason: String?
+        /// Their results, in order, once they ran; the last one failed when the state is failed.
+        public var checks: [CheckRun]
+        public var at: UInt64
+        /// Why the run failed outside any check (the head couldn't be fetched, say).
+        public var message: String?
+
+        public init(state: AppleChecksState, head: String, commands: [String] = [], needs: [String] = [], machine: String? = nil, reason: String? = nil, checks: [CheckRun] = [], at: UInt64, message: String? = nil) {
+            self.state = state
+            self.head = head
+            self.commands = commands
+            self.needs = needs
+            self.machine = machine
+            self.reason = reason
+            self.checks = checks
+            self.at = at
+            self.message = message
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            state = try c.decode(AppleChecksState.self, forKey: .state)
+            head = try c.decode(String.self, forKey: .head)
+            commands = try c.decodeIfPresent([String].self, forKey: .commands) ?? []
+            needs = try c.decodeIfPresent([String].self, forKey: .needs) ?? []
+            machine = try c.decodeIfPresent(String.self, forKey: .machine)
+            reason = try c.decodeIfPresent(String.self, forKey: .reason)
+            checks = try c.decodeIfPresent([CheckRun].self, forKey: .checks) ?? []
+            at = try c.decode(UInt64.self, forKey: .at)
+            message = try c.decodeIfPresent(String.self, forKey: .message)
         }
     }
 
@@ -5712,6 +5808,36 @@ public enum Wire {
         }
     }
 
+    /// The answer to `task.prove`: the handed-off checks' results on that head.
+    public struct RunnerMessageTaskProved: Codable, Hashable, Sendable {
+        public var taskId: String
+        public var jobId: String
+        public var head: String
+        public var ok: Bool
+        public var checks: [CheckRun]
+        /// Why it couldn't run them (the head couldn't be fetched, say).
+        public var message: String?
+
+        public init(taskId: String, jobId: String, head: String, ok: Bool, checks: [CheckRun] = [], message: String? = nil) {
+            self.taskId = taskId
+            self.jobId = jobId
+            self.head = head
+            self.ok = ok
+            self.checks = checks
+            self.message = message
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            taskId = try c.decode(String.self, forKey: .taskId)
+            jobId = try c.decode(String.self, forKey: .jobId)
+            head = try c.decode(String.self, forKey: .head)
+            ok = try c.decode(Bool.self, forKey: .ok)
+            checks = try c.decodeIfPresent([CheckRun].self, forKey: .checks) ?? []
+            message = try c.decodeIfPresent(String.self, forKey: .message)
+        }
+    }
+
     /// What a task's branch changes against its base: line counts per file and the unified patch.
     public struct RunnerMessageTaskDiff: Codable, Hashable, Sendable {
         public var taskId: String
@@ -5906,6 +6032,7 @@ public enum Wire {
         case mcpRequest(RunnerMessageMcpRequest)
         case taskStarted(RunnerMessageTaskStarted)
         case taskFinished(RunnerMessageTaskFinished)
+        case taskProved(RunnerMessageTaskProved)
         case taskDiff(RunnerMessageTaskDiff)
         case taskMerged(RunnerMessageTaskMerged)
         case taskMergeCheck(RunnerMessageTaskMergeCheck)
@@ -5940,6 +6067,7 @@ public enum Wire {
             case "mcp.request": self = .mcpRequest(try RunnerMessageMcpRequest(from: decoder))
             case "task.started": self = .taskStarted(try RunnerMessageTaskStarted(from: decoder))
             case "task.finished": self = .taskFinished(try RunnerMessageTaskFinished(from: decoder))
+            case "task.proved": self = .taskProved(try RunnerMessageTaskProved(from: decoder))
             case "task.diff": self = .taskDiff(try RunnerMessageTaskDiff(from: decoder))
             case "task.merged": self = .taskMerged(try RunnerMessageTaskMerged(from: decoder))
             case "task.merge_check": self = .taskMergeCheck(try RunnerMessageTaskMergeCheck(from: decoder))
@@ -6004,6 +6132,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskFinished(let body):
                 try c.encode("task.finished", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskProved(let body):
+                try c.encode("task.proved", forKey: .type)
                 try body.encode(to: encoder)
             case .taskDiff(let body):
                 try c.encode("task.diff", forKey: .type)
@@ -6199,6 +6330,32 @@ public enum Wire {
         }
     }
 
+    /// A proof job: fetch the branch at exactly `head` into a temporary worktree, run only `checks` there, answer with `task.proved` and remove the worktree. No agent session.
+    public struct ServerToRunnerTaskProve: Codable, Hashable, Sendable {
+        public var taskId: String
+        public var jobId: String
+        /// owner/name on GitHub, to find or clone the checkout when this machine has no repoDir for it.
+        public var repo: String?
+        /// A checkout of the repo on this machine, when the factory knows one.
+        public var repoDir: String?
+        public var branch: String
+        public var head: String
+        public var base: String?
+        /// The commands, one per line, tags stripped.
+        public var checks: String
+
+        public init(taskId: String, jobId: String, repo: String? = nil, repoDir: String? = nil, branch: String, head: String, base: String? = nil, checks: String) {
+            self.taskId = taskId
+            self.jobId = jobId
+            self.repo = repo
+            self.repoDir = repoDir
+            self.branch = branch
+            self.head = head
+            self.base = base
+            self.checks = checks
+        }
+    }
+
     /// Report a task's diff against its base (answered with `task.diff`).
     public struct ServerToRunnerTaskDiff: Codable, Hashable, Sendable {
         public var taskId: String
@@ -6383,6 +6540,7 @@ public enum Wire {
         case runnerRestart
         case mcpResponse(ServerToRunnerMcpResponse)
         case taskFinish(ServerToRunnerTaskFinish)
+        case taskProve(ServerToRunnerTaskProve)
         case taskDiff(ServerToRunnerTaskDiff)
         case taskMergeCheck(ServerToRunnerTaskMergeCheck)
         case taskMerge(ServerToRunnerTaskMerge)
@@ -6411,6 +6569,7 @@ public enum Wire {
             case "runner.restart": self = .runnerRestart
             case "mcp.response": self = .mcpResponse(try ServerToRunnerMcpResponse(from: decoder))
             case "task.finish": self = .taskFinish(try ServerToRunnerTaskFinish(from: decoder))
+            case "task.prove": self = .taskProve(try ServerToRunnerTaskProve(from: decoder))
             case "task.diff": self = .taskDiff(try ServerToRunnerTaskDiff(from: decoder))
             case "task.merge_check": self = .taskMergeCheck(try ServerToRunnerTaskMergeCheck(from: decoder))
             case "task.merge": self = .taskMerge(try ServerToRunnerTaskMerge(from: decoder))
@@ -6458,6 +6617,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskFinish(let body):
                 try c.encode("task.finish", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskProve(let body):
+                try c.encode("task.prove", forKey: .type)
                 try body.encode(to: encoder)
             case .taskDiff(let body):
                 try c.encode("task.diff", forKey: .type)

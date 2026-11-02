@@ -355,6 +355,22 @@ pub enum Priority {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub enum AppleChecksState {
+    /// Waiting for a machine with the tags.
+    Waiting,
+    /// A machine is running them.
+    Running,
+    /// They all passed on its head.
+    Passed,
+    /// One failed on its head.
+    Failed,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum FindingStatus {
     /// Open.
     Open,
@@ -1790,6 +1806,9 @@ pub struct Task {
     /// Machine tags the task needs (macos, xcode…): only a machine with every one of them takes it. Set by the planner and the repo's path rules; none: any machine.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requires: Option<Vec<String>>,
+    /// Checks its building machine skipped (they need macos, xcode…), run on a machine that has the tags for its current head. Merge waits for them to pass.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub apple_checks: Option<AppleChecks>,
 }
 
 /// A risk check: code that raises a change's risk when touched (paths), or a plain-language rule the planner judges (rule).
@@ -1963,6 +1982,33 @@ pub struct CheckRun {
     pub ms: u64,
     /// The end of what it printed (stdout and stderr).
     pub output: String,
+}
+
+/// Checks the machine that built a task couldn't run (they need macos, xcode…), handed to a machine that has the tags. Tied to one head commit: a new push starts them again.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppleChecks {
+    pub state: AppleChecksState,
+    pub head: String,
+    /// The handed-off check commands, tags stripped.
+    #[serde(default)]
+    pub commands: Vec<String>,
+    /// Every machine tag those checks need together.
+    #[serde(default)]
+    pub needs: Vec<String>,
+    /// The machine running them (running) or that ran them (passed/failed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<String>,
+    /// While waiting: why no machine has taken them yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Their results, in order, once they ran; the last one failed when the state is failed.
+    #[serde(default)]
+    pub checks: Vec<CheckRun>,
+    pub at: u64,
+    /// Why the run failed outside any check (the head couldn't be fetched, say).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -3049,6 +3095,19 @@ pub enum RunnerMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         checks: Option<Vec<CheckRun>>,
     },
+    /// The answer to `task.prove`: the handed-off checks' results on that head.
+    #[serde(rename = "task.proved")]
+    TaskProved {
+        task_id: String,
+        job_id: String,
+        head: String,
+        ok: bool,
+        #[serde(default)]
+        checks: Vec<CheckRun>,
+        /// Why it couldn't run them (the head couldn't be fetched, say).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
     /// What a task's branch changes against its base: line counts per file and the unified patch.
     #[serde(rename = "task.diff")]
     TaskDiff {
@@ -3261,6 +3320,24 @@ pub enum ServerToRunner {
         /// The repo's checks (commands, one per line) to run in the worktree before committing; any failing stops the finish.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         checks: Option<String>,
+    },
+    /// A proof job: fetch the branch at exactly `head` into a temporary worktree, run only `checks` there, answer with `task.proved` and remove the worktree. No agent session.
+    #[serde(rename = "task.prove")]
+    TaskProve {
+        task_id: String,
+        job_id: String,
+        /// owner/name on GitHub, to find or clone the checkout when this machine has no repoDir for it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repo: Option<String>,
+        /// A checkout of the repo on this machine, when the factory knows one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repo_dir: Option<String>,
+        branch: String,
+        head: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        base: Option<String>,
+        /// The commands, one per line, tags stripped.
+        checks: String,
     },
     /// Report a task's diff against its base (answered with `task.diff`).
     #[serde(rename = "task.diff")]
