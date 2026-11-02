@@ -464,7 +464,9 @@ import Foundation
             loadingOlder = []
             olderCursor = [:]
             fetching = []
-            FactoryData.me = LiveAdapter.person(snapshot.me.login, members: members)
+            // Only a connected client is the app's identity, like livePeople and liveGoals: a test's
+            // unconnected client applying a snapshot mustn't change who `me` is for suites running alongside.
+            if server != nil { FactoryData.me = LiveAdapter.person(snapshot.me.login, members: members) }
             policy = snapshot.policy
             acceptances = snapshot.acceptances
             prompts = snapshot.prompts
