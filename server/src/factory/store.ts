@@ -44,6 +44,8 @@ export interface TaskPrivate {
   handoff?: { command: string; requires: string[] }[] | null;
   /** The proof job (`task.prove_checks`) running them: its id, the machine it went to, and the head. */
   proveJob?: { id: string; machine: string; head: string; at: number } | null;
+  /** Machines that took a proof job for the current head and never answered: not sent it again. */
+  proveSkip?: string[];
   /** The head the last pre-merge check answered for, so its auto-merge goes ahead. */
   mergeChecked?: string | null;
   /// Times the current role's session was restarted after an end that wasn't the agent's choice.

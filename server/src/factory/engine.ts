@@ -153,6 +153,8 @@ export function budgetText(use: BudgetUse): string {
 
 /** How long an auto-merge counts down before it merges, so a person can hold it (env MERGE_GRACE_MS). */
 const MERGE_GRACE_MS = 10_000;
+/** How long a proof job may go unanswered on a machine that stays online (an older runner never answers). */
+const PROVE_TIMEOUT_MS = 45 * 60_000;
 
 export class FactoryError extends Error {}
 
@@ -1537,7 +1539,7 @@ export class Engine {
       const line = lines.find((p): p is { command: string; requires: string[] } => !("error" in p) && p.command === n.command);
       if (line?.requires.length) handoff.push({ command: n.command, requires: line.requires });
     }
-    this.store.savePrivate(task.id, { ...this.store.private(task.id), proveJob: null });
+    this.store.savePrivate(task.id, { ...this.store.private(task.id), proveJob: null, proveSkip: [] });
     if (!handoff.length || !head) {
       task.appleChecks = null;
       return;
@@ -1574,20 +1576,28 @@ export class Engine {
       // A new head (a push, a recheck, a fix after review): the old results don't count.
       if (task.pr.head && task.pr.head !== a.head) {
         task.appleChecks = { ...a, state: "waiting", head: task.pr.head, machine: null, reason: null, checks: [], at: now(), message: null };
-        this.store.savePrivate(task.id, { ...priv, proveJob: null });
+        this.store.savePrivate(task.id, { ...priv, proveJob: null, proveSkip: [] });
         this.event(task, "factory", `new head ${task.pr.head.slice(0, 7)}: its Apple checks run again`);
         this.save(task);
       }
       const now_ = task.appleChecks!;
       const job = this.store.private(task.id).proveJob;
       // Running on a machine that dropped before it answered: send it again.
-      if (now_.state === "running" && job && machines.find((m) => m.id === job.machine)?.online) continue;
+      if (now_.state === "running" && job && machines.find((m) => m.id === job.machine)?.online) {
+        if (now() - job.at < this.proveTimeoutMs()) continue;
+        // Online but silent for too long (e.g. a runner too old to know task.prove_checks): try another.
+        const skip = [...new Set([...(this.store.private(task.id).proveSkip ?? []), job.machine])];
+        this.store.savePrivate(task.id, { ...this.store.private(task.id), proveJob: null, proveSkip: skip });
+        this.event(task, "factory", `${now_.machine ?? "its Mac"} didn't answer its Apple checks job; trying again elsewhere`);
+      }
       if (now_.state !== "waiting" && now_.state !== "running") continue;
-      const fits = (m: Machine) => m.online && !this.store.settings(m.id).paused && now_.needs.every((t) => (m.tags ?? []).includes(t));
+      const skipped = this.store.private(task.id).proveSkip ?? [];
+      const fits = (m: Machine) => m.online && !skipped.includes(m.id) && !this.store.settings(m.id).paused && now_.needs.every((t) => (m.tags ?? []).includes(t));
       const fewest = (ms: Machine[]) => ms.sort((x, y) => busy(x.id) - busy(y.id))[0];
       const machine = fewest(machines.filter((m) => m.owner === task.owner && fits(m))) ?? (task.shareable ? fewest(machines.filter((m) => fits(m) && this.lends(m, task.owner, busy))) : undefined);
       if (!machine) {
-        const reason = this.appleWaiting(task, now_.needs, machines);
+        const silent = machines.filter((m) => skipped.includes(m.id)).map((m) => m.name);
+        const reason = silent.length ? `${silent.join(", ")} didn't answer the Apple checks job (its runner may need updating); push again or update it to retry.` : this.appleWaiting(task, now_.needs, machines);
         if (now_.state !== "waiting" || now_.reason !== reason) {
           task.appleChecks = { ...now_, state: "waiting", machine: null, reason };
           this.store.savePrivate(task.id, { ...this.store.private(task.id), proveJob: null });
@@ -1614,6 +1624,11 @@ export class Engine {
       this.event(task, "factory", `sent its Apple checks to ${machine.name}${machine.owner !== task.owner ? ` (${machine.owner}'s, lent to the team)` : ""}`);
       this.save(task);
     }
+  }
+
+  private proveTimeoutMs() {
+    const ms = Number(this.env.PROVE_TIMEOUT_MS);
+    return this.env.PROVE_TIMEOUT_MS && Number.isFinite(ms) && ms >= 0 ? ms : PROVE_TIMEOUT_MS;
   }
 
   /** Why no machine runs a task's handed-off checks yet. */
@@ -2164,7 +2179,10 @@ export class Engine {
 
   /** Why auto-merge is waiting on checks not run, or null: "waiting on 1 check not run here: needs macos". */
   private notRunWaiting(task: Task) {
-    const open = (task.checksNotRun ?? []).filter((n) => n.status === "open");
+    // Ones a Mac is about to run (or running) aren't for waiving: the Apple checks row says where they are.
+    const a = task.appleChecks;
+    const handed = (c: string) => !!a && (a.state === "waiting" || a.state === "running") && a.commands.includes(c);
+    const open = (task.checksNotRun ?? []).filter((n) => n.status === "open" && !handed(n.command));
     if (!open.length) return null;
     return `waiting on ${open.length} check${open.length === 1 ? "" : "s"} not run here: ${[...new Set(open.map((n) => n.reason))].join("; ")}`;
   }

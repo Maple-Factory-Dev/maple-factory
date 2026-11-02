@@ -36,7 +36,7 @@ const machine = (id: string, owner: string, tags: string[], online = true): Mach
   ({ id, name: id, owner, online, sessions: [], usage: [], tags, health: { cores: 8, load1: 0.1 } }) as unknown as Machine;
 
 /** MF-1 building on the Linux box `linux` (owner `me`), its builder live; machines as given. */
-function factory(machines: Machine[], opts: { shareable?: boolean } = {}) {
+function factory(machines: Machine[], opts: { shareable?: boolean; env?: Record<string, string> } = {}) {
   const store = new Store(sqlStorage());
   const sent: (Record<string, unknown> & { to: string })[] = [];
   const pending: Promise<unknown>[] = [];
@@ -54,7 +54,7 @@ function factory(machines: Machine[], opts: { shareable?: boolean } = {}) {
     get: (to: string) => ({ fetch: async (_: string, init: RequestInit) => (sent.push({ to, ...JSON.parse(String(init.body)) }), new Response(null)) }),
   };
   const DB = { prepare: () => ({ bind: () => ({ run: async () => {} }) }) };
-  const engine = new Engine({ MACHINE, DB } as never, store, hooks as never, { forTask: () => {} } as never, {} as never);
+  const engine = new Engine(Object.assign(opts.env ?? {}, { MACHINE, DB }) as never, store, hooks as never, { forTask: () => {} } as never, {} as never);
   store.saveRepos([{ name: REPO, defaultBranch: "main", isPrivate: true, source: "github" }]);
   store.saveRepoScripts(REPO, { checks: `npm run lint\n[xcode,macos] ${XCODE}` }, "boss");
   store.saveTask({
@@ -246,4 +246,44 @@ test("a person waiving the check lets it merge without the Mac", async () => {
   assert.equal(f.mergeReady(), false);
   await f.engine.command({ type: "task.waiveCheck", id: "MF-1", command: XCODE, note: "UI-only change, ran it locally" } as never, ME);
   assert.equal(f.mergeReady(), true);
+});
+
+test("a job an online Mac never answers (an older runner) goes to another, then waits with why", async () => {
+  const machines = [machine("linux", "me", ["linux"]), machine("mbp-14", "me", ["macos", "xcode"]), machine("mini", "me", ["macos", "xcode"])];
+  const env: Record<string, string> = {};
+  const f = factory(machines, { env });
+  await f.buildAndPush();
+  const [first, ...none] = f.jobs();
+  assert.equal(none.length, 0);
+  env.PROVE_TIMEOUT_MS = "0"; // its time runs out
+  await f.engine.pump();
+  await f.settle();
+  const second = f.jobs()[1]!;
+  assert.notEqual(second.to, first.to);
+  assert.equal(f.task().appleChecks!.state, "running");
+  await f.engine.pump();
+  await f.settle();
+  assert.equal(f.jobs().length, 2);
+  const a = f.task().appleChecks!;
+  assert.equal(a.state, "waiting");
+  assert.match(a.reason!, /didn't answer the Apple checks job \(its runner may need updating\)/);
+  // A new head tries every machine again.
+  const t = f.task();
+  t.pr!.head = HEAD2;
+  f.store.saveTask(t);
+  await f.engine.pump();
+  await f.settle();
+  assert.equal(f.jobs().length, 3);
+});
+
+test("checks a Mac is about to run aren't offered for waiving", async () => {
+  const machines = [machine("linux", "me", ["linux"]), machine("mbp-14", "me", ["macos", "xcode"])];
+  const f = factory(machines);
+  await f.buildAndPush();
+  f.reviewed();
+  await (f.engine as unknown as { autoMerge(t: Task): Promise<void> }).autoMerge(f.task());
+  assert.doesNotMatch(f.task().waiting ?? "", /not run here/);
+  // Once they fail, a person may waive them: the wording comes back.
+  await f.proved("mbp-14", f.jobs()[0]!, [FAIL]);
+  assert.match(f.task().waiting ?? "", /not run here/);
 });
