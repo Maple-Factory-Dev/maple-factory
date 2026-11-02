@@ -235,6 +235,7 @@ mod tests {
         let tmp = tempdir();
         let (checkout, first, _second) = repo(tmp.path());
         let before = sh(&checkout, &["worktree", "list"]);
+        println!("git worktree list before:\n{before}");
         let sent = Mutex::new(vec![]);
         let emit = |m: Outbound| sent.lock().unwrap().push(m);
         // At the older head: the marker says "one", not the branch tip's "two".
@@ -243,6 +244,10 @@ mod tests {
         assert!(ok, "{checks:?} {message:?}");
         assert_eq!((head.as_str(), job_id.as_str(), checks.len()), (first.as_str(), "job-1", 2));
         assert!(checks[1].output.contains("MF-1"), "{:?}", checks[1].output);
+        for c in &checks {
+            println!("ran at {}: `{}` exit {:?} in {}ms", &head[..7], c.command, c.code, c.ms);
+        }
+        println!("git worktree list after:\n{}", sh(&checkout, &["worktree", "list"]));
         assert_eq!(sh(&checkout, &["worktree", "list"]), before);
         assert!(!tmp.path().join("maple-prove-job-1").exists());
     }
