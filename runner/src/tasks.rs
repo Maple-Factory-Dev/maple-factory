@@ -65,6 +65,10 @@ pub struct Finish {
     /// The repo's checks, one command per line: each must pass before anything is committed.
     #[serde(default)]
     pub checks: Option<String>,
+    /// The same checks with their `[tag] ` prefixes kept, so ones this machine can't run are skipped
+    /// with why. Older hubs send only `checks`.
+    #[serde(default)]
+    pub check_lines: Option<String>,
 }
 
 /// What a check that's really the commit's own git hooks (lefthook, husky) is called.
@@ -580,6 +584,7 @@ pub async fn run(sessions: Sessions, f: Finish) {
                 reason: None,
                 message: Some(format!("{e:#}")),
                 checks: None,
+                not_run: vec![],
             }
         }
     };
@@ -590,9 +595,9 @@ async fn finish(emit: Emit<'_>, f: &Finish) -> Result<Outbound> {
     let dir = task_dir(&f.cwd, &f.branch, f.base.as_deref())?;
 
     // 0. The repo's checks, in the worktree as the builder left it: the first that fails stops here.
-    let mut checks = run_checks(emit, f, &dir).await?;
+    let (mut checks, not_run) = run_checks(emit, f, &dir).await?;
     if checks.last().is_some_and(|c| !crate::worktree_scripts::passed(c)) {
-        return Ok(checks_failed(f, checks));
+        return Ok(with_not_run(checks_failed(f, checks), not_run));
     }
 
     // 1. Commit what's left uncommitted, as the user (their git config), with the title as the message.
@@ -601,7 +606,7 @@ async fn finish(emit: Emit<'_>, f: &Finish) -> Result<Outbound> {
         git(&dir, &["add", "-A"], None).await?;
         if let Some(hook) = commit_with_hooks(&dir, &f.title).await? {
             checks.push(hook);
-            return Ok(checks_failed(f, checks));
+            return Ok(with_not_run(checks_failed(f, checks), not_run));
         }
     }
     let commit = git(&dir, &["rev-parse", "HEAD"], None).await?.trim().to_string();
@@ -618,7 +623,7 @@ async fn finish(emit: Emit<'_>, f: &Finish) -> Result<Outbound> {
     match merge_check(&dir, &base).await {
         Ok(conflicts) if !conflicts.is_empty() => {
             checks.push(merge_conflicts(&base, &conflicts));
-            let mut out = checks_failed(f, checks);
+            let mut out = with_not_run(checks_failed(f, checks), not_run);
             if let Outbound::TaskFinished { message, .. } = &mut out {
                 *message = Some(format!("The branch doesn't merge into {base} (conflicts in {}), so nothing was pushed.", conflicts.join(", ")));
             }
@@ -641,25 +646,33 @@ async fn finish(emit: Emit<'_>, f: &Finish) -> Result<Outbound> {
     {
         *c = Some(checks);
     }
-    Ok(done)
+    Ok(with_not_run(done, not_run))
+}
+
+/// `task.finished` with the checks it didn't run, and why.
+fn with_not_run(mut out: Outbound, skipped: Vec<crate::wire::NotRunCheck>) -> Outbound {
+    if let Outbound::TaskFinished { not_run, .. } = &mut out {
+        *not_run = skipped;
+    }
+    out
 }
 
 /// Runs the repo's checks (if `task.finish` brought any) in the task's worktree, with the MAPLE_*
 /// variables, its secrets and the login shell's PATH.
-async fn run_checks(emit: Emit<'_>, f: &Finish, dir: &Path) -> Result<Vec<crate::wire::CheckRun>> {
+async fn run_checks(emit: Emit<'_>, f: &Finish, dir: &Path) -> Result<(Vec<crate::wire::CheckRun>, Vec<crate::wire::NotRunCheck>)> {
     let scripts = crate::worktree_scripts::WorktreeScripts {
         create: None,
         preflight: None,
         preflight_watch: None,
         setup: None,
-        checks: f.checks.clone(),
+        checks: f.check_lines.clone().or_else(|| f.checks.clone()),
         teardown: None,
         archive: None,
         timeout_secs: None,
         require_paths: None,
     };
     if crate::worktree_scripts::check_commands(Some(&scripts)).is_empty() {
-        return Ok(vec![]);
+        return Ok((vec![], vec![]));
     }
     let root = crate::worktrees::main_root(dir).await.unwrap_or_else(|_| expand_home(&f.repo_dir));
     let origin = git(dir, &["config", "--get", "remote.origin.url"], None).await.ok().and_then(|u| parse_github(u.trim()));
@@ -752,6 +765,7 @@ fn checks_failed(f: &Finish, checks: Vec<crate::wire::CheckRun>) -> Outbound {
         reason: None,
         message: Some(format!("The check `{}` {how}, so nothing was committed or pushed.", last.command)),
         checks: Some(checks),
+        not_run: vec![],
     }
 }
 
@@ -903,6 +917,7 @@ fn finished(f: &Finish, pushed: &'static str, owner: Option<String>, repo: Optio
         reason,
         message: None,
         checks: None,
+        not_run: vec![],
     }
 }
 
@@ -1430,6 +1445,7 @@ mod tests {
             title: "Fix the flaky test".into(),
             fallback: false,
             checks: None,
+            check_lines: None,
         };
         // Not GitHub, no fallback: a clear refusal, nothing pushed, but the commit is made.
         let err = format!("{:#}", finish(sessions, &f).await.unwrap_err());
@@ -1475,6 +1491,7 @@ mod tests {
             title: "Fix the flaky test".into(),
             fallback: true,
             checks: None,
+            check_lines: None,
         };
         (root, bare, work, f)
     }
@@ -1513,6 +1530,24 @@ mod tests {
         assert_eq!(sh(&work, &["status", "--porcelain"]).trim(), "M a.txt");
         assert!(sh(&bare, &["branch", "--list"]).is_empty(), "nothing pushed");
         assert!(lines.lock().unwrap().iter().any(|l| l.contains("failed with exit code 3")), "{lines:?}");
+        let Outbound::TaskFinished { not_run, .. } = &out else { unreachable!() };
+        assert_eq!(not_run.iter().map(|n| (n.command.as_str(), n.reason.as_str())).collect::<Vec<_>>(), [("echo never", "skipped after an earlier failure")]);
+
+        // `checkLines` keeps the tags: a check for what this machine lacks isn't run, and doesn't stop the finish.
+        let tagged = Finish { checks: Some("touch tag-ran\ntrue".into()), check_lines: Some("[no-such-tag] touch tag-ran\ntrue".into()), ..f.clone() };
+        let out = finish(emit, &tagged).await.unwrap();
+        let (ok, checks) = checks_of(&out);
+        assert!(ok, "{out:?}");
+        assert_eq!(checks.iter().map(|c| c.command.as_str()).collect::<Vec<_>>(), ["true"]);
+        assert!(!work.join("tag-ran").exists(), "a check this machine can't run never runs");
+        let Outbound::TaskFinished { not_run, .. } = &out else { unreachable!() };
+        assert_eq!(not_run.iter().map(|n| (n.command.as_str(), n.reason.as_str())).collect::<Vec<_>>(), [("touch tag-ran", "needs no-such-tag")]);
+        let wire = serde_json::to_value(&out).unwrap();
+        assert_eq!(wire["notRun"], serde_json::json!([{"command":"touch tag-ran","reason":"needs no-such-tag","kind":"requirement"}]));
+        assert!(lines.lock().unwrap().iter().any(|l| l.contains("not run here: needs no-such-tag")), "{lines:?}");
+        sh(&work, &["reset", "--quiet", "--hard", &head]);
+        sh(&work, &["push", "--quiet", "--delete", bare.to_str().unwrap(), "agent/fix-1a2b"]);
+        std::fs::write(work.join("a.txt"), "two\n").unwrap();
 
         let passing = Finish { checks: Some("test \"$MAPLE_WORKTREE\" = \"$PWD\"\ngrep -q two a.txt".into()), ..f.clone() };
         let out = finish(emit, &passing).await.unwrap();
@@ -1645,6 +1680,7 @@ mod tests {
             title: "Scratch: finish by hand".into(),
             fallback: true,
             checks: std::env::var("MAPLE_FINISH_CHECKS").ok(),
+            check_lines: None,
         };
         match finish(&emit, &f).await {
             Ok(out) => println!("task.finished: {}", serde_json::to_string_pretty(&out).unwrap()),
