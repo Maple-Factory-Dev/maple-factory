@@ -450,16 +450,22 @@ public enum Wire {
         case open
         /// A person waived it with a note.
         case waived
+        /// The GitHub check named after its `→ gha:` passed on the task's head.
+        case covered
+        /// The GitHub check named after its `→ gha:` failed on the task's head; merging waits.
+        case failed
         /// A value this build doesn't know yet; newer servers may send them.
         case other(String)
 
         /// The values this build knows; never `.other`.
-        public static let allCases: [NotRunStatus] = [.open, .waived]
+        public static let allCases: [NotRunStatus] = [.open, .waived, .covered, .failed]
 
         public init(rawValue: String) {
             switch rawValue {
             case "open": self = .open
             case "waived": self = .waived
+            case "covered": self = .covered
+            case "failed": self = .failed
             default: self = .other(rawValue)
             }
         }
@@ -468,6 +474,8 @@ public enum Wire {
             switch self {
             case .open: "open"
             case .waived: "waived"
+            case .covered: "covered"
+            case .failed: "failed"
             case .other(let value): value
             }
         }
@@ -4038,8 +4046,12 @@ public enum Wire {
         /// Login of the person who waived it.
         public var by: String?
         public var resolvedAt: UInt64?
+        /// The GitHub check run that settles it (`[macos] xcodebuild … → gha:mac-build` gives mac-build), or none.
+        public var cover: String?
+        /// Link to that check run once it passed or failed.
+        public var url: String?
 
-        public init(command: String, reason: String, kind: NotRunKind, status: NotRunStatus, machine: String? = nil, at: UInt64, note: String? = nil, by: String? = nil, resolvedAt: UInt64? = nil) {
+        public init(command: String, reason: String, kind: NotRunKind, status: NotRunStatus, machine: String? = nil, at: UInt64, note: String? = nil, by: String? = nil, resolvedAt: UInt64? = nil, cover: String? = nil, url: String? = nil) {
             self.command = command
             self.reason = reason
             self.kind = kind
@@ -4049,6 +4061,8 @@ public enum Wire {
             self.note = note
             self.by = by
             self.resolvedAt = resolvedAt
+            self.cover = cover
+            self.url = url
         }
     }
 

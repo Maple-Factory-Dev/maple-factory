@@ -66,8 +66,13 @@ struct ChecksSection: View {
 
     private var summary: String {
         let passed = ran.filter { $0.status == .passed }.count
-        var parts = ran.isEmpty ? [] : ["\(passed) passed"]
-        parts.append("\(task.checksNotRun.count) not run here")
+        // A check GitHub Actions proved (`→ gha:mac-build`) counts as passed, not as not run.
+        let covered = task.checksNotRun.filter { $0.status == .covered }.count
+        var parts = ran.isEmpty && covered == 0 ? [] : ["\(passed + covered) passed"]
+        let failed = task.checksNotRun.filter { $0.status == .failed }.count
+        if failed > 0 { parts.append("\(failed) failed") }
+        let notRun = task.checksNotRun.count - covered - failed
+        if notRun > 0 || covered + failed == 0 { parts.append("\(notRun) not run here") }
         return parts.joined(separator: " · ")
     }
 
@@ -88,21 +93,50 @@ struct ChecksSection: View {
 }
 
 /// One check that wasn't run: grey, with why ("Not run here: needs macos"), and Waive… while it's open.
+/// One a GitHub check covers (`→ gha:mac-build`) shows that run: proved (green), failed (red) or waited on.
 private struct NotRunRow: View {
     let item: Wire.TaskNotRun
     let waive: () -> Void
 
+    private var icon: String {
+        switch item.status {
+        case .covered: "checkmark.circle.fill"
+        case .failed: "xmark.circle.fill"
+        case .waived: "checkmark.circle"
+        default: "minus.circle"
+        }
+    }
+
+    private var tint: Color {
+        switch item.status {
+        case .covered: Theme.State.merged
+        case .failed: Theme.State.cancelled
+        default: Theme.textFaint
+        }
+    }
+
+    private var why: String {
+        let cover = item.cover ?? "its check"
+        switch item.status {
+        case .covered: return "Proved by GitHub Actions: \(cover)"
+        case .failed: return "GitHub Actions \(cover) failed"
+        default:
+            if item.status == .open, let c = item.cover { return "Waiting for gha:\(c) on this head" }
+            return "Not run here: \(item.reason)\(item.machine.map { " (on \($0))" } ?? "")"
+        }
+    }
+
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Image(systemName: item.status == .waived ? "checkmark.circle" : "minus.circle")
+            Image(systemName: icon)
                 .font(.system(size: 13))
-                .foregroundStyle(Theme.textFaint)
+                .foregroundStyle(tint)
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 3) {
-                Text(item.command).font(.system(size: 12.5, design: .monospaced)).foregroundStyle(Theme.textMuted)
-                Text("Not run here: \(item.reason)\(item.machine.map { " (on \($0))" } ?? "")")
+                Text(item.command).font(.system(size: 12.5, design: .monospaced)).foregroundStyle(item.status == .covered || item.status == .failed ? Theme.text : Theme.textMuted)
+                Text(why)
                     .font(.system(size: 11.5))
-                    .foregroundStyle(Theme.textMuted)
+                    .foregroundStyle(item.status == .failed ? Theme.State.cancelled : Theme.textMuted)
                 if item.status == .waived {
                     Text("Waived by \(item.by ?? "someone"): \(item.note ?? "")")
                         .font(.system(size: 11.5))
@@ -111,11 +145,16 @@ private struct NotRunRow: View {
                 }
             }
             Spacer()
+            if (item.status == .covered || item.status == .failed), let link = item.url.flatMap(URL.init(string:)) {
+                Link("View run", destination: link)
+                    .font(.system(size: 11.5))
+                    .help(link.absoluteString)
+            }
             if item.status == .open {
                 Button("Waive…", action: waive)
                     .controlSize(.small)
                     .help("Waive this check with a note saying why it's fine without it.")
-            } else {
+            } else if item.status == .waived {
                 Text("Waived").font(.system(size: 11.5)).foregroundStyle(Theme.textMuted)
             }
         }

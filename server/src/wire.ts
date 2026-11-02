@@ -31,8 +31,8 @@ export const DiffSideValues: readonly DiffSide[] = ["new","old"];
 export type NotRunKind = "requirement" | "afterFailure" | "timedOut";
 export const NotRunKindValues: readonly NotRunKind[] = ["requirement","afterFailure","timedOut"];
 
-export type NotRunStatus = "open" | "waived";
-export const NotRunStatusValues: readonly NotRunStatus[] = ["open","waived"];
+export type NotRunStatus = "open" | "waived" | "covered" | "failed";
+export const NotRunStatusValues: readonly NotRunStatus[] = ["open","waived","covered","failed"];
 
 export type ProofKind = "screenshot" | "video" | "terminal" | "tests";
 export const ProofKindValues: readonly ProofKind[] = ["screenshot","video","terminal","tests"];
@@ -1097,6 +1097,10 @@ export interface TaskNotRun {
   /** Login of the person who waived it. */
   by?: string | null;
   resolvedAt?: number | null;
+  /** The GitHub check run that settles it (`[macos] xcodebuild … → gha:mac-build` gives mac-build), or none. */
+  cover?: string | null;
+  /** Link to that check run once it passed or failed. */
+  url?: string | null;
 }
 
 /** One of a repo's checks, run in a task's worktree before its finish is committed. */

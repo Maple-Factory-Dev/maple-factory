@@ -24,6 +24,22 @@ struct NotRunChecksTests {
         #expect(items[1].status == .waived && items[1].note == "CI runs it" && items[1].by == "andrea")
     }
 
+    /// MF-337: a `[macos]` check covered by `→ gha:mac-build` settles from that GitHub check run.
+    @Test func decodesCoveredItems() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../../../protocol/fixtures/task-not-run/covered.json").standardized
+        let object = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        let items = try JSONDecoder().decode([Wire.TaskNotRun].self, from: JSONSerialization.data(withJSONObject: object["items"] as Any))
+        #expect(items.map(\.status) == [.covered, .failed, .open])
+        #expect(items[0].cover == "mac-build" && items[0].url?.hasSuffix("/job/2") == true)
+        #expect(items[2].cover == "ios-build" && items[2].url == nil)
+    }
+
+    @Test func unknownStatusDecodesAsOther() throws {
+        let json = Data(#"{"command":"x","reason":"needs macos","kind":"requirement","status":"provedSomewhereNew","at":1}"#.utf8)
+        let item = try JSONDecoder().decode(Wire.TaskNotRun.self, from: json)
+        #expect(item.status == .other("provedSomewhereNew"))
+    }
+
     @Test func olderServersSendNone() throws {
         let json = Data("""
         {"type":"task.updated","task":{"id":"MF-1","goal":"g","title":"A task","state":"reviewing","owner":"andrea","brief":"",

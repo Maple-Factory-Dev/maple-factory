@@ -25,7 +25,7 @@ import { followedUp, Scout, SCOUT_PREFIX, type Candidate, type ScoutPick } from 
 import { SlackAsks, SLACK_PREFIX, type Ask, type Proposal } from "./slack-asks.ts";
 import { threadAddress } from "../slack.ts";
 import { loginFor } from "../slack-links.ts";
-import { checkCommands, checksFor, parseCheck, pathRules, RepoSetup, requiresFor, SCRIPT_VARIABLES, scriptsProblem, SETUP_PREFIX, tidyScripts } from "./repo-setup.ts";
+import { checkCommands, checksFor, parseCheck, stripCover, pathRules, RepoSetup, requiresFor, SCRIPT_VARIABLES, scriptsProblem, SETUP_PREFIX, tidyScripts } from "./repo-setup.ts";
 import { merged, redacted } from "./connectors.ts";
 import { assess, budgetCostUsd, budgetMinutes, budgetUse, type BudgetUse, overBudgetMode, validPolicy } from "./policy.ts";
 import { cycleSplit, findingDetail, manualReason, type StatKind } from "./stats.ts";
@@ -33,7 +33,7 @@ import { trackStage } from "./stages.ts";
 import type { Intake } from "./intake.ts";
 import type { Secrets } from "../secrets.ts";
 import { agentsIn, mentionsIn } from "./mentions.ts";
-import { addAssignees, appSettingsUrl, approvePullRequest, needsReviews, requestReviewers, requiredApprovals, checkLog, checks, closePullRequest, createPullRequest, deleteBranch, reopenPullRequest, GitHubError, type GitHubApp, githubApp, installedRepos, enqueuePullRequest, mergePullRequest, mergeQueueRequired, needsMergeQueue, PERMISSIONS, pullRequestBody, pullRequestState, repoToken, updatePullRequestBody, rerunCheck, rerunFailed, reviewThreads } from "../github.ts";
+import { addAssignees, appSettingsUrl, type Check, approvePullRequest, needsReviews, requestReviewers, requiredApprovals, checkLog, checks, closePullRequest, createPullRequest, deleteBranch, reopenPullRequest, GitHubError, type GitHubApp, githubApp, installedRepos, enqueuePullRequest, mergePullRequest, mergeQueueRequired, needsMergeQueue, PERMISSIONS, pullRequestBody, pullRequestState, repoToken, updatePullRequestBody, rerunCheck, rerunFailed, reviewThreads } from "../github.ts";
 
 const MAX_REVIEW_ROUNDS = 5;
 /// Restarts after ends nobody chose (sleep, lost tmux, an update) before a person is asked.
@@ -982,6 +982,7 @@ export class Engine {
         if (!note) fail("Say why it's fine without that check: a note is needed to waive it.");
         const item = (task.checksNotRun ?? []).find((n) => n.command === msg.command) ?? fail("That check isn't waiting to be waived.");
         if (item.status === "waived") fail("It's already waived.");
+        if (item.status !== "open") fail(item.status === "covered" ? "GitHub Actions already proved it." : "Its GitHub check failed on this head; fix it rather than waive it.");
         Object.assign(item, { status: "waived", note, by: who, resolvedAt: now() });
         this.event(task, who, `waived the check \`${item.command}\` (${item.reason}): ${note}`);
         this.save(task);
@@ -1539,6 +1540,9 @@ export class Engine {
       const line = lines.find((p): p is { command: string; requires: string[] } => !("error" in p) && p.command === n.command);
       if (line?.requires.length) handoff.push({ command: n.command, requires: line.requires });
     }
+    // A check a GitHub check covers (`→ gha:mac-build`) is settled by that run, not a Mac.
+    const covered = new Set(lines.flatMap((p) => ("error" in p || !p.covers ? [] : [p.command])));
+    for (let i = handoff.length - 1; i >= 0; i--) if (covered.has(handoff[i]!.command)) handoff.splice(i, 1);
     this.store.savePrivate(task.id, { ...this.store.private(task.id), proveJob: null, proveSkip: [] });
     if (!handoff.length || !head) {
       task.appleChecks = null;
@@ -2169,9 +2173,13 @@ export class Engine {
     const before = task.checksNotRun ?? [];
     if (!skipped.length && !before.length) return;
     const at = now();
+    const covers = this.covers(task);
     task.checksNotRun = skipped.map((n) => {
+      const cover = covers.get(n.command) ?? null;
+      // Waived stays waived; a GitHub check's result is for one head, so a new push starts it open again.
       const was = before.find((b) => b.command === n.command && b.status === "waived");
-      return was ? { ...was, reason: n.reason } : { command: n.command, reason: n.reason, kind: "requirement" as const, status: "open" as const, machine: task.machine ?? null, at, note: null, by: null, resolvedAt: null };
+      if (was) return { ...was, reason: n.reason, cover, url: null };
+      return { command: n.command, reason: cover ? `waiting for gha:${cover}` : n.reason, kind: "requirement" as const, status: "open" as const, machine: task.machine ?? null, at, note: null, by: null, resolvedAt: null, cover, url: null };
     });
     const open = task.checksNotRun.filter((n) => n.status === "open");
     if (open.length) this.event(task, "factory", `${open.length} check${open.length === 1 ? "" : "s"} not run here: ${[...new Set(open.map((n) => n.reason))].join("; ")}`);
@@ -2182,9 +2190,47 @@ export class Engine {
     // Ones a Mac is about to run (or running) aren't for waiving: the Apple checks row says where they are.
     const a = task.appleChecks;
     const handed = (c: string) => !!a && (a.state === "waiting" || a.state === "running") && a.commands.includes(c);
-    const open = (task.checksNotRun ?? []).filter((n) => n.status === "open" && !handed(n.command));
+    const items = task.checksNotRun ?? [];
+    const failed = items.filter((n) => n.status === "failed");
+    if (failed.length) return failed.map((n) => `gha:${n.cover} failed${task.pr?.head ? ` on ${task.pr.head.slice(0, 7)}` : ""}`).join("; ");
+    const open = items.filter((n) => n.status === "open" && !handed(n.command));
     if (!open.length) return null;
     return `waiting on ${open.length} check${open.length === 1 ? "" : "s"} not run here: ${[...new Set(open.map((n) => n.reason))].join("; ")}`;
+  }
+
+  /** The repo's checks that name a GitHub check covering them: command → check name (`→ gha:mac-build`). */
+  private covers(task: Task): Map<string, string> {
+    const out = new Map<string, string>();
+    for (const line of checkCommands(this.store.scriptsFor(taskRepo(task, this.store.goal(task.goal) ?? null)))) {
+      const p = parseCheck(line);
+      if (!("error" in p) && p.covers) out.set(p.command, p.covers);
+    }
+    return out;
+  }
+
+  /** Settles each not-run item a GitHub check covers from that check run on the head: passed (not
+   *  skipped) → covered, failed → failed, anything else → open again. True when one changed. */
+  coverNotRun(task: Task, found: readonly Check[]): boolean {
+    let changed = false;
+    for (const item of task.checksNotRun ?? []) {
+      if (!item.cover || item.status === "waived") continue;
+      const run = found.find((c) => c.name === item.cover);
+      const status = run?.status === "passed" && !run.skipped ? "covered" : run?.status === "failed" ? "failed" : "open";
+      const url = status === "open" ? null : run?.url ?? null;
+      if (item.status === status && (item.url ?? null) === url) continue;
+      changed = true;
+      const head = task.pr?.head?.slice(0, 7) ?? "its head";
+      if (status === "open") {
+        Object.assign(item, { status, url: null, resolvedAt: null, reason: `waiting for gha:${item.cover}` });
+        continue;
+      }
+      const was = item.status;
+      Object.assign(item, { status, url, resolvedAt: now(), reason: status === "covered" ? `proved by gha:${item.cover}` : `gha:${item.cover} failed on ${head}` });
+      if (was === status) continue; // only the link moved (a re-run)
+      this.event(task, "factory", status === "covered" ? `\`${item.command}\` proved by GitHub Actions ${item.cover} on ${head}` : `\`${item.command}\`: GitHub Actions ${item.cover} failed on ${head}`);
+      if (status === "failed") task.comments.push({ id: crypto.randomUUID(), author: "factory", text: `GitHub Actions **${item.cover}** failed on ${head}, so \`${item.command}\` isn't proved and merging waits.${url ? ` [View run](${url})` : ""}`, at: now(), anchor: "Checks not run", via: null });
+    }
+    return changed;
   }
 
   /** A finish one of the repo's checks stopped (nothing committed or pushed), or its merge check (committed,
@@ -2444,10 +2490,13 @@ export class Engine {
     now_.pr.checks = found.map((c) => ({ name: c.name, status: c.status, duration: c.duration, required: true, url: c.url ?? null }));
     this.store.savePrivate(id, { ...this.store.private(id), checks: found });
     if (this.ciPending(now_)) this.hooks.wakeIn(CI_POLL_MS);
+    // Checks not run here that a GitHub check covers (`→ gha:mac-build`) settle from it.
+    const covered = this.coverNotRun(now_, found);
     if (now_.pr.checks.map((c) => `${c.name}:${c.status}`).join() === before) {
       // Same results, but a check's link changed (a re-run is a new job): the apps get the new one.
-      if (now_.pr.checks.map((c) => c.url ?? "").join() !== links) this.save(now_);
-      return false;
+      if (covered || now_.pr.checks.map((c) => c.url ?? "").join() !== links) this.save(now_);
+      if (covered) await this.autoMerge(now_);
+      return covered;
     }
     const failed = found.filter((c) => c.status === "failed");
     if (failed.length) this.event(now_, "factory", `CI failed: ${failed.map((c) => c.name).join(", ")}`);
@@ -3120,11 +3169,12 @@ export class Engine {
         const scripts = this.store.scriptsFor(taskRepo(task, goal ?? null));
         const { run: checks, skipped } = checksFor(scripts, here ? here.tags ?? [] : null);
         // With their `[tag] ` prefixes, for runners that skip (and say why) what their machine can't run.
+        // Never with a ` → gha:<name>` suffix: older and current runners would run it as shell.
         const lines = checkCommands(scripts);
-        const checkLines = lines.some((l) => l.trim().startsWith("[")) ? lines.join("\n") : null;
+        const checkLines = lines.some((l) => l.trim().startsWith("[")) ? lines.map(stripCover).join("\n") : null;
         // What it skips is handed to a machine with the tags once it's pushed (`proveChecks`).
         const parsed = lines.map(parseCheck);
-        const handoff = skipped.map((c) => ({ command: c.command, requires: parsed.find((p): p is { command: string; requires: string[] } => !("error" in p) && p.command === c.command)?.requires ?? c.missing }));
+        const handoff = skipped.filter((c) => !parsed.some((p) => !("error" in p) && p.command === c.command && p.covers)).map((c) => ({ command: c.command, requires: parsed.find((p): p is { command: string; requires: string[] } => !("error" in p) && p.command === c.command)?.requires ?? c.missing }));
         const skipNote = skipped.length ? ` ${skipped.length} check${skipped.length === 1 ? "" : "s"} skipped on this machine (${skipped.map((c) => `needs ${c.missing.join(", ")}`).join("; ")}).` : "";
         this.store.savePrivate(task.id, { ...priv, finishing: true, handoff, skippedChecks: skipped.map((c) => notRunFor(c.command, c.missing)) });
         task.liveLog = checks.length ? RUNNING_CHECKS : "Committing and pushing…";

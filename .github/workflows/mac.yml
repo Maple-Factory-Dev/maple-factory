@@ -1,0 +1,41 @@
+# Builds the Mac app and runs the MapleKit tests on a macOS runner (MF-337). No path filter on
+# purpose: a repo check line can name this job (`[macos] swift test --filter MapleKitTests → gha:mac-build`)
+# to cover an Apple check a Linux machine couldn't run, and a skipped job would leave that item open.
+# Locally: cd apps/mac && swift build && swift test --filter MapleKitTests
+name: Mac
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mac-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mac-build:
+    # The check run's name: what `→ gha:mac-build` refers to.
+    name: mac-build
+    runs-on: macos-15
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: apps/mac
+    steps:
+      - uses: actions/checkout@v7
+      - name: Toolchain
+        run: swift --version && xcodebuild -version
+      - uses: actions/cache@v4
+        with:
+          path: apps/mac/.build
+          key: mac-spm-${{ runner.os }}-${{ hashFiles('apps/mac/Package.resolved') }}
+          restore-keys: mac-spm-${{ runner.os }}-
+      - name: Build the Mac app
+        run: swift build
+      - name: MapleKit tests
+        run: swift test --filter MapleKitTests
