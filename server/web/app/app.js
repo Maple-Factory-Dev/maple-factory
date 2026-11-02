@@ -1150,8 +1150,8 @@ function decisions(t) {
   }
   if (t.state === "reviewing") {
     const passed = t.autoReview?.rounds.at(-1)?.verdict === "passed";
-    const failing = t.pr?.checks?.some((c) => c.status === "failed");
-    const pending = t.pr?.checks?.some((c) => c.status !== "passed" && c.status !== "failed");
+    const failing = withApple(t).some((c) => c.status === "failed");
+    const pending = withApple(t).some((c) => c.status !== "passed" && c.status !== "failed");
     if (approvable(t)) {
       buttons.push(h("button", { class: "btn go", disabled: t.reviews.includes(me), onclick: () => { sendFollowUps(t); send({ type: "task.approveChanges", id: t.id }); } },
         icon("check"), t.reviews.includes(me) ? "You approved the changes" : "Approve changes"));
@@ -1418,7 +1418,8 @@ function readyStrip(t) {
   const verdict = last && { passed: ["Passed · ready for you", "ok"], changesRequested: ["Changes requested", "wait"], escalated: ["Handed to a person", "bad"], inProgress: ["Reviewing…", "muted"] }[last.verdict];
   const proven = t.doneWhen.filter((d) => d.status === "proven").length;
   const gaps = t.state === "merged" ? [] : t.doneWhen.filter((d) => d.status !== "proven");
-  const failing = (t.pr?.checks ?? []).filter((c) => c.status === "failed").length;
+  const all = withApple(t);
+  const failing = all.filter((c) => c.status === "failed").length;
   const jump = (key) => (e) => {
     e.preventDefault();
     const el = document.getElementById(`s-${key}`);
@@ -1435,7 +1436,7 @@ function readyStrip(t) {
       t.diff && h("a", { href: "#", onclick: (e) => { e.preventDefault(); taskTabs.set(t.id, "diff"); render(); } },
         h("span", { class: "ok" }, `+${t.diff.added}`), " ", h("span", { class: "bad" }, `−${t.diff.removed}`)),
       t.pr && (t.pr.url ? h("a", { href: t.pr.url, target: "_blank", rel: "noopener" }, `#${t.pr.number} ↗`) : h("b", {}, `#${t.pr.number}`)),
-      t.pr && t.pr.checks.length > 0 && h("span", { class: failing ? "bad" : "muted" }, failing ? `${failing} failing` : `${t.pr.checks.length} ${t.pr.checks.length === 1 ? "check" : "checks"}`)),
+      t.pr && all.length > 0 && h("span", { class: failing ? "bad" : "muted" }, failing ? `${failing} failing` : `${all.length} ${all.length === 1 ? "check" : "checks"}`)),
     gaps.length > 0 && h("div", { style: "margin-top:8px" }, gaps.map((d) => h("div", { class: "bad" }, `${d.status === "failed" ? "Failed" : "No proof yet"}: ${d.text}`))),
     links.length > 0 && h("div", { class: "row muted", style: "margin-top:8px" }, "Jump to", links.map(([key, label]) => h("a", { href: `#s-${key}`, onclick: jump(key) }, label))))];
 }
@@ -1565,7 +1566,7 @@ function pull(t) {
   const pr = t.pr;
   const local = !pr.url;
   const st = prStateLabel(pr, t);
-  const sum = checkSummary(pr.checks);
+  const sum = checkSummary(withApple(t));
   const failing = pr.checks.some((c) => c.status === "failed");
   const recheck = () => send({ type: "task.recheckGitHub", id: t.id }) && toast("Reading the pull request from GitHub again");
   const footBtn = (label, ic, onclick, title) => h("button", { class: "btn small", title, onclick }, icon(ic), label);
@@ -1585,7 +1586,7 @@ function pull(t) {
         !local && h("a", { class: "pr-all", href: `${pr.url}/checks`, target: "_blank", rel: "noopener", title: "The pull request's Checks tab on GitHub" }, "All checks ↗")),
       h("div", { class: "check-bar", role: "img", "aria-label": sum.detail },
         sum.segments.map((s) => h("span", { class: `seg seg-${s.status}`, style: `flex:${s.count}` }))),
-      h("div", { class: "check-list" }, pr.checks.map((c) => ciCheck(t, c))),
+      h("div", { class: "check-list" }, pr.checks.map((c) => ciCheck(t, c)), t.appleChecks && appleCheck(t, t.appleChecks)),
       pr.state !== "merged" && (failing || !local) && h("div", { class: "pr-foot" },
         failing && footBtn("Re-run failed", "refresh-cw", () => send({ type: "task.rerunChecks", id: t.id }) && toast("Running the failed checks again")),
         !local && footBtn("Recheck", "refresh-cw", recheck, "Read the pull request and its checks from GitHub again"))];
@@ -1601,6 +1602,46 @@ function pull(t) {
     h("div", { class: "pr-branches", title: `${pr.branch} into ${pr.base}` }, pill(pr.branch, "Head"), h("span", { class: "faint" }, "→"), pill(pr.base, "Base")),
     h("hr", { class: "pr-rule" }),
     checks)];
+}
+
+/** The PR's CI checks plus the Apple checks handed to a Mac (as one check), for the counts. */
+function withApple(t) {
+  const a = t.appleChecks;
+  const status = a && { waiting: "queued", running: "running", passed: "passed", failed: "failed" }[a.state];
+  return a ? [...(t.pr?.checks ?? []), { name: "Apple checks", status }] : (t.pr?.checks ?? []);
+}
+
+const appleOpen = new Set(); // task ids whose Apple checks row is expanded
+
+/** The checks a Linux box couldn't run, handed to a Mac: who's running them (or why they wait),
+ *  then each command with its time and output, and the head they ran on. */
+function appleCheck(t, a) {
+  const status = { waiting: "queued", running: "running", passed: "passed", failed: "failed" }[a.state];
+  const head = a.head.slice(0, 7);
+  const text = a.state === "waiting" ? (a.reason ?? "Waiting for a machine with " + a.needs.join(", "))
+    : a.state === "running" ? `Waiting for ${a.machine} · running ${a.commands.length === 1 ? "1 check" : `${a.commands.length} checks`}`
+      : `${a.state === "passed" ? "Passed" : "Failed"} on ${a.machine ?? "a Mac"} · ${head}`;
+  const open = appleOpen.has(t.id);
+  const toggle = () => { open ? appleOpen.delete(t.id) : appleOpen.add(t.id); render(); };
+  const secs = (ms) => ms < 1000 ? `${ms}ms` : ms < 60000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
+  return h("div", { class: `check-item ci-check apple-check status-${status}` },
+    h("div", { class: "check-row" },
+      h("span", { class: `check-dot dot-${status}`, "aria-label": status }, status === "passed" ? "✓" : status === "failed" ? "✕" : status === "running" ? h("span", { class: "spin" }) : icon("clock")),
+      h("span", { class: "check-name", title: `Checks ${a.needs.join(", ")} needs, run on a machine that has them for ${head}` }, "Apple checks"),
+      h("span", { class: "req-tag" }, a.needs.join(", ")),
+      h("span", { class: "spacer" }),
+      h("span", { class: `check-status${status === "failed" ? " bad-text" : ""}`, title: a.reason ?? "" }, text),
+      h("span", { class: "check-actions" }, h("button", { class: "btn small", onclick: toggle }, open ? "Hide log" : "Log"))),
+    open && h("div", { class: "check-log-wrap", style: "margin-top:8px" },
+      h("div", { class: "muted", style: "font-size:13px;margin-bottom:6px" }, `Head ${head}`, a.message ? ` · ${a.message}` : ""),
+      (a.checks.length ? a.checks : a.commands.map((command) => ({ command, pending: true }))).map((c) =>
+        h("div", { style: "margin-bottom:8px" },
+          h("div", { class: "row" },
+            h("span", { class: c.pending ? "muted" : c.code === 0 && !c.timedOut ? "ok" : "bad-text" }, c.pending ? "◌" : c.code === 0 && !c.timedOut ? "✓" : "✕"),
+            h("code", {}, c.command),
+            h("span", { class: "spacer" }),
+            !c.pending && h("span", { class: "muted mono-digits" }, c.timedOut ? "timed out" : `${c.code == null ? "killed" : `exit ${c.code}`} · ${secs(c.ms)}`)),
+          !c.pending && c.output && h("pre", { class: "check-log" }, c.output.replace(/\n+$/, ""))))));
 }
 
 /** A CI check: its status circle, name and how it went; Log (read from GitHub into a panel below it), Re-run and its run on GitHub. */

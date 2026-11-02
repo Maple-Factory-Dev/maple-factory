@@ -22,6 +22,7 @@ mod mcp;
 mod media;
 mod ports;
 mod proof;
+mod proof_job;
 mod protocol;
 mod proxy;
 mod repos;
@@ -1139,6 +1140,10 @@ fn handle(sessions: &Sessions, updater: &Arc<AutoUpdate>, recheck: &Arc<tokio::s
         Inbound::TaskProve(p) => {
             info!("checking task {} in {}", p.task_id, p.cwd);
             tokio::spawn(proof::run_prove(sessions.clone(), p));
+        }
+        Inbound::TaskProveChecks(p) => {
+            info!("running task {}'s handed-off checks at {}", p.task_id, p.head);
+            tokio::spawn(proof_job::run(sessions.clone(), p));
         }
         Inbound::TaskDiff(d) => {
             tokio::spawn(tasks::run_diff(sessions.clone(), d));

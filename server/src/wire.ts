@@ -83,6 +83,9 @@ export const SeverityValues: readonly Severity[] = ["blocker","major","minor"];
 export type Priority = "p0" | "p1" | "p2" | "p3";
 export const PriorityValues: readonly Priority[] = ["p0","p1","p2","p3"];
 
+export type AppleChecksState = "waiting" | "running" | "passed" | "failed";
+export const AppleChecksStateValues: readonly AppleChecksState[] = ["waiting","running","passed","failed"];
+
 export type FindingStatus = "open" | "fixed" | "disputed";
 export const FindingStatusValues: readonly FindingStatus[] = ["open","fixed","disputed"];
 
@@ -952,6 +955,8 @@ export interface Task {
   findings?: Findings | null;
   /** Machine tags the task needs (macos, xcode…): only a machine with every one of them takes it. Set by the planner and the repo's path rules; none: any machine. */
   requires?: string[] | null;
+  /** Checks its building machine skipped (they need macos, xcode…), run on a machine that has the tags for its current head. Merge waits for them to pass. */
+  appleChecks?: AppleChecks | null;
   /** Checks its last finish couldn't run on that machine (`needs macos`), open until a person waives them. None: none (or an older server). */
   checksNotRun?: TaskNotRun[] | null;
 }
@@ -1103,6 +1108,25 @@ export interface CheckRun {
   ms: number;
   /** The end of what it printed (stdout and stderr). */
   output: string;
+}
+
+/** Checks the machine that built a task couldn't run (they need macos, xcode…), handed to a machine that has the tags. Tied to one head commit: a new push starts them again. */
+export interface AppleChecks {
+  state: AppleChecksState;
+  head: string;
+  /** The handed-off check commands, tags stripped. */
+  commands: string[];
+  /** Every machine tag those checks need together. */
+  needs: string[];
+  /** The machine running them (running) or that ran them (passed/failed). */
+  machine?: string | null;
+  /** While waiting: why no machine has taken them yet. */
+  reason?: string | null;
+  /** Their results, in order, once they ran; the last one failed when the state is failed. */
+  checks: CheckRun[];
+  at: number;
+  /** Why the run failed outside any check (the head couldn't be fetched, say). */
+  message?: string | null;
 }
 
 export interface DiffStat {
@@ -1990,6 +2014,18 @@ export interface RunnerMessage_TaskFinished {
   notRun?: NotRunCheck[] | null;
 }
 
+/** The answer to `task.prove_checks`: the handed-off checks' results on that head. */
+export interface RunnerMessage_TaskChecksProved {
+  type: "task.checks_proved";
+  taskId: string;
+  jobId: string;
+  head: string;
+  ok: boolean;
+  checks: CheckRun[];
+  /** Why it couldn't run them (the head couldn't be fetched, say). */
+  message?: string | null;
+}
+
 /** What a task's branch changes against its base: line counts per file and the unified patch. */
 export interface RunnerMessage_TaskDiff {
   type: "task.diff";
@@ -2085,8 +2121,8 @@ export interface RunnerMessage_SecretsRequest {
 }
 
 /** Runner → server. */
-export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Capabilities | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionEvents | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_AgentLoginStatus | RunnerMessage_Usage | RunnerMessage_SessionCost | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskDiff | RunnerMessage_TaskMerged | RunnerMessage_TaskMergeCheck | RunnerMessage_TaskHandedOff | RunnerMessage_DraftProgress | RunnerMessage_DraftDone | RunnerMessage_TaskProgress | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest | RunnerMessage_SecretsRequest;
-export const RunnerMessageTypes = ["hello","capabilities","health","session.opened","session.error","session.ended","session.activity","session.events","session.replay","update.status","agent.login_status","usage","session.cost","mcp.request","task.started","task.finished","task.diff","task.merged","task.merge_check","task.handed_off","draft.progress","draft.done","task.progress","task.cleaned","task.token_request","secrets.request"] as const;
+export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Capabilities | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionEvents | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_AgentLoginStatus | RunnerMessage_Usage | RunnerMessage_SessionCost | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskChecksProved | RunnerMessage_TaskDiff | RunnerMessage_TaskMerged | RunnerMessage_TaskMergeCheck | RunnerMessage_TaskHandedOff | RunnerMessage_DraftProgress | RunnerMessage_DraftDone | RunnerMessage_TaskProgress | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest | RunnerMessage_SecretsRequest;
+export const RunnerMessageTypes = ["hello","capabilities","health","session.opened","session.error","session.ended","session.activity","session.events","session.replay","update.status","agent.login_status","usage","session.cost","mcp.request","task.started","task.finished","task.checks_proved","task.diff","task.merged","task.merge_check","task.handed_off","draft.progress","draft.done","task.progress","task.cleaned","task.token_request","secrets.request"] as const;
 
 export interface ServerToRunner_SessionOpen {
   type: "session.open";
@@ -2190,6 +2226,22 @@ export interface ServerToRunner_TaskFinish {
   checkLines?: string | null;
 }
 
+/** A proof job: fetch the branch at exactly `head` into a temporary worktree, run only `checks` there, answer with `task.checks_proved` and remove the worktree. No agent session. */
+export interface ServerToRunner_TaskProveChecks {
+  type: "task.prove_checks";
+  taskId: string;
+  jobId: string;
+  /** owner/name on GitHub, to find or clone the checkout when this machine has no repoDir for it. */
+  repo?: string | null;
+  /** A checkout of the repo on this machine, when the factory knows one. */
+  repoDir?: string | null;
+  branch: string;
+  head: string;
+  base?: string | null;
+  /** The commands, one per line, tags stripped. */
+  checks: string;
+}
+
 /** Report a task's diff against its base (answered with `task.diff`). */
 export interface ServerToRunner_TaskDiff {
   type: "task.diff";
@@ -2280,8 +2332,8 @@ export interface ServerToRunner_SecretsReply {
 }
 
 /** Server → runner. */
-export type ServerToRunner = ServerToRunner_SessionOpen | ServerToRunner_SessionResize | ServerToRunner_SessionKill | ServerToRunner_SessionEventsSubscribe | ServerToRunner_SessionInput | ServerToRunner_SessionReplay | ServerToRunner_RunnerUpdate | ServerToRunner_AgentLogin | ServerToRunner_RunnerRestart | ServerToRunner_McpResponse | ServerToRunner_TaskFinish | ServerToRunner_TaskDiff | ServerToRunner_TaskMergeCheck | ServerToRunner_TaskMerge | ServerToRunner_TaskHandoff | ServerToRunner_DraftRun | ServerToRunner_DraftCancel | ServerToRunner_TaskCleanup | ServerToRunner_TaskToken | ServerToRunner_SecretsReply;
-export const ServerToRunnerTypes = ["session.open","session.resize","session.kill","session.events.subscribe","session.input","session.replay","runner.update","agent.login","runner.restart","mcp.response","task.finish","task.diff","task.merge_check","task.merge","task.handoff","draft.run","draft.cancel","task.cleanup","task.token","secrets.reply"] as const;
+export type ServerToRunner = ServerToRunner_SessionOpen | ServerToRunner_SessionResize | ServerToRunner_SessionKill | ServerToRunner_SessionEventsSubscribe | ServerToRunner_SessionInput | ServerToRunner_SessionReplay | ServerToRunner_RunnerUpdate | ServerToRunner_AgentLogin | ServerToRunner_RunnerRestart | ServerToRunner_McpResponse | ServerToRunner_TaskFinish | ServerToRunner_TaskProveChecks | ServerToRunner_TaskDiff | ServerToRunner_TaskMergeCheck | ServerToRunner_TaskMerge | ServerToRunner_TaskHandoff | ServerToRunner_DraftRun | ServerToRunner_DraftCancel | ServerToRunner_TaskCleanup | ServerToRunner_TaskToken | ServerToRunner_SecretsReply;
+export const ServerToRunnerTypes = ["session.open","session.resize","session.kill","session.events.subscribe","session.input","session.replay","runner.update","agent.login","runner.restart","mcp.response","task.finish","task.prove_checks","task.diff","task.merge_check","task.merge","task.handoff","draft.run","draft.cancel","task.cleanup","task.token","secrets.reply"] as const;
 
 /** Start receiving `snapshot` and live updates. */
 export interface ClientMessage_Subscribe {
