@@ -151,9 +151,9 @@ struct MergeCalendar: View {
                         .font(.system(size: 11.5).monospacedDigit())
                         .foregroundStyle(hovered == nil ? Theme.textFaint : Theme.text)
                 }
-                grid(model, cell: width > 0 ? cellSize(model, width: width) : 11)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+                // Measured on the full-width header, not the grid, so the grid's own size never feeds back into its cells.
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+                if width > 0 { grid(model, cell: cellSize(model, width: width)) }
                 footer(model)
             }
         }
@@ -167,7 +167,7 @@ struct MergeCalendar: View {
 
     private func cellSize(_ model: MergeCalendarModel, width: CGFloat) -> CGFloat {
         let n = CGFloat(max(1, model.weeks.count))
-        return max(6, min(16, (width - Self.labelWidth - Self.gap * (n - 1)) / n))
+        return max(4, min(16, (width - Self.labelWidth - Self.gap * (n - 1)) / n))
     }
 
     private func grid(_ model: MergeCalendarModel, cell: CGFloat) -> some View {
