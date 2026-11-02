@@ -1,5 +1,6 @@
 import Foundation
 import MapleKit
+import UIKit
 
 /// Sample goals, tasks and machines for the demo (`-demo YES`, or Try the demo when signed out), so
 /// every screen renders with no server.
@@ -186,6 +187,8 @@ enum DemoData {
                                options: [.init(title: "Use our usage table", detail: "Matches what customers see in the app.", recommended: true),
                                          .init(title: "Wait for Stripe's metered line items to leave beta, then switch the invoice renderer over to their API", detail: "Simpler, but needs their beta.", recommended: false)])
                 t.worker = .init(role: .builder, agent: "codex", machine: "m-mini", session: "s3", startedAt: ago(50))
+                // What the builder shared, for ArtifactViewTests: a sandboxed chart, an SVG, a note, a screenshot and the PDF.
+                t.artifacts = artifacts
             },
             task("API-29", goal: "g-api", title: "Token scopes: read, write and admin", state: .reviewing, owner: "kit", updated: 60) { t in
                 t.brief = "Tokens carry scopes; write endpoints refuse read tokens."
@@ -447,4 +450,102 @@ extension DemoData {
     static var pushDevices: [Wire.PushDevice] {
         [thisPhone, .init(id: "0ldph0ne00000000", platform: .apns, environment: .production, createdAt: ago(60 * 24 * 90), lastSeen: ago(60 * 24 * 12))]
     }
+}
+
+// MARK: - Artifacts (MF-273)
+
+extension DemoData {
+    private static let chartPath = "/attachments/demo/artifacts/invoice-totals.html"
+    private static let flowPath = "/attachments/demo/artifacts/invoice-flow.svg"
+    private static let notesPath = "/attachments/demo/artifacts/line-items.md"
+    private static let shotPath = "/attachments/demo/artifacts/invoice-preview.png"
+    private static let pdfPath = "/attachments/demo/artifacts/INV-1042.pdf"
+    private static let csvPath = "/attachments/demo/artifacts/usage.csv"
+
+    /// BIL-7's artifacts, oldest first (the viewer opens on the newest).
+    static var artifacts: [Wire.Artifact] {
+        func size(_ path: String) -> UInt64 { UInt64(artifactFile(path)?.count ?? 48_213) }
+        return [
+            .init(id: "art-chart", title: "Invoice totals", kind: .html, summary: "Monthly invoice totals, drawn by the page's own script; its request to example.com never gets out",
+                  file: chartPath, mime: "text/html", bytes: size(chartPath), by: "builder", at: ago(48), version: 2),
+            .init(id: "art-flow", title: "Invoice flow", kind: .svg, summary: "Usage rows become line items, then a PDF",
+                  file: flowPath, mime: "image/svg+xml", bytes: size(flowPath), by: "builder", at: ago(46), version: 1),
+            .init(id: "art-notes", title: "Line item notes", kind: .markdown, summary: "How metered usage turns into line items",
+                  file: notesPath, mime: "text/markdown", bytes: size(notesPath), by: "builder", at: ago(44), version: 1),
+            .init(id: "art-csv", title: "Usage sample", kind: .data, summary: "The usage rows behind INV-1042",
+                  file: csvPath, mime: "text/csv", bytes: size(csvPath), by: "builder", at: ago(42), version: 1),
+            .init(id: "art-pdf", title: "INV-1042", kind: .pdf, summary: "A rendered invoice with three line items",
+                  file: pdfPath, mime: "application/pdf", bytes: size(pdfPath), by: "builder", at: ago(40), version: 1),
+            .init(id: "art-shot", title: "Invoice preview", kind: .image, summary: "The invoice page in the web app",
+                  file: shotPath, mime: "image/png", bytes: 48_213, by: "builder", at: ago(38), version: 1),
+        ]
+    }
+
+    /// The bytes behind a demo artifact; nil for the screenshot, which FactoryStore serves as the app's mark.
+    static func artifactFile(_ path: String) -> Data? {
+        switch path {
+        case chartPath: Data(chart.utf8)
+        case flowPath: Data(flow.utf8)
+        case notesPath: Data(notes.utf8)
+        case csvPath: Data("date,org,metric,quantity,unit_price\n2026-10-01,acme,builds,412,0.02\n2026-10-01,acme,seats,14,9.00\n2026-10-02,acme,builds,388,0.02\n2026-10-02,acme,storage_gb,52,0.10\n".utf8)
+        case pdfPath: invoicePDF
+        default: nil
+        }
+    }
+
+    private static let invoicePDF: Data = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792)).pdfData { context in
+        context.beginPage()
+        func draw(_ text: String, _ x: CGFloat, _ y: CGFloat, size: CGFloat = 14, bold: Bool = false) {
+            (text as NSString).draw(at: CGPoint(x: x, y: y), withAttributes: [.font: UIFont.systemFont(ofSize: size, weight: bold ? .bold : .regular)])
+        }
+        draw("Invoice INV-1042", 48, 48, size: 28, bold: true)
+        draw("Acme Inc. · October 2026", 48, 88, size: 15)
+        let rows = [("Builds (800 × $0.02)", "$16.00"), ("Seats (14 × $9.00)", "$126.00"), ("Storage (52 GB × $0.10)", "$5.20")]
+        for (i, row) in rows.enumerated() {
+            draw(row.0, 48, 150 + CGFloat(i) * 30)
+            draw(row.1, 480, 150 + CGFloat(i) * 30)
+        }
+        UIColor.gray.setFill()
+        UIRectFill(CGRect(x: 48, y: 250, width: 516, height: 1))
+        draw("Total", 48, 264, bold: true)
+        draw("$147.20", 480, 264, bold: true)
+    }
+
+    private static let notes = """
+    # Line items from our usage table
+
+    Stripe doesn't return **metered** line items yet, so the renderer builds them itself:
+
+    - One line per metric: builds, seats, storage
+    - Quantities summed over the billing period
+    - Prices from the plan, not from Stripe
+
+    > Totals match the app's Usage page to the cent.
+    """
+
+    private static let flow = """
+    <svg xmlns="http://www.w3.org/2000/svg" width="520" height="120" font-family="-apple-system,sans-serif" font-size="13">
+    <rect x="10" y="40" width="140" height="40" rx="8" fill="#f1f2f4" stroke="#c4c8cf"/><text x="80" y="65" text-anchor="middle">Usage rows</text>
+    <path d="M150 60h50" stroke="#6a707a" marker-end="url(#a)"/><rect x="200" y="40" width="130" height="40" rx="8" fill="#eef3fd" stroke="#3b6fd8"/>
+    <text x="265" y="65" text-anchor="middle">Line items</text><path d="M330 60h50" stroke="#6a707a" marker-end="url(#a)"/>
+    <rect x="380" y="40" width="130" height="40" rx="8" fill="#e7f6ee" stroke="#14a866"/><text x="445" y="65" text-anchor="middle">Invoice PDF</text>
+    <defs><marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8z" fill="#6a707a"/></marker></defs></svg>
+    """
+
+    /// Draws itself with an inline script, then tries the network (and a link) to show the sandbox holds.
+    private static let chart = """
+    <!doctype html><html><head><style>body{margin:0;font:15px -apple-system,sans-serif;color:#1d2025;background:#fff}h3{margin:14px 16px 4px;font-size:16px}
+    p{margin:4px 16px;color:#6a707a}canvas{display:block;margin:10px 16px}a{color:#3b6fd8}</style></head><body>
+    <h3>Invoice totals by month</h3><p>Drawn by this page's script</p><canvas id="c" height="180"></canvas>
+    <p id="net">Network: checking…</p>
+    <p><a id="out" href="https://example.com/">Open example.com</a></p>
+    <script>
+    const totals = [92, 104, 118, 111, 131, 147], c = document.getElementById("c"), x = c.getContext("2d"), h = 160, max = 160;
+    const w = Math.max(240, Math.min(520, innerWidth - 32)), step = w / totals.length;
+    c.width = w;
+    x.strokeStyle = "#e2e4e8"; for (let i = 0; i <= 4; i++) { x.beginPath(); x.moveTo(0, 10 + i * h / 4); x.lineTo(w, 10 + i * h / 4); x.stroke(); }
+    totals.forEach((v, i) => { x.fillStyle = "#14a866"; x.fillRect(i * step + step * 0.2, 10 + h - v / max * h, step * 0.6, v / max * h); });
+    fetch("https://example.com/").then(() => "reached example.com", () => "blocked (sandboxed)").then(t => { document.getElementById("net").textContent = "Network: " + t; });
+    </script></body></html>
+    """
 }

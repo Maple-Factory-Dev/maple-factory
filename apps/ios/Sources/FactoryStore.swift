@@ -829,6 +829,7 @@ final class FactoryStore {
         // The demo's attachments: the app's mark for any image, a line of text for anything else.
         if status == .demo, path.hasPrefix("/attachments/demo/") {
             try? await Task.sleep(for: .seconds(0.2))
+            if let file = DemoData.artifactFile(path) { return file }
             if LinkedAttachment.kind(of: path, image: false) == .image { return UIImage(named: "Mark")?.pngData() }
             return Data("A demo attachment: \(path.split(separator: "/").last ?? "")\n".utf8)
         }
