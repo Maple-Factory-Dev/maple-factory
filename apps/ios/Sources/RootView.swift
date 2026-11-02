@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Signed in: Inbox, Goals, Machines and Settings. `-tab goals|machines|settings`, `-task <id>` and
 /// `-goal <id>` (with `-newTask YES` for its New task sheet) open a screen directly, for screenshots;
-/// `-stats YES` (with `-statsDays N`) opens Statistics; `-usage YES` opens Usage; `-activity YES` opens Activity.
+/// `-stats YES` (with `-statsDays N`) opens Statistics; `-usage YES` opens Usage; `-settings repos|people|secrets|merging` opens that Settings screen; `-activity YES` opens Activity.
 /// A `maplefactory://` link (FactoryStore.pendingLink) opens its task on the Inbox tab, or a session's
 /// terminal on Machines.
 struct RootView: View {
@@ -42,7 +42,10 @@ struct RootView: View {
         }
         .overlay(alignment: .top) { NoticeBanner() }
         .onAppear {
-            if UserDefaults.standard.bool(forKey: "activity") {
+            if let pane = UserDefaults.standard.string(forKey: "settings").flatMap(SettingsRoute.init(rawValue:)) {
+                tab = .settings
+                settingsPath.append(pane)
+            } else if UserDefaults.standard.bool(forKey: "activity") {
                 tab = .inbox
                 inboxPath.append(ActivityRoute())
             } else if UserDefaults.standard.bool(forKey: "usage") {
@@ -620,63 +623,5 @@ enum RunnerPhase: Equatable {
         case .failed: self = .failed(update.message)
         case .upToDate, .other: self = behind
         }
-    }
-}
-
-// MARK: - Settings
-
-struct SettingsView: View {
-    @Environment(FactoryStore.self) private var store
-
-    var body: some View {
-        Form {
-            Section("Factory") {
-                LabeledContent("Name", value: store.factoryName)
-                if let server = store.server { LabeledContent("Address", value: server.host() ?? server.absoluteString) }
-                if let version = store.feed.serverVersion { LabeledContent("Server", value: version) }
-                LabeledContent("Members", value: "\(store.feed.members.count)")
-                NavigationLink(value: UsageRoute()) { Label("Usage", systemImage: "gauge.with.dots.needle.33percent") }
-                NavigationLink(value: NotificationsRoute()) {
-                    LabeledContent { Text(store.pushSummary) } label: { Label("Notifications", systemImage: "bell") }
-                }
-                if store.isAdmin {
-                    NavigationLink(value: StatsRoute()) { Label("Statistics", systemImage: "chart.bar") }
-                }
-            }
-            if let me = store.feed.me {
-                Section("Account") {
-                    HStack(spacing: 12) {
-                        Avatar(login: me.login, url: me.avatarUrl, size: 40)
-                        VStack(alignment: .leading) {
-                            Text(me.name ?? me.login).font(.headline)
-                            Text("@\(me.login) · \(me.role)").font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-            if store.saved.count > 1 {
-                Section("Switch factory") {
-                    ForEach(store.saved.filter { $0.server != store.server }) { factory in
-                        Button { store.switchTo(factory) } label: {
-                            LabeledContent(factory.name, value: factory.host)
-                        }
-                    }
-                }
-            }
-            Section {
-                if store.status == .demo {
-                    Button("Leave the demo") { store.close() }
-                } else {
-                    Button("Sign out", role: .destructive) { store.signOut() }
-                }
-            }
-            Section {
-                LabeledContent("App", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")
-            }
-        }
-        .navigationTitle("Settings")
-        .navigationDestination(for: StatsRoute.self) { _ in StatisticsView() }
-        .navigationDestination(for: UsageRoute.self) { _ in UsageView() }
-        .navigationDestination(for: NotificationsRoute.self) { _ in NotificationSettingsView() }
     }
 }

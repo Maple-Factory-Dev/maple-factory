@@ -25,8 +25,16 @@ enum DemoData {
             feed.me!,
             Wire.Member(login: "sam", name: "Sam Rivera", role: "member", teams: ["mobile"]),
             Wire.Member(login: "kit", name: "Kit Okafor", role: "member", teams: ["platform"]),
+            Wire.Member(login: "jo", name: "Jo Lindqvist", role: "admin", teams: ["platform"], adminSource: "github"),
         ]
-        feed.repos = ["acme/app", "acme/push", "acme/api", "acme/web", "acme/docs"].map { Wire.OrgRepo(name: $0, defaultBranch: "main", isPrivate: true, source: .github) }
+        // Secrets on two repos, and an incident freeze on the docs site.
+        feed.secrets = [
+            Wire.RepoSecret(repo: "acme/api", name: "DATABASE_URL", updatedBy: "kit", updatedAt: ago(60 * 24 * 6)),
+            Wire.RepoSecret(repo: "acme/api", name: "STRIPE_KEY", updatedBy: me, updatedAt: ago(60 * 24 * 2)),
+            Wire.RepoSecret(repo: "acme/app", name: "APNS_KEY_ID", updatedBy: me, updatedAt: ago(60 * 5)),
+        ]
+        feed.mergeHolds = [Wire.MergeHold(repo: "acme/docs", reason: "Incident #42: docs deploy rolling back", by: "jo", at: ago(40))]
+        feed.repos = ["acme/app", "acme/push", "acme/api", "acme/web", "acme/docs"].map { Wire.OrgRepo(name: $0, defaultBranch: "main", isPrivate: $0 != "acme/docs", source: .github) }
         feed.goals = [
             Wire.Goal(id: "g-app", name: "Mobile app", prefix: "APP", color: "#D24E26", summary: "Ship the iPhone app: inbox, review and approvals on the go.", lead: me, repo: "acme/app", repos: ["acme/app", "acme/push"], team: "mobile"),
             Wire.Goal(id: "g-api", name: "Public API", prefix: "API", color: "#2F6FEB", summary: "A versioned REST API with tokens and rate limits.", lead: "kit", repo: "acme/api", repos: ["acme/api"]),

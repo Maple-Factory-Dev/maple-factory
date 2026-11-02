@@ -12,6 +12,10 @@ public struct FeedState: Sendable {
     public var goals: [Wire.Goal] = []
     /// The org's repos (Settings → Repositories on the Mac), for a goal's repo picker.
     public var repos: [Wire.OrgRepo] = []
+    /// Secret names per repo (never values), and who last changed each.
+    public var secrets: [Wire.RepoSecret] = []
+    /// Repos whose merges are on hold.
+    public var mergeHolds: [Wire.MergeHold] = []
     /// Newest first, as the server sends them.
     public var tasks: [Wire.Task] = []
     public var intake: [Wire.IntakeRequest] = []
@@ -59,6 +63,8 @@ public struct FeedState: Sendable {
             machines = snapshot.machines
             goals = snapshot.goals
             repos = snapshot.repos
+            secrets = snapshot.secrets
+            mergeHolds = snapshot.mergeHolds ?? []
             tasks = snapshot.tasks
             older = Self.older(tallies: snapshot.tallies, tasks: snapshot.tasks)
             loadingOlder = []
@@ -101,6 +107,10 @@ public struct FeedState: Sendable {
             online = presence.online
         case .reposUpdated(let update):
             repos = update.repos
+        case .secretsUpdated(let update):
+            secrets = update.secrets
+        case .mergeHoldsUpdated(let update):
+            mergeHolds = update.holds
         case .nameUpdated(let update):
             name = update.name
         case .runnerReleased(let release):

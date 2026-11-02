@@ -570,6 +570,18 @@ final class FactoryStore {
         notice = .toast("Moved \(id) to the bottom", taskId: id)
     }
 
+    // MARK: Settings
+
+    func savePolicy(_ policy: Wire.RiskPolicy) { send(.policySave(.init(policy: policy))) }
+    func grantAdmin(_ login: String) { send(.adminsGrant(.init(login: login))) }
+    func revokeAdmin(_ login: String) { send(.adminsRevoke(.init(login: login))) }
+    func revokeMember(_ login: String) { send(.membersRevoke(.init(login: login))) }
+    func holdMerges(_ repo: String, reason: String) { send(.reposHoldMerges(.init(repo: repo, reason: reason))) }
+    func releaseMerges(_ repo: String) { send(.reposReleaseMerges(.init(repo: repo))) }
+    func setSecret(repo: String, name: String, value: String) { send(.secretsSet(.init(repo: repo, name: name, value: value))) }
+    func deleteSecret(repo: String, name: String) { send(.secretsDelete(.init(repo: repo, name: name))) }
+    func mergeHold(_ repo: String) -> Wire.MergeHold? { feed.mergeHolds.first { $0.repo == repo } }
+
     func follow(_ goal: String, _ following: Bool) { send(.goalFollow(.init(id: goal, following: following))) }
     /// Asks for the factory's statistics over the last `days`; the reply lands in `stats`.
     func loadStats(days: Int) { send(.statsGet(.init(days: UInt32(days), goal: nil))) }
@@ -1138,6 +1150,46 @@ final class FactoryStore {
             pushDevices.removeAll { $0.id == m.id || (m.token != nil && $0.id == m.token.map(Self.pushDeviceID)) }
         case .quietHoursSet(let m):
             quietHours = m.quietHours
+        case .policySave, .adminsGrant, .adminsRevoke, .membersRevoke, .reposHoldMerges, .reposReleaseMerges, .secretsSet, .secretsDelete:
+            demoSettings(message)
+        default:
+            break
+        }
+    }
+
+    /// The settings screens' actions, answered the way the server would: the changed list comes back as its delta.
+    private func demoSettings(_ message: Wire.ClientMessage) {
+        switch message {
+        case .policySave(let m):
+            feed.apply(.policyUpdated(.init(policy: m.policy, acceptances: feed.acceptances)))
+            notice = .toast("Saved", taskId: nil)
+        case .adminsGrant(let m):
+            var members = feed.members
+            guard let i = members.firstIndex(where: { $0.login == m.login }) else { return }
+            members[i].role = "admin"; members[i].adminSource = "granted"; members[i].adminGrantedBy = me
+            feed.apply(.membersUpdated(.init(members: members)))
+            notice = .toast("\(m.login) is now an admin", taskId: nil)
+        case .adminsRevoke(let m):
+            var members = feed.members
+            guard let i = members.firstIndex(where: { $0.login == m.login }) else { return }
+            members[i].role = "member"; members[i].adminSource = nil; members[i].adminGrantedBy = nil
+            feed.apply(.membersUpdated(.init(members: members)))
+            notice = .toast("\(m.login) is no longer an admin", taskId: nil)
+        case .membersRevoke(let m):
+            feed.apply(.membersUpdated(.init(members: feed.members.filter { $0.login != m.login })))
+            notice = .toast("Revoked \(m.login)'s access", taskId: nil)
+        case .reposHoldMerges(let m):
+            var holds = feed.mergeHolds.filter { $0.repo != m.repo }
+            holds.append(.init(repo: m.repo, reason: m.reason, by: me, at: DemoData.now))
+            feed.apply(.mergeHoldsUpdated(.init(holds: holds)))
+        case .reposReleaseMerges(let m):
+            feed.apply(.mergeHoldsUpdated(.init(holds: feed.mergeHolds.filter { $0.repo != m.repo })))
+        case .secretsSet(let m):
+            var secrets = feed.secrets.filter { !($0.repo == m.repo && $0.name == m.name) }
+            secrets.append(.init(repo: m.repo, name: m.name, updatedBy: me, updatedAt: DemoData.now))
+            feed.apply(.secretsUpdated(.init(secrets: secrets)))
+        case .secretsDelete(let m):
+            feed.apply(.secretsUpdated(.init(secrets: feed.secrets.filter { !($0.repo == m.repo && $0.name == m.name) })))
         default:
             break
         }
