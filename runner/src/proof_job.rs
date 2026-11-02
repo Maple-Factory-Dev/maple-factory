@@ -87,7 +87,10 @@ async fn checkout(emit: Emit<'_>, p: &ProveChecks, at: &Places) -> Result<PathBu
         }
         None => {
             let repo = p.repo.as_deref().ok_or_else(|| anyhow!("The job names neither a folder nor a repo."))?;
-            let (owner, name) = repo.split_once('/').filter(|(o, n)| crate::tasks::valid_part(o) && crate::tasks::valid_part(n)).ok_or_else(|| anyhow!("`{repo}` isn't owner/name."))?;
+            let (owner, name) = repo
+                .split_once('/')
+                .filter(|(o, n)| crate::tasks::valid_part(o) && crate::tasks::valid_part(n))
+                .ok_or_else(|| anyhow!("`{repo}` isn't owner/name."))?;
             let _one = crate::tasks::CLONING.lock().await;
             match crate::repos::pick(&crate::repos::scan(&at.roots, &at.managed).await, repo) {
                 Some(c) => {
