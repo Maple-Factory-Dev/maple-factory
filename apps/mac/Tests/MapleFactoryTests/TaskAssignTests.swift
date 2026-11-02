@@ -8,13 +8,16 @@ import Testing
 /// then the rest A–Z, and filters by name or login ignoring case.
 @MainActor
 struct TaskAssignTests {
+    /// You, as the seed identity: pinned here so the suite doesn't read the global `FactoryData.me`.
+    private let me = Person(name: "Andrea Fomera", color: .gray, isHuman: true, github: "afomera")
+
     /// An open task of yours, with a hand raised to you.
     private func state() throws -> (AppState, String) {
         let state = AppState()
         let id = try #require(state.tasks.first { !$0.state.isFinished }?.id)
         state.update(id) { task in
-            task.owner = FactoryData.me
-            task.hand = HandRaise(reason: .needsInput, since: "now", assignee: FactoryData.me, headline: "Which way?",
+            task.owner = me
+            task.hand = HandRaise(reason: .needsInput, since: "now", assignee: me, headline: "Which way?",
                                   explanation: "", tried: [], options: [])
         }
         return (state, id)
@@ -53,21 +56,21 @@ struct TaskAssignTests {
         #expect(state.task(id).activity.count == before)
     }
 
-    private let team: [Person] = [
-        FactoryData.me,
+    private var team: [Person] { [
+        me,
         Person(name: "Zoe Park", color: .gray, isHuman: true, github: "zpark"),
         FactoryData.chris,
         Person(name: "Bea Lin", color: .gray, isHuman: true, github: "blin"),
         Person(name: "No Login", color: .gray, isHuman: true),
-    ]
+    ] }
 
     @Test func pickerChecksTheCurrentOwner() throws {
         let (state, id) = try state()
-        var choices = AssignPopover.matches(for: state.task(id), query: "")
+        var choices = AssignPopover.matches(for: state.task(id), query: "", me: me)
         #expect(Set(choices.map(\.person.github)) == Set(FactoryData.people.compactMap(\.github)))
         #expect(choices.filter(\.current).map(\.person.github) == ["afomera"])
         state.assign(id, to: "excid3")
-        choices = AssignPopover.matches(for: state.task(id), query: "")
+        choices = AssignPopover.matches(for: state.task(id), query: "", me: me)
         #expect(choices.filter(\.current).map(\.person.github) == ["excid3"])
     }
 
@@ -75,28 +78,28 @@ struct TaskAssignTests {
         let (state, id) = try state()
         state.assign(id, to: "zpark")
         let task = state.task(id)
-        #expect(AssignPopover.matches(for: task, query: "", people: team).map(\.person.github) == ["zpark", "afomera", "blin", "excid3"])
+        #expect(AssignPopover.matches(for: task, query: "", people: team, me: me).map(\.person.github) == ["zpark", "afomera", "blin", "excid3"])
         state.assign(id, to: "afomera")
-        #expect(AssignPopover.matches(for: state.task(id), query: "", people: team).map(\.person.github) == ["afomera", "blin", "excid3", "zpark"])
+        #expect(AssignPopover.matches(for: state.task(id), query: "", people: team, me: me).map(\.person.github) == ["afomera", "blin", "excid3", "zpark"])
     }
 
     @Test func pickerFiltersByNameOrLoginIgnoringCase() throws {
         let (state, id) = try state()
         let task = state.task(id)
-        #expect(AssignPopover.matches(for: task, query: "chr", people: team).map(\.person.github) == ["excid3"])
-        #expect(AssignPopover.matches(for: task, query: "CHR", people: team).map(\.person.github) == ["excid3"])
-        #expect(AssignPopover.matches(for: task, query: "EXCID", people: team).map(\.person.github) == ["excid3"])
-        #expect(AssignPopover.matches(for: task, query: " park ", people: team).map(\.person.github) == ["zpark"])
+        #expect(AssignPopover.matches(for: task, query: "chr", people: team, me: me).map(\.person.github) == ["excid3"])
+        #expect(AssignPopover.matches(for: task, query: "CHR", people: team, me: me).map(\.person.github) == ["excid3"])
+        #expect(AssignPopover.matches(for: task, query: "EXCID", people: team, me: me).map(\.person.github) == ["excid3"])
+        #expect(AssignPopover.matches(for: task, query: " park ", people: team, me: me).map(\.person.github) == ["zpark"])
     }
 
     @Test func pickerIsEmptyWhenNoOneMatches() throws {
         let (state, id) = try state()
-        #expect(AssignPopover.matches(for: state.task(id), query: "xyzzy", people: team).isEmpty)
+        #expect(AssignPopover.matches(for: state.task(id), query: "xyzzy", people: team, me: me).isEmpty)
     }
 
     @Test func withoutReassigningThePickerIsOnlyYou() throws {
         let (state, id) = try state()
         state.assign(id, to: "zpark")
-        #expect(AssignPopover.matches(for: state.task(id), query: "", everyone: false, people: team).map(\.person.github) == ["afomera"])
+        #expect(AssignPopover.matches(for: state.task(id), query: "", everyone: false, people: team, me: me).map(\.person.github) == ["afomera"])
     }
 }

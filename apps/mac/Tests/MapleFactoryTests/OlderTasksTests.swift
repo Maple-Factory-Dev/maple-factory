@@ -16,7 +16,7 @@ import Testing
         """
     }
 
-    /// Signed in as afomera, like the other suites: the snapshot sets FactoryData.me, which suites running alongside read.
+    /// Signed in as afomera. (An unconnected client's snapshot doesn't change FactoryData.me.)
     /// Two open, one recently merged; the tally says 4 more merged and 2 cancelled were left out.
     private func client(tallies: Bool = true) throws -> FactoryClient {
         let tally = tallies ? #","tallies":[{"goal":"g","merged":5,"cancelled":2,"closed":0,"total":9}],"olderTasks":6"# : ""
