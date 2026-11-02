@@ -159,6 +159,10 @@ pub enum NotRunStatus {
     Open,
     /// A person waived it with a note.
     Waived,
+    /// The GitHub check named after its `→ gha:` passed on the task's head.
+    Covered,
+    /// The GitHub check named after its `→ gha:` failed on the task's head; merging waits.
+    Failed,
     /// A value this build doesn't know yet; newer servers may send them.
     #[serde(other)]
     Other,
@@ -2029,6 +2033,12 @@ pub struct TaskNotRun {
     pub by: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolved_at: Option<u64>,
+    /// The GitHub check run that settles it (`[macos] xcodebuild … → gha:mac-build` gives mac-build), or none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover: Option<String>,
+    /// Link to that check run once it passed or failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 /// One of a repo's checks, run in a task's worktree before its finish is committed.

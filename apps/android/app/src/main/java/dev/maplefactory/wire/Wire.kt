@@ -221,6 +221,10 @@ enum class NotRunStatus(val raw: String) {
     Open("open"),
     /** A person waived it with a note. */
     Waived("waived"),
+    /** The GitHub check named after its `→ gha:` passed on the task's head. */
+    Covered("covered"),
+    /** The GitHub check named after its `→ gha:` failed on the task's head; merging waits. */
+    Failed("failed"),
     /** A value this build doesn't know yet; newer servers may send them. */
     Unknown("unknown"),
     ;
@@ -1815,6 +1819,10 @@ data class TaskNotRun(
     /** Login of the person who waived it. */
     val by: String? = null,
     val resolvedAt: Long? = null,
+    /** The GitHub check run that settles it (`[macos] xcodebuild … → gha:mac-build` gives mac-build), or none. */
+    val cover: String? = null,
+    /** Link to that check run once it passed or failed. */
+    val url: String? = null,
 )
 
 /** One of a repo's checks, run in a task's worktree before its finish is committed. */

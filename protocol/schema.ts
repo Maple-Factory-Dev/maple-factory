@@ -78,7 +78,7 @@ export const enums: Record<string, Enum> = {
       timedOut: "An earlier check ran out of time, so it wasn't reached.",
     },
   },
-  NotRunStatus: { values: { open: "Still to be resolved: run elsewhere, or waived by a person.", waived: "A person waived it with a note." } },
+  NotRunStatus: { values: { open: "Still to be resolved: run elsewhere, or waived by a person.", waived: "A person waived it with a note.", covered: "The GitHub check named after its `→ gha:` passed on the task's head.", failed: "The GitHub check named after its `→ gha:` failed on the task's head; merging waits." } },
   ProofKind: { values: { screenshot: "An image.", video: "A recording.", terminal: "A command and its output.", tests: "A test run." } },
   ProofStatus: { values: { pending: "No evidence yet.", proving: "Being proven.", proven: "Proven.", failed: "The proof failed." } },
   DraftState: {
@@ -940,8 +940,8 @@ export const structs: Record<string, Struct> = {
   },
   TaskNotRun: {
     doc: "A check a task's finish couldn't run on its machine (a requirement it lacked). It doesn't fail the proof, but auto-merge waits until each one is waived.",
-    fields: { command: "string", reason: "string", kind: "NotRunKind", status: "NotRunStatus", machine: "string?", at: "u64", note: "string?", by: "string?", resolvedAt: "u64?" },
-    fieldDocs: { note: "Why the person waived it.", by: "Login of the person who waived it." },
+    fields: { command: "string", reason: "string", kind: "NotRunKind", status: "NotRunStatus", machine: "string?", at: "u64", note: "string?", by: "string?", resolvedAt: "u64?", cover: "string?", url: "string?" },
+    fieldDocs: { note: "Why the person waived it.", by: "Login of the person who waived it.", cover: "The GitHub check run that settles it (`[macos] xcodebuild … → gha:mac-build` gives mac-build), or none.", url: "Link to that check run once it passed or failed." },
   },
   CheckRun: {
     doc: "One of a repo's checks, run in a task's worktree before its finish is committed.",

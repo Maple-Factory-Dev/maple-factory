@@ -1,0 +1,10 @@
+{
+  "items": [
+    { "command": "xcodebuild test -scheme MapleFactory", "reason": "needs macos", "kind": "requirement", "status": "covered", "machine": "droplet", "at": 1761955200000,
+      "cover": "mac-build", "url": "https://github.com/Maple-Factory-Dev/maple-factory/actions/runs/1/job/2", "resolvedAt": 1761955500000 },
+    { "command": "swift test --filter MapleKitTests", "reason": "needs macos", "kind": "requirement", "status": "failed", "machine": "droplet", "at": 1761955200000,
+      "cover": "mac-test", "url": "https://github.com/Maple-Factory-Dev/maple-factory/actions/runs/1/job/3", "resolvedAt": 1761955500000 },
+    { "command": "xcodebuild -scheme MapleFactoryiOS build", "reason": "waiting for gha:ios-build", "kind": "requirement", "status": "open", "machine": "droplet", "at": 1761955200000,
+      "cover": "ios-build" }
+  ]
+}

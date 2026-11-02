@@ -115,11 +115,20 @@ export function checkNotRunDir(dir: string): string[] {
   return problems;
 }
 
+/** Problems with the task-not-run fixtures: each file's `items` is valid TaskNotRun[]. */
+export function checkTaskNotRunDir(dir: string): string[] {
+  const files = readdirSync(dir).filter((f) => f.endsWith(".json"));
+  const problems = files.flatMap((f) => checkType("TaskNotRun[]", JSON.parse(readFileSync(join(dir, f), "utf8")).items, `${f}.items`));
+  if (!files.length) problems.push(`${dir}: no task-not-run fixtures`);
+  return problems;
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const dir = join(dirname(fileURLToPath(import.meta.url)), "session-events");
   const notRunDir = join(dirname(fileURLToPath(import.meta.url)), "not-run");
-  const problems = [...checkDir(dir), ...checkNotRunDir(notRunDir)];
+  const taskNotRunDir = join(dirname(fileURLToPath(import.meta.url)), "task-not-run");
+  const problems = [...checkDir(dir), ...checkNotRunDir(notRunDir), ...checkTaskNotRunDir(taskNotRunDir)];
   for (const p of problems) console.error(p);
   if (problems.length) process.exit(1);
-  console.log(`fixtures ok: ${readdirSync(dir).filter((f) => f.endsWith(".expected.json")).join(", ")}; not-run: ${readdirSync(notRunDir).filter((f) => f.endsWith(".json")).join(", ")}`);
+  console.log(`fixtures ok: ${readdirSync(dir).filter((f) => f.endsWith(".expected.json")).join(", ")}; not-run: ${readdirSync(notRunDir).filter((f) => f.endsWith(".json")).join(", ")}; task-not-run: ${readdirSync(taskNotRunDir).filter((f) => f.endsWith(".json")).join(", ")}`);
 }
