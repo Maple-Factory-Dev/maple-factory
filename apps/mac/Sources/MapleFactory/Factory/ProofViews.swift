@@ -69,8 +69,10 @@ struct ChecksSection: View {
         // A check GitHub Actions proved (`→ gha:mac-build`) counts as passed, not as not run.
         let covered = task.checksNotRun.filter { $0.status == .covered }.count
         var parts = ran.isEmpty && covered == 0 ? [] : ["\(passed + covered) passed"]
-        let notRun = task.checksNotRun.count - covered
-        if notRun > 0 || covered == 0 { parts.append("\(notRun) not run here") }
+        let failed = task.checksNotRun.filter { $0.status == .failed }.count
+        if failed > 0 { parts.append("\(failed) failed") }
+        let notRun = task.checksNotRun.count - covered - failed
+        if notRun > 0 || covered + failed == 0 { parts.append("\(notRun) not run here") }
         return parts.joined(separator: " · ")
     }
 
