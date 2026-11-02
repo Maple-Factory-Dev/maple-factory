@@ -16,6 +16,15 @@ import Testing
      "policy":{"maxFiles":20,"maxLines":400,"areas":[],"planApprovals":{},"finalReviews":{},"autoMerge":{}}}
     """#
 
+    /// A client that never connected (every test's) is signed in as bob for itself, but it isn't the app's
+    /// identity: FactoryData.me stays the seed afomera that suites running alongside read.
+    @Test func aSnapshotOnAnUnconnectedClientLeavesTheAppsMe() throws {
+        let client = FactoryClient()
+        client.apply(try decode(snapshot))
+        #expect(client.me?.login == "bob")
+        #expect(FactoryData.me.github == "afomera")
+    }
+
     @Test func membersUpdatedMakesMeAdmin() throws {
         let client = FactoryClient()
         client.apply(try decode(snapshot))

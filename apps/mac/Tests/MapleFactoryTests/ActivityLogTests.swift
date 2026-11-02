@@ -65,7 +65,7 @@ import Testing
         #expect(feed.entries(filter: .everyone).count == 7)
         #expect(feed.entries(filter: .people).map(\.at) == [60, 20, 10])
         #expect(feed.entries(filter: .agents).map(\.at) == [70, 50, 40, 30])
-        // The snapshot makes FactoryData.me its signed-in member, and other suites' snapshots change it: say who's asking.
+        // Say who's asking rather than lean on the global FactoryData.me.
         #expect(feed.entries(filter: .mine, me: "Andrea Fomera").map(\.at) == [50, 20])
         // Following only Goal: Other's events drop out, in every filter.
         let followed: (FactoryTask) -> Bool = { $0.goal == "Goal" }
