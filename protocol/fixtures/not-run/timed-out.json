@@ -1,0 +1,6 @@
+{
+  "wire": { "type": "task.finished", "taskId": "MF-3", "ok": false, "branch": "agent/mf-3", "reason": "checks",
+    "checks": [{ "command": "npm test", "timedOut": true, "ms": 600000, "output": "" }],
+    "notRun": [{ "command": "npm run lint", "reason": "timed out budget", "kind": "timedOut" }] },
+  "notRun": [{ "command": "npm run lint", "reason": "timed out budget", "kind": "timedOut" }]
+}

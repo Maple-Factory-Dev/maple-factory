@@ -140,6 +140,32 @@ pub enum DiffSide {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub enum NotRunKind {
+    /// This machine doesn't have what the check needs (its `[macos]` tag, say).
+    Requirement,
+    /// An earlier check failed, so it wasn't reached.
+    AfterFailure,
+    /// An earlier check ran out of time, so it wasn't reached.
+    TimedOut,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NotRunStatus {
+    /// Still to be resolved: run elsewhere, or waived by a person.
+    Open,
+    /// A person waived it with a note.
+    Waived,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum ProofKind {
     /// An image.
     Screenshot,
@@ -1790,6 +1816,9 @@ pub struct Task {
     /// Machine tags the task needs (macos, xcode…): only a machine with every one of them takes it. Set by the planner and the repo's path rules; none: any machine.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requires: Option<Vec<String>>,
+    /// Checks its last finish couldn't run on that machine (`needs macos`), open until a person waives them. None: none (or an older server).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checks_not_run: Option<Vec<TaskNotRun>>,
 }
 
 /// A risk check: code that raises a change's risk when touched (paths), or a plain-language rule the planner judges (rule).
@@ -1949,6 +1978,38 @@ pub struct RiskAcceptance {
     pub at: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+}
+
+/// A check that wasn't run, and why: `needs macos`, `skipped after an earlier failure`, `timed out budget`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotRunCheck {
+    pub command: String,
+    pub reason: String,
+    /// None (an older runner sent a plain string): afterFailure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<NotRunKind>,
+}
+
+/// A check a task's finish couldn't run on its machine (a requirement it lacked). It doesn't fail the proof, but auto-merge waits until each one is waived.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskNotRun {
+    pub command: String,
+    pub reason: String,
+    pub kind: NotRunKind,
+    pub status: NotRunStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<String>,
+    pub at: u64,
+    /// Why the person waived it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    /// Login of the person who waived it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_at: Option<u64>,
 }
 
 /// One of a repo's checks, run in a task's worktree before its finish is committed.
@@ -3036,6 +3097,9 @@ pub enum RunnerMessage {
         /// The repo's checks that ran, in order; the last one failed when the finish stopped on a check (nothing committed or pushed).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         checks: Option<Vec<CheckRun>>,
+        /// Checks it didn't run, each with why. Older runners send plain strings (read as skipped after an earlier failure).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        not_run: Option<Vec<NotRunCheck>>,
     },
     /// What a task's branch changes against its base: line counts per file and the unified patch.
     #[serde(rename = "task.diff")]
@@ -3249,6 +3313,9 @@ pub enum ServerToRunner {
         /// The repo's checks (commands, one per line) to run in the worktree before committing; any failing stops the finish.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         checks: Option<String>,
+        /// The same checks with their `[tag] ` prefixes kept (`[macos] xcodebuild test`), so the runner can skip what this machine can't run, with a reason. Older runners read only `checks`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        check_lines: Option<String>,
     },
     /// Report a task's diff against its base (answered with `task.diff`).
     #[serde(rename = "task.diff")]
@@ -3801,6 +3868,13 @@ pub enum ClientMessage {
         /// The id of a comment on this task to reply to; a reply to a reply goes under its root.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reply_to: Option<String>,
+    },
+    /// Waive a check a task couldn't run on its machine, with a note saying why that's fine. People only; agents can't.
+    #[serde(rename = "task.waiveCheck")]
+    TaskWaiveCheck {
+        id: String,
+        command: String,
+        note: String,
     },
     /// A change request for the planner or builder.
     #[serde(rename = "task.steer")]

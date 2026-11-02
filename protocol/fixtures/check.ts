@@ -94,10 +94,32 @@ export function checkDir(dir: string): string[] {
   return problems;
 }
 
+/** A `task.finished` `notRun` as the server reads it: an older runner's plain strings are checks skipped after an earlier failure. */
+export function normalizeNotRun(notRun: unknown): unknown[] {
+  if (!Array.isArray(notRun)) return [];
+  return notRun.map((n) => (typeof n === "string" ? { command: n, reason: "skipped after an earlier failure", kind: "afterFailure" } : n));
+}
+
+/** Problems with the not-run fixtures: each `notRun` is valid NotRunCheck[], and is what the `wire` message's `notRun` reads as. */
+export function checkNotRunDir(dir: string): string[] {
+  const files = readdirSync(dir).filter((f) => f.endsWith(".json"));
+  const problems: string[] = [];
+  for (const f of files) {
+    const { wire, notRun } = JSON.parse(readFileSync(join(dir, f), "utf8"));
+    problems.push(...checkType("NotRunCheck[]", notRun, `${f}.notRun`));
+    const { type: _, notRun: raw, ...rest } = wire;
+    problems.push(...checkType("RunnerMessage", { type: "task.finished", ...rest }, `${f}.wire`));
+    if (JSON.stringify(normalizeNotRun(raw)) !== JSON.stringify(notRun)) problems.push(`${f}: wire.notRun doesn't read as notRun`);
+  }
+  if (!files.length) problems.push(`${dir}: no not-run fixtures`);
+  return problems;
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const dir = join(dirname(fileURLToPath(import.meta.url)), "session-events");
-  const problems = checkDir(dir);
+  const notRunDir = join(dirname(fileURLToPath(import.meta.url)), "not-run");
+  const problems = [...checkDir(dir), ...checkNotRunDir(notRunDir)];
   for (const p of problems) console.error(p);
   if (problems.length) process.exit(1);
-  console.log(`fixtures ok: ${readdirSync(dir).filter((f) => f.endsWith(".expected.json")).join(", ")}`);
+  console.log(`fixtures ok: ${readdirSync(dir).filter((f) => f.endsWith(".expected.json")).join(", ")}; not-run: ${readdirSync(notRunDir).filter((f) => f.endsWith(".json")).join(", ")}`);
 }
