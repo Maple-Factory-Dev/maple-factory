@@ -4,8 +4,8 @@ import SwiftUI
 /// Opens a goal's recurring tasks from its GoalView row.
 struct RecurringRoute: Hashable { let goal: String }
 
-/// Recurring tasks: a goal's saved prompts that start a new task every N hours, days or weeks, on
-/// whichever runner is online. Ported from the Mac's RecurringSheet. Like the server, only the goal's
+/// Recurring / Scheduled: a goal's saved prompts that start a new task every N hours, days or weeks, on
+/// whichever runner is online; or once, at a set time (a one-off, `once`, removed after it runs). Ported from the Mac's RecurringSheet. Like the server, only the goal's
 /// lead or an admin can change them; anyone else sees the list read-only.
 struct RecurringView: View {
     @Environment(FactoryStore.self) private var store
@@ -22,7 +22,7 @@ struct RecurringView: View {
             let items = store.recurring(goal: goal.id)
             List {
                 Section {
-                    Text("Each run starts a new task in \(goal.name) from its prompt and sends it to planning, on whichever runner is online. A run is skipped while the last one's task is still open.")
+                    Text("Each run starts a new task in \(goal.name) from its prompt and sends it to planning, on whichever runner is online. A repeating run is skipped while the last one's task is still open; a one-off runs once at its time and is then removed.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("recurring-explainer")
@@ -30,7 +30,7 @@ struct RecurringView: View {
                 Section {
                     if items.isEmpty {
                         ContentUnavailableView {
-                            Label("Nothing recurring yet", systemImage: "clock.arrow.circlepath")
+                            Label("Nothing recurring or scheduled yet", systemImage: "clock.arrow.circlepath")
                         } description: {
                             Text("Say, a weekly check for dependency updates.")
                         }
@@ -46,11 +46,11 @@ struct RecurringView: View {
                     }
                 }
             }
-            .navigationTitle("Recurring")
+            .navigationTitle("Recurring / Scheduled")
             .toolbar {
                 if canLead {
                     ToolbarItem(placement: .primaryAction) {
-                        Button { editing = .blank(goal: goal) } label: { Label("Add Recurring Task", systemImage: "plus") }
+                        Button { editing = .blank(goal: goal) } label: { Label("Add Scheduled Task", systemImage: "plus") }
                             .accessibilityIdentifier("recurring-add")
                     }
                 }
@@ -83,6 +83,9 @@ struct RecurringView: View {
     private func row(_ item: Wire.Recurring, canLead: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
+                Image(systemName: item.once == true ? "calendar" : "clock.arrow.circlepath")
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier(item.once == true ? "recurring-once-\(item.id)" : "recurring-repeats-\(item.id)")
                 Text(item.title).font(.body.weight(.semibold))
                 if item.paused {
                     Text("Paused")
@@ -93,10 +96,12 @@ struct RecurringView: View {
                         .accessibilityIdentifier("recurring-paused-\(item.id)")
                 }
             }
-            Text(item.everyText + (item.repo.map { " · \($0)" } ?? "") + " · \(NewTaskView.agentTitle(item.agent))")
+            Text((item.once == true ? "Once · \(Wire.Recurring.when(item.firstAt))" : item.everyText) + (item.repo.map { " · \($0)" } ?? "") + " · \(NewTaskView.agentTitle(item.agent))")
                 .font(.subheadline).foregroundStyle(.secondary)
             HStack(spacing: 10) {
-                Text(item.paused ? "Not running" : "Next: \(Wire.Recurring.when(item.nextAt))")
+                if item.once != true || item.paused {
+                    Text(item.paused ? "Not running" : "Next: \(Wire.Recurring.when(item.nextAt))")
+                }
                 if let last = item.lastTask {
                     Button { openTask = last } label: { Text("Last: \(last)").underline() }
                         .buttonStyle(.borderless)
@@ -130,7 +135,10 @@ struct RecurringView: View {
         }
         .contextMenu {
             if canLead {
-                Button { store.runRecurringNow(id: item.id) } label: { Label("Run Now", systemImage: "bolt.fill") }
+                Button { store.runRecurringNow(id: item.id) } label: {
+                    Label("Run Now", systemImage: "bolt.fill")
+                    Text(item.once == true ? "Starts its task now, instead of at its time" : "Starts a task now; the schedule stays")
+                }
                 pauseButton(item)
                 Button { editing = item } label: { Label("Edit", systemImage: "pencil") }
                 Button(role: .destructive) { deleting = item } label: { Label("Delete", systemImage: "trash") }
@@ -152,12 +160,13 @@ struct RecurringView: View {
     }
 }
 
-/// Add or edit one recurring task.
+/// Add or edit one recurring or one-off (scheduled) task.
 struct RecurringEditor: View {
     let goal: Wire.Goal
     @State private var item: Wire.Recurring
     @State private var count: Int
     @State private var first: Date
+    @State private var once: Bool
     let done: (Wire.Recurring?) -> Void
 
     init(goal: Wire.Goal, item: Wire.Recurring, done: @escaping (Wire.Recurring?) -> Void) {
@@ -166,6 +175,7 @@ struct RecurringEditor: View {
         _item = State(initialValue: item)
         _count = State(initialValue: max(1, Int(item.every / Wire.Recurring.unitMinutes(item.unit))))
         _first = State(initialValue: Date(timeIntervalSince1970: Double(item.firstAt) / 1000))
+        _once = State(initialValue: item.once == true)
     }
 
     private var repos: [String] { goal.repos }
@@ -203,21 +213,33 @@ struct RecurringEditor: View {
                     }
                 }
                 Section {
-                    Stepper(value: $count, in: 1...maxCount) { Text("Every \(count)") }
-                        .accessibilityIdentifier("recurring-every")
-                    Picker("Unit", selection: $item.unit) {
-                        Text(count == 1 ? "hour" : "hours").tag(Wire.RecurringUnit.hours)
-                        Text(count == 1 ? "day" : "days").tag(Wire.RecurringUnit.days)
-                        Text(count == 1 ? "week" : "weeks").tag(Wire.RecurringUnit.weeks)
+                    Picker("Repeats", selection: $once) {
+                        Text("Once at a time").tag(true)
+                        Text("Repeating").tag(false)
                     }
                     .pickerStyle(.segmented)
-                    .onChange(of: item.unit) { _, _ in count = min(count, maxCount) }
-                    DatePicker("First run", selection: $first)
+                    .accessibilityIdentifier("recurring-repeats")
+                    if once {
+                        DatePicker("Runs at", selection: $first, in: Date()...)
+                            .accessibilityIdentifier("recurring-runs-at")
+                    } else {
+                        Stepper(value: $count, in: 1...maxCount) { Text("Every \(count)") }
+                            .accessibilityIdentifier("recurring-every")
+                        Picker("Unit", selection: $item.unit) {
+                            Text(count == 1 ? "hour" : "hours").tag(Wire.RecurringUnit.hours)
+                            Text(count == 1 ? "day" : "days").tag(Wire.RecurringUnit.days)
+                            Text(count == 1 ? "week" : "weeks").tag(Wire.RecurringUnit.weeks)
+                        }
+                        .pickerStyle(.segmented)
+                        .onChange(of: item.unit) { _, _ in count = min(count, maxCount) }
+                        DatePicker("First run", selection: $first)
+                    }
                 } footer: {
-                    Text("Later runs keep this time of day in \(item.timeZone), across daylight saving.")
+                    Text(once ? "It starts one task then, and is removed; the task is the record."
+                              : "Later runs keep this time of day in \(item.timeZone), across daylight saving.")
                 }
             }
-            .navigationTitle(item.id.isEmpty ? "New Recurring Task" : "Edit Recurring Task")
+            .navigationTitle(item.id.isEmpty ? (once ? "New Scheduled Task" : "New Recurring Task") : (once ? "Edit Scheduled Task" : "Edit Recurring Task"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -238,6 +260,7 @@ struct RecurringEditor: View {
         saved.title = saved.title.trimmingCharacters(in: .whitespaces)
         saved.every = UInt32(count) * Wire.Recurring.unitMinutes(saved.unit)
         saved.firstAt = UInt64(first.timeIntervalSince1970 * 1000)
+        saved.once = once ? true : nil
         if repos.count <= 1 { saved.repo = nil }
         return saved
     }
