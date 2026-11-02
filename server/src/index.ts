@@ -9,7 +9,7 @@ import { remove as removeIcon, serve as serveIcon, upload as uploadIcon } from "
 import { remove as removeName, set as setName } from "./name.ts";
 import { get as getErrorReports, set as setErrorReports } from "./error-reports.ts";
 import { get as getPush, set as setPush } from "./push.ts";
-import { installScript } from "./install.ts";
+import { cloudInitConfig, installScript } from "./install.ts";
 import { home, taskLink } from "./page.ts";
 import { githubWebhook, jiraWebhook, linearWebhook } from "./trackers.ts";
 import { isLocal, machineHub, orgHub, publicOrigin, text } from "./util.ts";
@@ -76,6 +76,7 @@ export default Sentry.withSentry((env: Env) => sentryOptions(env), {
     const artifact = /^\/runner\/artifact\/([^/]+)$/.exec(path);
     if (artifact && request.method === "PUT") return uploadArtifact(request, env, artifact[1]);
     if (path === "/install.sh") return installScript(publicOrigin(request, env));
+    if (path === "/cloud-init.yaml") return cloudInitConfig(publicOrigin(request, env), url.searchParams.get("code"));
     if (path.startsWith("/icon/") && request.method === "GET") return serveIcon(env, path.slice("/icon/".length));
     if (path.startsWith("/releases/")) return (await release(env, path.slice("/releases/".length))) ?? text("Not found.", 404);
 
