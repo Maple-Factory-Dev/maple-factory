@@ -147,6 +147,7 @@ struct PullRequestCard: View {
             branches
             Hairline()
             checksSection
+            if let apple = task.appleChecks { AppleChecksRow(apple: apple) }
         }
     }
 
@@ -444,6 +445,106 @@ struct CheckProgressBar: View {
 }
 
 /// One check: a tinted status circle, its name, how it went and its menu; highlighted on hover.
+/// The checks a Linux box couldn't run (they need macos, xcode…), handed to a Mac for the PR's head:
+/// who runs them or why they wait, then each command with its time and output.
+private struct AppleChecksRow: View {
+    let apple: Wire.AppleChecks
+    @State private var open = false
+
+    private var status: CICheck.Status {
+        switch apple.state {
+        case .waiting: .queued
+        case .running: .running
+        case .passed: .passed
+        case .failed: .failed
+        default: .queued
+        }
+    }
+
+    private var head: String { String(apple.head.prefix(7)) }
+
+    private var text: String {
+        switch apple.state {
+        case .waiting: apple.reason ?? "Waiting for a machine with \(apple.needs.joined(separator: ", "))"
+        case .running: "Waiting for \(apple.machine ?? "a Mac")"
+        case .passed: "Passed on \(apple.machine ?? "a Mac") · \(head)"
+        default: "Failed on \(apple.machine ?? "a Mac") · \(head)"
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                ZStack {
+                    Circle().fill(PullRequestCard.checkColor(status).opacity(0.14))
+                    PullRequestCard.checkIcon(status)
+                }
+                .frame(width: 18, height: 18)
+                Text("Apple checks")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.text)
+                Text(apple.needs.joined(separator: ", "))
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(Theme.textMuted)
+                    .padding(.horizontal, 5)
+                    .frame(height: 15)
+                    .overlay(Capsule().strokeBorder(Theme.stroke))
+                Spacer(minLength: 4)
+                Text(text)
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(status == .failed ? GitHubColor.failed : Theme.textFaint)
+                    .lineLimit(2)
+                    .help(apple.reason ?? text)
+                Button(open ? "Hide log" : "Log") { open.toggle() }
+                    .buttonStyle(.borderless)
+                    .font(.system(size: 11, weight: .medium))
+            }
+            if open {
+                Text("Head \(head)\(apple.message.map { " · \($0)" } ?? "")")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textMuted)
+                ForEach(Array(apple.checks.enumerated()), id: \.offset) { _, run in
+                    let ok = run.code == 0 && !run.timedOut
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Image(systemName: ok ? "checkmark" : "xmark")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(ok ? GitHubColor.passed : GitHubColor.failed)
+                            Text(run.command).font(.system(size: 11, design: .monospaced)).lineLimit(1)
+                            Spacer(minLength: 4)
+                            Text(run.timedOut ? "timed out" : "\(run.code.map { "exit \($0)" } ?? "killed") · \(String(format: "%.1fs", Double(run.ms) / 1000))")
+                                .font(.system(size: 10.5).monospacedDigit())
+                                .foregroundStyle(Theme.textFaint)
+                        }
+                        if !run.output.isEmpty {
+                            ScrollView {
+                                Text(run.output)
+                                    .font(.system(size: 10.5, design: .monospaced))
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .frame(maxHeight: 180)
+                            .padding(6)
+                            .background(RoundedRectangle(cornerRadius: 6).fill(Theme.fillSubtle))
+                        }
+                    }
+                }
+                if apple.checks.isEmpty {
+                    ForEach(apple.commands, id: \.self) { command in
+                        Text(command).font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.textMuted)
+                    }
+                }
+            }
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 9)
+                .fill(Theme.fillSubtle)
+                .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Theme.stroke))
+        )
+    }
+}
+
 private struct CheckRow<Actions: View>: View {
     let check: CICheck
     let statusText: String
