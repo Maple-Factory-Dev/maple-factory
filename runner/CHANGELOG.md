@@ -5,6 +5,10 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.103.0 — 2026-11-02
+
+Understands the year-long merges calendar in the factory's statistics; nothing changes in how tasks run.
+
 ## 0.102.0 — 2026-11-01
 
 Runners now report what they can do (macOS, Xcode, iOS simulators, Playwright, Docker, Node) so Apple work only lands on machines that can build it, and `maple-runner doctor` checks a headless Linux server is set up to run tasks.
