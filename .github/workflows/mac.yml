@@ -1,13 +1,13 @@
-# Builds the Mac app and runs the MapleKit tests on a macOS runner (MF-337). No path filter on
-# purpose: a repo check line can name this job (`[macos] swift test --filter MapleKitTests → gha:mac-build`)
-# to cover an Apple check a Linux machine couldn't run, and a skipped job would leave that item open.
+# Builds the Mac app and runs the MapleKit tests on a macOS runner (MF-337).
+# Turned off for now (MF-347): manual runs only. Start it from Actions › Mac › Run workflow,
+# or `gh workflow run mac.yml`. A repo check line can still name this job
+# (`[macos] swift test --filter MapleKitTests → gha:mac-build`), but the item stays open
+# (waivable) until someone runs the workflow by hand.
+# To turn it back on, restore the triggers under `on:`: `pull_request:` and `push: branches: [main]`.
 # Locally: cd apps/mac && swift build && swift test --filter MapleKitTests
 name: Mac
 
 on:
-  pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
