@@ -17,7 +17,7 @@ import { Engine, FactoryError } from "./factory/engine.ts";
 import { redacted } from "./factory/connectors.ts";
 import { aggregatePresence, isMobileClient, type Connection } from "./presence.ts";
 import { Intake, type NewRequest } from "./factory/intake.ts";
-import { statsWindow, summarize, type StatEvent } from "./factory/stats.ts";
+import { CALENDAR_LOOKBACK_MS, statsWindow, summarize, type StatEvent } from "./factory/stats.ts";
 import { dayReport } from "./factory/report.ts";
 import { release } from "./releases.ts";
 import { fromNotice, olderThan, onReport, shown } from "./runner-update.ts";
@@ -479,7 +479,7 @@ export class OrgHub extends DurableObject<Env> {
     const merged = [...new Set(recent.filter((e) => e.kind === "merged").map((e) => e.task))];
     const events = [...this.store.statRoundsBefore(merged, since), ...recent];
     const costs = this.store.sessionCosts(since, goal || null);
-    return summarize(events, this.store.tasks(), { days: window, goal: goal || null, goals: this.store.goals(), now: at, costs, tz });
+    return summarize(events, this.store.tasks(), { days: window, goal: goal || null, goals: this.store.goals(), now: at, costs, tz, calendarMerges: this.store.statMerges(at - CALENDAR_LOOKBACK_MS) });
   }
 
   /** `login`'s day report for [since, until) (at most two days, so a stray range can't read the whole log). */

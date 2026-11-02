@@ -160,6 +160,8 @@ export interface SummarizeOptions {
   costs?: SessionCostRow[];
   /** The viewer's IANA time zone for the weekday × hour cells; UTC when left out or unknown. */
   tz?: string | null;
+  /** The last year's merges (store.statMerges) for the calendar, whatever `days` is; no calendar when left out. */
+  calendarMerges?: { at: number; goal: string }[];
 }
 
 /** Totals, rates and medians over the last `days`, for one goal or all of them. */
@@ -291,6 +293,7 @@ export function summarize(all: StatEvent[], tasks: Task[], opts: SummarizeOption
     findings: findingsBreakdown(rounds, byId),
     manualMerges: manualBreakdown(merges, scoped, byId),
     ...hourCells(merges, hands, opts.tz),
+    ...(opts.calendarMerges ? { calendar: mergeCalendar(opts.calendarMerges, at, opts.tz, goal) } : {}),
   };
 }
 
@@ -337,6 +340,50 @@ function hourCells(merges: StatEvent[], hands: StatEvent[], tz?: string | null) 
   add(merges, "merges");
   add(hands, "hands");
   return { hours, timeZone };
+}
+
+/** How far back the calendar reads: 53 weeks, enough for the Sunday 52 weeks back plus a day of zone slack. */
+export const CALENDAR_LOOKBACK_MS = 372 * DAY;
+const dayFormats = new Map<string, Intl.DateTimeFormat>();
+
+/** A cached formatter for `tz`'s calendar date (en-CA reads YYYY-MM-DD), or null for a zone Intl doesn't know. */
+function dayFormat(tz: string): Intl.DateTimeFormat | null {
+  let f = dayFormats.get(tz);
+  if (f) return f;
+  try {
+    f = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" });
+  } catch {
+    return null;
+  }
+  if (dayFormats.size > 64) dayFormats.clear();
+  dayFormats.set(tz, f);
+  return f;
+}
+
+/**
+ * Merges per local day in `tz` (UTC when missing or unknown) for one goal or all, from the Sunday 52
+ * weeks back through today, zeros filled in: 365–371 days, whole weeks but the current one.
+ */
+export function mergeCalendar(merges: { at: number; goal: string }[], now: number, tz?: string | null, goal?: string | null): { day: string; merges: number }[] {
+  const asked = typeof tz === "string" ? tz.trim() : "";
+  const format = (asked && dayFormat(asked)) || dayFormat("UTC")!;
+  const local = (ms: number) => format.format(ms);
+  // Calendar arithmetic on the local date itself (as a UTC midnight), so DST never skips or repeats a day.
+  const today = Date.parse(`${local(now)}T00:00:00Z`);
+  const first = today - (new Date(today).getUTCDay() + 52 * 7) * DAY;
+  const counts = new Map<string, number>();
+  for (const m of merges) {
+    if (goal && m.goal !== goal) continue;
+    if (m.at > now) continue;
+    const day = local(m.at);
+    counts.set(day, (counts.get(day) ?? 0) + 1);
+  }
+  const out = [];
+  for (let d = first; d <= today; d += DAY) {
+    const day = new Date(d).toISOString().slice(0, 10);
+    out.push({ day, merges: counts.get(day) ?? 0 });
+  }
+  return out;
 }
 
 /**
