@@ -979,7 +979,7 @@ fn is_github(host: &str) -> bool {
     host.eq_ignore_ascii_case("github.com") || host.eq_ignore_ascii_case("www.github.com")
 }
 
-fn valid_part(s: &str) -> bool {
+pub(crate) fn valid_part(s: &str) -> bool {
     !s.is_empty() && s.len() <= 100 && s != "." && s != ".." && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
 }
 
@@ -1212,7 +1212,7 @@ pub async fn start(
 /// is the plain GitHub URL, then the base fetched into it with a token (`fetch_base`). Nothing is
 /// checked out there; tasks work in worktrees. A clone that fails leaves nothing behind.
 #[allow(clippy::too_many_arguments)]
-async fn clone(
+pub(crate) async fn clone(
     emit: Emit<'_>,
     task_id: &str,
     managed: &Path,
@@ -1320,7 +1320,7 @@ pub fn fetch_url(owner: &str, repo: &str, token: &str, test_override: Option<&st
 }
 
 /// Runs git in `dir` without prompts; stdout, or stderr (scrubbed of `secret`) as the error.
-async fn git(dir: &Path, args: &[&str], secret: Option<&str>) -> Result<String> {
+pub(crate) async fn git(dir: &Path, args: &[&str], secret: Option<&str>) -> Result<String> {
     let mut cmd = Command::new("git");
     cmd.arg("-C").arg(dir).args(args).env("GIT_TERMINAL_PROMPT", "0").stdin(Stdio::null()).kill_on_drop(true);
     if secret.is_some() {

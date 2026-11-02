@@ -201,6 +201,17 @@ pub enum Outbound {
         #[serde(skip_serializing_if = "Vec::is_empty")]
         not_run: Vec<crate::wire::NotRunCheck>,
     },
+    /// How `task.prove_checks` went (see `proof_job`).
+    #[serde(rename = "task.checks_proved")]
+    TaskChecksProved {
+        task_id: String,
+        job_id: String,
+        head: String,
+        ok: bool,
+        checks: Vec<crate::wire::CheckRun>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
     /// How `task.handoff` went: the branch is on origin at `commit`, or `message` says why not.
     #[serde(rename = "task.handed_off")]
     TaskHandedOff {
@@ -629,6 +640,9 @@ pub enum Inbound {
     /// Run a task's checks before it's finished (see `proof`).
     #[serde(rename = "task.prove")]
     TaskProve(crate::proof::Prove),
+    /// Run checks another machine couldn't, on a task's pushed head (see `proof_job`).
+    #[serde(rename = "task.prove_checks")]
+    TaskProveChecks(crate::proof_job::ProveChecks),
     /// Run Draft with AI's agent once, read-only (see `draft`).
     #[serde(rename = "draft.run")]
     DraftRun(crate::draft::Run),

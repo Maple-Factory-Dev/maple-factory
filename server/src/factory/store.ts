@@ -40,6 +40,10 @@ export interface TaskPrivate {
   /** A dry-run merge (`task.merge_check`) waiting for its answer: the head it checks, the task whose
    *  merge prompted it (none: the check before its own auto-merge), and when it was sent. */
   mergeCheck?: { head: string | null; since: string | null; at: number } | null;
+  /** The checks its last finish skipped because the building machine lacked their tags (MF-335), handed to a machine that has them. */
+  handoff?: { command: string; requires: string[] }[] | null;
+  /** The proof job (`task.prove_checks`) running them: its id, the machine it went to, and the head. */
+  proveJob?: { id: string; machine: string; head: string; at: number } | null;
   /** The head the last pre-merge check answered for, so its auto-merge goes ahead. */
   mergeChecked?: string | null;
   /// Times the current role's session was restarted after an end that wasn't the agent's choice.

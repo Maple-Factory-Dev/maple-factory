@@ -80,6 +80,7 @@ import SwiftUI
         task.owner = who(t.owner)
         task.machine = t.machine
         task.requires = t.requires ?? []
+        task.appleChecks = t.appleChecks
         task.checksNotRun = t.checksNotRun ?? []
         task.pushed = t.pr?.head
         task.gitBranch = t.branch

@@ -457,6 +457,23 @@ enum class Priority(val raw: String) {
     object Serializer : WireEnumSerializer<Priority>("Priority", entries, { it.raw }, Unknown)
 }
 
+@Serializable(with = AppleChecksState.Serializer::class)
+enum class AppleChecksState(val raw: String) {
+    /** Waiting for a machine with the tags. */
+    Waiting("waiting"),
+    /** A machine is running them. */
+    Running("running"),
+    /** They all passed on its head. */
+    Passed("passed"),
+    /** One failed on its head. */
+    Failed("failed"),
+    /** A value this build doesn't know yet; newer servers may send them. */
+    Unknown("unknown"),
+    ;
+
+    object Serializer : WireEnumSerializer<AppleChecksState>("AppleChecksState", entries, { it.raw }, Unknown)
+}
+
 @Serializable(with = FindingStatus.Serializer::class)
 enum class FindingStatus(val raw: String) {
     /** Open. */
@@ -1646,6 +1663,8 @@ data class Task(
     val findings: Findings? = null,
     /** Machine tags the task needs (macos, xcode…): only a machine with every one of them takes it. Set by the planner and the repo's path rules; none: any machine. */
     val requires: List<String>? = null,
+    /** Checks its building machine skipped (they need macos, xcode…), run on a machine that has the tags for its current head. Merge waits for them to pass. */
+    val appleChecks: AppleChecks? = null,
     /** Checks its last finish couldn't run on that machine (`needs macos`), open until a person waives them. None: none (or an older server). */
     val checksNotRun: List<TaskNotRun>? = null,
 )
@@ -1808,6 +1827,26 @@ data class CheckRun(
     val ms: Long,
     /** The end of what it printed (stdout and stderr). */
     val output: String,
+)
+
+/** Checks the machine that built a task couldn't run (they need macos, xcode…), handed to a machine that has the tags. Tied to one head commit: a new push starts them again. */
+@Serializable
+data class AppleChecks(
+    val state: AppleChecksState,
+    val head: String,
+    /** The handed-off check commands, tags stripped. */
+    val commands: List<String> = emptyList(),
+    /** Every machine tag those checks need together. */
+    val needs: List<String> = emptyList(),
+    /** The machine running them (running) or that ran them (passed/failed). */
+    val machine: String? = null,
+    /** While waiting: why no machine has taken them yet. */
+    val reason: String? = null,
+    /** Their results, in order, once they ran; the last one failed when the state is failed. */
+    val checks: List<CheckRun> = emptyList(),
+    val at: Long,
+    /** Why the run failed outside any check (the head couldn't be fetched, say). */
+    val message: String? = null,
 )
 
 @Serializable
@@ -2766,6 +2805,17 @@ sealed class RunnerMessage {
         /** Checks it didn't run, each with why. Older runners send plain strings (read as skipped after an earlier failure). */
         val notRun: List<dev.maplefactory.wire.NotRunCheck>? = null,
     ) : RunnerMessage()
+    /** The answer to `task.prove_checks`: the handed-off checks' results on that head. */
+    @Serializable
+    data class TaskChecksProved(
+        val taskId: String,
+        val jobId: String,
+        val head: String,
+        val ok: Boolean,
+        val checks: List<dev.maplefactory.wire.CheckRun> = emptyList(),
+        /** Why it couldn't run them (the head couldn't be fetched, say). */
+        val message: String? = null,
+    ) : RunnerMessage()
     /** What a task's branch changes against its base: line counts per file and the unified patch. */
     @Serializable
     data class TaskDiff(
@@ -2871,6 +2921,7 @@ sealed class RunnerMessage {
             "mcp.request" -> json.decodeFromJsonElement(McpRequest.serializer(), body)
             "task.started" -> json.decodeFromJsonElement(TaskStarted.serializer(), body)
             "task.finished" -> json.decodeFromJsonElement(TaskFinished.serializer(), body)
+            "task.checks_proved" -> json.decodeFromJsonElement(TaskChecksProved.serializer(), body)
             "task.diff" -> json.decodeFromJsonElement(TaskDiff.serializer(), body)
             "task.merged" -> json.decodeFromJsonElement(TaskMerged.serializer(), body)
             "task.merge_check" -> json.decodeFromJsonElement(TaskMergeCheck.serializer(), body)
@@ -2901,6 +2952,7 @@ sealed class RunnerMessage {
             is McpRequest -> "mcp.request" to json.encodeToJsonElement(McpRequest.serializer(), value)
             is TaskStarted -> "task.started" to json.encodeToJsonElement(TaskStarted.serializer(), value)
             is TaskFinished -> "task.finished" to json.encodeToJsonElement(TaskFinished.serializer(), value)
+            is TaskChecksProved -> "task.checks_proved" to json.encodeToJsonElement(TaskChecksProved.serializer(), value)
             is TaskDiff -> "task.diff" to json.encodeToJsonElement(TaskDiff.serializer(), value)
             is TaskMerged -> "task.merged" to json.encodeToJsonElement(TaskMerged.serializer(), value)
             is TaskMergeCheck -> "task.merge_check" to json.encodeToJsonElement(TaskMergeCheck.serializer(), value)
@@ -3008,6 +3060,21 @@ sealed class ServerToRunner {
         /** The same checks with their `[tag] ` prefixes kept (`[macos] xcodebuild test`), so the runner can skip what this machine can't run, with a reason. Older runners read only `checks`. */
         val checkLines: String? = null,
     ) : ServerToRunner()
+    /** A proof job: fetch the branch at exactly `head` into a temporary worktree, run only `checks` there, answer with `task.checks_proved` and remove the worktree. No agent session. */
+    @Serializable
+    data class TaskProveChecks(
+        val taskId: String,
+        val jobId: String,
+        /** owner/name on GitHub, to find or clone the checkout when this machine has no repoDir for it. */
+        val repo: String? = null,
+        /** A checkout of the repo on this machine, when the factory knows one. */
+        val repoDir: String? = null,
+        val branch: String,
+        val head: String,
+        val base: String? = null,
+        /** The commands, one per line, tags stripped. */
+        val checks: String,
+    ) : ServerToRunner()
     /** Report a task's diff against its base (answered with `task.diff`). */
     @Serializable
     data class TaskDiff(
@@ -3104,6 +3171,7 @@ sealed class ServerToRunner {
             "runner.restart" -> RunnerRestart
             "mcp.response" -> json.decodeFromJsonElement(McpResponse.serializer(), body)
             "task.finish" -> json.decodeFromJsonElement(TaskFinish.serializer(), body)
+            "task.prove_checks" -> json.decodeFromJsonElement(TaskProveChecks.serializer(), body)
             "task.diff" -> json.decodeFromJsonElement(TaskDiff.serializer(), body)
             "task.merge_check" -> json.decodeFromJsonElement(TaskMergeCheck.serializer(), body)
             "task.merge" -> json.decodeFromJsonElement(TaskMerge.serializer(), body)
@@ -3128,6 +3196,7 @@ sealed class ServerToRunner {
             is RunnerRestart -> "runner.restart" to null
             is McpResponse -> "mcp.response" to json.encodeToJsonElement(McpResponse.serializer(), value)
             is TaskFinish -> "task.finish" to json.encodeToJsonElement(TaskFinish.serializer(), value)
+            is TaskProveChecks -> "task.prove_checks" to json.encodeToJsonElement(TaskProveChecks.serializer(), value)
             is TaskDiff -> "task.diff" to json.encodeToJsonElement(TaskDiff.serializer(), value)
             is TaskMergeCheck -> "task.merge_check" to json.encodeToJsonElement(TaskMergeCheck.serializer(), value)
             is TaskMerge -> "task.merge" to json.encodeToJsonElement(TaskMerge.serializer(), value)

@@ -250,6 +250,8 @@ struct FactoryTask: Identifiable {
     var machine: String? = nil
     /// Machine tags it needs (macos, xcode…): only a machine with every one takes it (live only).
     var requires: [String] = []
+    /// Checks its Linux box skipped, run on a Mac for the PR's head (MF-336).
+    var appleChecks: Wire.AppleChecks?
     /// Checks its last push couldn't run on that machine (`needs macos`): open until a person waives them.
     var checksNotRun: [Wire.TaskNotRun] = []
     /// Its last pushed commit (live only).
