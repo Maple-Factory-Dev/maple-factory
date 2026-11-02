@@ -1981,9 +1981,9 @@ export interface RunnerMessage_TaskFinished {
   checks?: CheckRun[] | null;
 }
 
-/** The answer to `task.prove`: the handed-off checks' results on that head. */
-export interface RunnerMessage_TaskProved {
-  type: "task.proved";
+/** The answer to `task.prove_checks`: the handed-off checks' results on that head. */
+export interface RunnerMessage_TaskChecksProved {
+  type: "task.checks_proved";
   taskId: string;
   jobId: string;
   head: string;
@@ -2088,8 +2088,8 @@ export interface RunnerMessage_SecretsRequest {
 }
 
 /** Runner → server. */
-export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Capabilities | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionEvents | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_AgentLoginStatus | RunnerMessage_Usage | RunnerMessage_SessionCost | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskProved | RunnerMessage_TaskDiff | RunnerMessage_TaskMerged | RunnerMessage_TaskMergeCheck | RunnerMessage_TaskHandedOff | RunnerMessage_DraftProgress | RunnerMessage_DraftDone | RunnerMessage_TaskProgress | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest | RunnerMessage_SecretsRequest;
-export const RunnerMessageTypes = ["hello","capabilities","health","session.opened","session.error","session.ended","session.activity","session.events","session.replay","update.status","agent.login_status","usage","session.cost","mcp.request","task.started","task.finished","task.proved","task.diff","task.merged","task.merge_check","task.handed_off","draft.progress","draft.done","task.progress","task.cleaned","task.token_request","secrets.request"] as const;
+export type RunnerMessage = RunnerMessage_Hello | RunnerMessage_Capabilities | RunnerMessage_Health | RunnerMessage_SessionOpened | RunnerMessage_SessionError | RunnerMessage_SessionEnded | RunnerMessage_SessionActivity | RunnerMessage_SessionEvents | RunnerMessage_SessionReplay | RunnerMessage_UpdateStatus | RunnerMessage_AgentLoginStatus | RunnerMessage_Usage | RunnerMessage_SessionCost | RunnerMessage_McpRequest | RunnerMessage_TaskStarted | RunnerMessage_TaskFinished | RunnerMessage_TaskChecksProved | RunnerMessage_TaskDiff | RunnerMessage_TaskMerged | RunnerMessage_TaskMergeCheck | RunnerMessage_TaskHandedOff | RunnerMessage_DraftProgress | RunnerMessage_DraftDone | RunnerMessage_TaskProgress | RunnerMessage_TaskCleaned | RunnerMessage_TaskTokenRequest | RunnerMessage_SecretsRequest;
+export const RunnerMessageTypes = ["hello","capabilities","health","session.opened","session.error","session.ended","session.activity","session.events","session.replay","update.status","agent.login_status","usage","session.cost","mcp.request","task.started","task.finished","task.checks_proved","task.diff","task.merged","task.merge_check","task.handed_off","draft.progress","draft.done","task.progress","task.cleaned","task.token_request","secrets.request"] as const;
 
 export interface ServerToRunner_SessionOpen {
   type: "session.open";
@@ -2191,9 +2191,9 @@ export interface ServerToRunner_TaskFinish {
   checks?: string | null;
 }
 
-/** A proof job: fetch the branch at exactly `head` into a temporary worktree, run only `checks` there, answer with `task.proved` and remove the worktree. No agent session. */
-export interface ServerToRunner_TaskProve {
-  type: "task.prove";
+/** A proof job: fetch the branch at exactly `head` into a temporary worktree, run only `checks` there, answer with `task.checks_proved` and remove the worktree. No agent session. */
+export interface ServerToRunner_TaskProveChecks {
+  type: "task.prove_checks";
   taskId: string;
   jobId: string;
   /** owner/name on GitHub, to find or clone the checkout when this machine has no repoDir for it. */
@@ -2297,8 +2297,8 @@ export interface ServerToRunner_SecretsReply {
 }
 
 /** Server → runner. */
-export type ServerToRunner = ServerToRunner_SessionOpen | ServerToRunner_SessionResize | ServerToRunner_SessionKill | ServerToRunner_SessionEventsSubscribe | ServerToRunner_SessionInput | ServerToRunner_SessionReplay | ServerToRunner_RunnerUpdate | ServerToRunner_AgentLogin | ServerToRunner_RunnerRestart | ServerToRunner_McpResponse | ServerToRunner_TaskFinish | ServerToRunner_TaskProve | ServerToRunner_TaskDiff | ServerToRunner_TaskMergeCheck | ServerToRunner_TaskMerge | ServerToRunner_TaskHandoff | ServerToRunner_DraftRun | ServerToRunner_DraftCancel | ServerToRunner_TaskCleanup | ServerToRunner_TaskToken | ServerToRunner_SecretsReply;
-export const ServerToRunnerTypes = ["session.open","session.resize","session.kill","session.events.subscribe","session.input","session.replay","runner.update","agent.login","runner.restart","mcp.response","task.finish","task.prove","task.diff","task.merge_check","task.merge","task.handoff","draft.run","draft.cancel","task.cleanup","task.token","secrets.reply"] as const;
+export type ServerToRunner = ServerToRunner_SessionOpen | ServerToRunner_SessionResize | ServerToRunner_SessionKill | ServerToRunner_SessionEventsSubscribe | ServerToRunner_SessionInput | ServerToRunner_SessionReplay | ServerToRunner_RunnerUpdate | ServerToRunner_AgentLogin | ServerToRunner_RunnerRestart | ServerToRunner_McpResponse | ServerToRunner_TaskFinish | ServerToRunner_TaskProveChecks | ServerToRunner_TaskDiff | ServerToRunner_TaskMergeCheck | ServerToRunner_TaskMerge | ServerToRunner_TaskHandoff | ServerToRunner_DraftRun | ServerToRunner_DraftCancel | ServerToRunner_TaskCleanup | ServerToRunner_TaskToken | ServerToRunner_SecretsReply;
+export const ServerToRunnerTypes = ["session.open","session.resize","session.kill","session.events.subscribe","session.input","session.replay","runner.update","agent.login","runner.restart","mcp.response","task.finish","task.prove_checks","task.diff","task.merge_check","task.merge","task.handoff","draft.run","draft.cancel","task.cleanup","task.token","secrets.reply"] as const;
 
 /** Start receiving `snapshot` and live updates. */
 export interface ClientMessage_Subscribe {

@@ -2748,9 +2748,9 @@ sealed class RunnerMessage {
         /** The repo's checks that ran, in order; the last one failed when the finish stopped on a check (nothing committed or pushed). */
         val checks: List<dev.maplefactory.wire.CheckRun>? = null,
     ) : RunnerMessage()
-    /** The answer to `task.prove`: the handed-off checks' results on that head. */
+    /** The answer to `task.prove_checks`: the handed-off checks' results on that head. */
     @Serializable
-    data class TaskProved(
+    data class TaskChecksProved(
         val taskId: String,
         val jobId: String,
         val head: String,
@@ -2864,7 +2864,7 @@ sealed class RunnerMessage {
             "mcp.request" -> json.decodeFromJsonElement(McpRequest.serializer(), body)
             "task.started" -> json.decodeFromJsonElement(TaskStarted.serializer(), body)
             "task.finished" -> json.decodeFromJsonElement(TaskFinished.serializer(), body)
-            "task.proved" -> json.decodeFromJsonElement(TaskProved.serializer(), body)
+            "task.checks_proved" -> json.decodeFromJsonElement(TaskChecksProved.serializer(), body)
             "task.diff" -> json.decodeFromJsonElement(TaskDiff.serializer(), body)
             "task.merged" -> json.decodeFromJsonElement(TaskMerged.serializer(), body)
             "task.merge_check" -> json.decodeFromJsonElement(TaskMergeCheck.serializer(), body)
@@ -2895,7 +2895,7 @@ sealed class RunnerMessage {
             is McpRequest -> "mcp.request" to json.encodeToJsonElement(McpRequest.serializer(), value)
             is TaskStarted -> "task.started" to json.encodeToJsonElement(TaskStarted.serializer(), value)
             is TaskFinished -> "task.finished" to json.encodeToJsonElement(TaskFinished.serializer(), value)
-            is TaskProved -> "task.proved" to json.encodeToJsonElement(TaskProved.serializer(), value)
+            is TaskChecksProved -> "task.checks_proved" to json.encodeToJsonElement(TaskChecksProved.serializer(), value)
             is TaskDiff -> "task.diff" to json.encodeToJsonElement(TaskDiff.serializer(), value)
             is TaskMerged -> "task.merged" to json.encodeToJsonElement(TaskMerged.serializer(), value)
             is TaskMergeCheck -> "task.merge_check" to json.encodeToJsonElement(TaskMergeCheck.serializer(), value)
@@ -3001,9 +3001,9 @@ sealed class ServerToRunner {
         /** The repo's checks (commands, one per line) to run in the worktree before committing; any failing stops the finish. */
         val checks: String? = null,
     ) : ServerToRunner()
-    /** A proof job: fetch the branch at exactly `head` into a temporary worktree, run only `checks` there, answer with `task.proved` and remove the worktree. No agent session. */
+    /** A proof job: fetch the branch at exactly `head` into a temporary worktree, run only `checks` there, answer with `task.checks_proved` and remove the worktree. No agent session. */
     @Serializable
-    data class TaskProve(
+    data class TaskProveChecks(
         val taskId: String,
         val jobId: String,
         /** owner/name on GitHub, to find or clone the checkout when this machine has no repoDir for it. */
@@ -3112,7 +3112,7 @@ sealed class ServerToRunner {
             "runner.restart" -> RunnerRestart
             "mcp.response" -> json.decodeFromJsonElement(McpResponse.serializer(), body)
             "task.finish" -> json.decodeFromJsonElement(TaskFinish.serializer(), body)
-            "task.prove" -> json.decodeFromJsonElement(TaskProve.serializer(), body)
+            "task.prove_checks" -> json.decodeFromJsonElement(TaskProveChecks.serializer(), body)
             "task.diff" -> json.decodeFromJsonElement(TaskDiff.serializer(), body)
             "task.merge_check" -> json.decodeFromJsonElement(TaskMergeCheck.serializer(), body)
             "task.merge" -> json.decodeFromJsonElement(TaskMerge.serializer(), body)
@@ -3137,7 +3137,7 @@ sealed class ServerToRunner {
             is RunnerRestart -> "runner.restart" to null
             is McpResponse -> "mcp.response" to json.encodeToJsonElement(McpResponse.serializer(), value)
             is TaskFinish -> "task.finish" to json.encodeToJsonElement(TaskFinish.serializer(), value)
-            is TaskProve -> "task.prove" to json.encodeToJsonElement(TaskProve.serializer(), value)
+            is TaskProveChecks -> "task.prove_checks" to json.encodeToJsonElement(TaskProveChecks.serializer(), value)
             is TaskDiff -> "task.diff" to json.encodeToJsonElement(TaskDiff.serializer(), value)
             is TaskMergeCheck -> "task.merge_check" to json.encodeToJsonElement(TaskMergeCheck.serializer(), value)
             is TaskMerge -> "task.merge" to json.encodeToJsonElement(TaskMerge.serializer(), value)

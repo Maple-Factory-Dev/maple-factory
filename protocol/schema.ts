@@ -1466,8 +1466,8 @@ export const unions: Record<string, Union> = {
           checks: "The repo's checks that ran, in order; the last one failed when the finish stopped on a check (nothing committed or pushed).",
         },
       },
-      "task.proved": {
-        doc: "The answer to `task.prove`: the handed-off checks' results on that head.",
+      "task.checks_proved": {
+        doc: "The answer to `task.prove_checks`: the handed-off checks' results on that head.",
         fields: { taskId: "string", jobId: "string", head: "string", ok: "bool", checks: "CheckRun[]", message: "string?" },
         fieldDocs: { message: "Why it couldn't run them (the head couldn't be fetched, say)." },
       },
@@ -1571,8 +1571,8 @@ export const unions: Record<string, Union> = {
           checks: "The repo's checks (commands, one per line) to run in the worktree before committing; any failing stops the finish.",
         },
       },
-      "task.prove": {
-        doc: "A proof job: fetch the branch at exactly `head` into a temporary worktree, run only `checks` there, answer with `task.proved` and remove the worktree. No agent session.",
+      "task.prove_checks": {
+        doc: "A proof job: fetch the branch at exactly `head` into a temporary worktree, run only `checks` there, answer with `task.checks_proved` and remove the worktree. No agent session.",
         fields: { taskId: "string", jobId: "string", repo: "string?", repoDir: "string?", branch: "string", head: "string", base: "string?", checks: "string" },
         fieldDocs: {
           repo: "owner/name on GitHub, to find or clone the checkout when this machine has no repoDir for it.",

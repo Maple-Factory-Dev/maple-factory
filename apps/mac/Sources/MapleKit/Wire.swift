@@ -5808,8 +5808,8 @@ public enum Wire {
         }
     }
 
-    /// The answer to `task.prove`: the handed-off checks' results on that head.
-    public struct RunnerMessageTaskProved: Codable, Hashable, Sendable {
+    /// The answer to `task.prove_checks`: the handed-off checks' results on that head.
+    public struct RunnerMessageTaskChecksProved: Codable, Hashable, Sendable {
         public var taskId: String
         public var jobId: String
         public var head: String
@@ -6032,7 +6032,7 @@ public enum Wire {
         case mcpRequest(RunnerMessageMcpRequest)
         case taskStarted(RunnerMessageTaskStarted)
         case taskFinished(RunnerMessageTaskFinished)
-        case taskProved(RunnerMessageTaskProved)
+        case taskChecksProved(RunnerMessageTaskChecksProved)
         case taskDiff(RunnerMessageTaskDiff)
         case taskMerged(RunnerMessageTaskMerged)
         case taskMergeCheck(RunnerMessageTaskMergeCheck)
@@ -6067,7 +6067,7 @@ public enum Wire {
             case "mcp.request": self = .mcpRequest(try RunnerMessageMcpRequest(from: decoder))
             case "task.started": self = .taskStarted(try RunnerMessageTaskStarted(from: decoder))
             case "task.finished": self = .taskFinished(try RunnerMessageTaskFinished(from: decoder))
-            case "task.proved": self = .taskProved(try RunnerMessageTaskProved(from: decoder))
+            case "task.checks_proved": self = .taskChecksProved(try RunnerMessageTaskChecksProved(from: decoder))
             case "task.diff": self = .taskDiff(try RunnerMessageTaskDiff(from: decoder))
             case "task.merged": self = .taskMerged(try RunnerMessageTaskMerged(from: decoder))
             case "task.merge_check": self = .taskMergeCheck(try RunnerMessageTaskMergeCheck(from: decoder))
@@ -6133,8 +6133,8 @@ public enum Wire {
             case .taskFinished(let body):
                 try c.encode("task.finished", forKey: .type)
                 try body.encode(to: encoder)
-            case .taskProved(let body):
-                try c.encode("task.proved", forKey: .type)
+            case .taskChecksProved(let body):
+                try c.encode("task.checks_proved", forKey: .type)
                 try body.encode(to: encoder)
             case .taskDiff(let body):
                 try c.encode("task.diff", forKey: .type)
@@ -6330,8 +6330,8 @@ public enum Wire {
         }
     }
 
-    /// A proof job: fetch the branch at exactly `head` into a temporary worktree, run only `checks` there, answer with `task.proved` and remove the worktree. No agent session.
-    public struct ServerToRunnerTaskProve: Codable, Hashable, Sendable {
+    /// A proof job: fetch the branch at exactly `head` into a temporary worktree, run only `checks` there, answer with `task.checks_proved` and remove the worktree. No agent session.
+    public struct ServerToRunnerTaskProveChecks: Codable, Hashable, Sendable {
         public var taskId: String
         public var jobId: String
         /// owner/name on GitHub, to find or clone the checkout when this machine has no repoDir for it.
@@ -6540,7 +6540,7 @@ public enum Wire {
         case runnerRestart
         case mcpResponse(ServerToRunnerMcpResponse)
         case taskFinish(ServerToRunnerTaskFinish)
-        case taskProve(ServerToRunnerTaskProve)
+        case taskProveChecks(ServerToRunnerTaskProveChecks)
         case taskDiff(ServerToRunnerTaskDiff)
         case taskMergeCheck(ServerToRunnerTaskMergeCheck)
         case taskMerge(ServerToRunnerTaskMerge)
@@ -6569,7 +6569,7 @@ public enum Wire {
             case "runner.restart": self = .runnerRestart
             case "mcp.response": self = .mcpResponse(try ServerToRunnerMcpResponse(from: decoder))
             case "task.finish": self = .taskFinish(try ServerToRunnerTaskFinish(from: decoder))
-            case "task.prove": self = .taskProve(try ServerToRunnerTaskProve(from: decoder))
+            case "task.prove_checks": self = .taskProveChecks(try ServerToRunnerTaskProveChecks(from: decoder))
             case "task.diff": self = .taskDiff(try ServerToRunnerTaskDiff(from: decoder))
             case "task.merge_check": self = .taskMergeCheck(try ServerToRunnerTaskMergeCheck(from: decoder))
             case "task.merge": self = .taskMerge(try ServerToRunnerTaskMerge(from: decoder))
@@ -6618,8 +6618,8 @@ public enum Wire {
             case .taskFinish(let body):
                 try c.encode("task.finish", forKey: .type)
                 try body.encode(to: encoder)
-            case .taskProve(let body):
-                try c.encode("task.prove", forKey: .type)
+            case .taskProveChecks(let body):
+                try c.encode("task.prove_checks", forKey: .type)
                 try body.encode(to: encoder)
             case .taskDiff(let body):
                 try c.encode("task.diff", forKey: .type)

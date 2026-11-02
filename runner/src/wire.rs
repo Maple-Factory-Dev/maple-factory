@@ -3095,9 +3095,9 @@ pub enum RunnerMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         checks: Option<Vec<CheckRun>>,
     },
-    /// The answer to `task.prove`: the handed-off checks' results on that head.
-    #[serde(rename = "task.proved")]
-    TaskProved {
+    /// The answer to `task.prove_checks`: the handed-off checks' results on that head.
+    #[serde(rename = "task.checks_proved")]
+    TaskChecksProved {
         task_id: String,
         job_id: String,
         head: String,
@@ -3321,9 +3321,9 @@ pub enum ServerToRunner {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         checks: Option<String>,
     },
-    /// A proof job: fetch the branch at exactly `head` into a temporary worktree, run only `checks` there, answer with `task.proved` and remove the worktree. No agent session.
-    #[serde(rename = "task.prove")]
-    TaskProve {
+    /// A proof job: fetch the branch at exactly `head` into a temporary worktree, run only `checks` there, answer with `task.checks_proved` and remove the worktree. No agent session.
+    #[serde(rename = "task.prove_checks")]
+    TaskProveChecks {
         task_id: String,
         job_id: String,
         /// owner/name on GitHub, to find or clone the checkout when this machine has no repoDir for it.
