@@ -60,7 +60,7 @@ struct StatisticsView: View {
             }
             .task(id: days) { if state.isLive && isAdmin { client.loadStats(days: days) } }
             .onChange(of: section) { proxy.scrollTo("top", anchor: .top) }
-            // `-statsSection cost` opens on the Cost card and `-statsSection findings` on the findings, for screenshots.
+            // `-statsSection cost` opens on the Cost card, `-statsSection calendar` on the merges calendar and `-statsSection findings` on the findings, for screenshots.
             .onChange(of: summary == nil, initial: true) {
                 guard summary != nil, let section = AppDefaults.string(forKey: "statsSection") else { return }
                 if section == "findings" {
@@ -113,6 +113,8 @@ struct StatisticsView: View {
             StatTile(label: "Steers per task", value: t.steersPerTask.map { String(format: "%.1f", $0) } ?? "–", detail: "\(counted(t.steers, "steer")), \(counted(t.questions, "question"))")
             StatTile(label: "Review rounds", value: t.reviewRoundsPerMerge.map { String(format: "%.1f", $0) } ?? "–", detail: "per merge · \(counted(t.findings, "finding"))")
         }
+
+        if let calendar = s.calendar, !calendar.isEmpty { MergeCalendar(days: calendar).id("calendar") }
 
         twoUp {
             DailyBars(title: "Merges", window: Int(s.days), days: s.daily, value: \.merges, color: Theme.State.merged)
@@ -952,6 +954,7 @@ extension Wire.StatsSummary {
             findings: .sample(now: now),
             manualMerges: .sample(now: now),
             hours: Wire.StatsHourCell.sample(days: days),
+            calendar: Wire.StatsCalendarDay.sample(),
             timeZone: TimeZone.current.identifier
         )
     }
