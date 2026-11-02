@@ -47,4 +47,22 @@ final class AttachmentViewTests: XCTestCase {
         XCTAssertTrue(app.buttons["attachment.image.mini.png"].waitForExistence(timeout: 5), "the comment's image isn't inline")
         XCTAssertTrue(app.staticTexts["Same on my mini:"].exists, "the comment's text is gone")
     }
+
+    /// Markdown that MarkdownText draws itself (here the compose Preview) shows its image and file lines
+    /// through the same gallery as the brief: a thumbnail and a chip, not link text.
+    func testMarkdownTextUsesGallery() {
+        let comment = app.buttons["Comment"]
+        XCTAssertTrue(comment.waitForExistence(timeout: 5), "ONB-3 has no Comment button")
+        comment.tap()
+        let editor = app.textViews["compose.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5), "the compose sheet didn't open")
+        editor.tap()
+        editor.typeText("Look:\n![shot.png](/attachments/demo/shot.png)\n[notes.txt](/attachments/demo/notes.txt)")
+        app.buttons["Preview"].tap()
+        let preview = app.descendants(matching: .any)["compose.text.preview"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 5), "no preview")
+        XCTAssertTrue(preview.buttons["attachment.image.shot.png"].waitForExistence(timeout: 5), "no thumbnail for shot.png")
+        XCTAssertTrue(preview.buttons["attachment.file.notes.txt"].exists, "no chip for notes.txt")
+        XCTAssertFalse(preview.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "/attachments/")).firstMatch.exists, "raw link text is showing")
+    }
 }

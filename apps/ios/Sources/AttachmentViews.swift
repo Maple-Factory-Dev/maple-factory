@@ -11,6 +11,19 @@ struct LinkedAttachment: Hashable, Identifiable {
     let kind: Kind
     var id: String { path }
 
+    init(name: String, path: String, kind: Kind) {
+        self.name = name
+        self.path = path
+        self.kind = kind
+    }
+
+    /// A link as Markdown writes it (`![name](path)` when `image`, else `[name](path)`): an empty name
+    /// falls back to the path's last part, and the kind comes from the path.
+    init(name: String, path: String, image: Bool) {
+        let fallback = path.split(separator: "/").last.map { String($0).removingPercentEncoding ?? String($0) } ?? path
+        self.init(name: name.isEmpty ? fallback : name, path: path, kind: Self.kind(of: path, image: image))
+    }
+
     static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "heic", "heif", "webp", "bmp", "tiff"]
     static let videoExtensions: Set<String> = ["mov", "mp4", "m4v", "webm"]
 
@@ -72,8 +85,7 @@ enum BriefContent {
         } else {
             guard path.hasPrefix("/attachments/") || path.hasPrefix("https://") else { return nil }
         }
-        let fallback = path.split(separator: "/").last.map { String($0).removingPercentEncoding ?? String($0) } ?? path
-        return LinkedAttachment(name: name.isEmpty ? fallback : name, path: path, kind: LinkedAttachment.kind(of: path, image: image))
+        return LinkedAttachment(name: name, path: path, image: image)
     }
 }
 
@@ -122,15 +134,17 @@ struct AttachmentGallery: View {
     }
 }
 
-/// Loads an attachment's image: the factory's with your token, a web image as is.
+/// Loads an attachment's image: the factory's (any path from "/") with your token, a web image as is.
 @MainActor
 enum AttachmentLoader {
     static func image(_ path: String, store: FactoryStore) async -> UIImage? {
         let data: Data?
-        if path.hasPrefix("https://"), let url = URL(string: path) {
+        if let url = URL(string: path), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
             data = try? await URLSession.shared.data(from: url).0
-        } else {
+        } else if path.hasPrefix("/") {
             data = await store.attachment(path)
+        } else {
+            data = nil
         }
         return data.flatMap(UIImage.init(data:))
     }

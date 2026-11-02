@@ -37,17 +37,24 @@ final class ComposeMarkdownTests: XCTestCase {
         let preview = app.descendants(matching: .any)["compose.text.preview"]
         XCTAssertTrue(preview.waitForExistence(timeout: 5), "no preview")
         XCTAssertTrue(preview.staticTexts["Ship it bold"].exists, "the preview doesn't render the bold text")
-        XCTAssertTrue(preview.buttons["markdown.image"].waitForExistence(timeout: 5), "the preview has no image")
+        // The preview draws the photo the way the brief does: AttachmentGallery's square thumbnail.
+        let previewThumb = preview.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'attachment.image.'")).firstMatch
+        XCTAssertTrue(previewThumb.waitForExistence(timeout: 5), "the preview has no image")
         snap(app, "\(action.lowercased())-preview")
+        previewThumb.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["attachmentViewer"].waitForExistence(timeout: 5), "the thumbnail didn't open the viewer")
+        XCTAssertTrue(app.descendants(matching: .any)["attachmentViewer.share"].waitForExistence(timeout: 5), "the viewer has no Share")
+        snap(app, "\(action.lowercased())-viewer")
+        app.buttons["attachmentViewer.done"].tap()
+        XCTAssertTrue(app.buttons["attachmentViewer.done"].waitForNonExistence(timeout: 5), "Done didn't close the viewer")
 
         app.buttons["compose.send"].tap()
         XCTAssertTrue(editor.waitForNonExistence(timeout: 5), "the sheet didn't close")
         app.buttons["Timeline"].tap()
         XCTAssertTrue(app.staticTexts["Ship it bold"].waitForExistence(timeout: 5), "the timeline doesn't show the rendered text")
         XCTAssertFalse(app.staticTexts["Ship it **bold**"].exists, "the timeline shows raw Markdown")
-        // The timeline shows a note's own image lines in its attachment gallery
-        // (attachment.image.<name>); an inline image keeps markdown.image.
-        let thumb = app.buttons.matching(NSPredicate(format: "identifier == 'markdown.image' OR identifier BEGINSWITH 'attachment.image.'")).firstMatch
+        // The timeline shows the note's image in its attachment gallery (attachment.image.<name>).
+        let thumb = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'attachment.image.'")).firstMatch
         XCTAssertTrue(thumb.waitForExistence(timeout: 5), "the timeline has no image thumbnail")
         snap(app, "\(action.lowercased())-timeline")
     }
