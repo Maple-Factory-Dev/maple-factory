@@ -25,7 +25,7 @@ import { followedUp, Scout, SCOUT_PREFIX, type Candidate, type ScoutPick } from 
 import { SlackAsks, SLACK_PREFIX, type Ask, type Proposal } from "./slack-asks.ts";
 import { threadAddress } from "../slack.ts";
 import { loginFor } from "../slack-links.ts";
-import { checkCommands, checksFor, pathRules, RepoSetup, requiresFor, SCRIPT_VARIABLES, scriptsProblem, SETUP_PREFIX, tidyScripts } from "./repo-setup.ts";
+import { checkCommands, checksFor, parseCheck, pathRules, RepoSetup, requiresFor, SCRIPT_VARIABLES, scriptsProblem, SETUP_PREFIX, tidyScripts } from "./repo-setup.ts";
 import { merged, redacted } from "./connectors.ts";
 import { assess, budgetCostUsd, budgetMinutes, budgetUse, type BudgetUse, overBudgetMode, validPolicy } from "./policy.ts";
 import { cycleSplit, findingDetail, manualReason, type StatKind } from "./stats.ts";
@@ -968,6 +968,8 @@ export class Engine {
         if (task.reviews.length < task.reviewsNeeded) fail("It needs its approvals first.");
         if (task.pr!.checks.some((c) => c.status === "failed")) fail("CI is failing; run the failed checks again or fix them first.");
         if (task.pr!.checks.some((c) => c.status !== "passed")) fail("CI is still running.");
+        const apple = this.appleBlocks(task);
+        if (apple) fail(apple);
         task.mergeAt = null;
         await this.startMerge(task, who);
         return;
@@ -1311,6 +1313,7 @@ export class Engine {
 
   private async pumpOnce(): Promise<void> {
     const machines = await this.hooks.machines();
+    await this.proveChecks(machines);
     // Front of the queue first.
     for (const listed of this.store.tasks().sort(byRank)) {
       // Read it again: what an earlier dispatch awaited may have changed it (a cancel, a move).
@@ -1499,6 +1502,131 @@ export class Engine {
     return task.state === "planning" ? "planner" : task.state === "building" ? "builder" : "reviewer";
   }
 
+  /** Whether `m`, a teammate's machine, lends a slot to `owner`'s work now: under what it lends the
+   *  team (all its slots when it lends while idle), not full, and under its load cap. */
+  private lends(m: Machine, owner: string, busy: (m: string, kind?: string) => number): boolean {
+    const s = this.store.settings(m.id);
+    const load = m.health ? m.health.load1 / Math.max(1, m.health.cores) : 0;
+    const lendable = s.lendIdle ? this.capacity(m) : s.teamSlots;
+    return m.owner !== owner && busy(m.id, "team") < lendable && busy(m.id) < this.capacity(m) && load < s.loadCap;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Apple checks: what a Linux box skipped, run on a Mac at the pushed head (a proof job, no session)
+
+  /** After a push: the checks the building machine skipped wait for a machine with their tags, for
+   *  `head`. A finish that skipped none drops any earlier hand-off (it ran them all itself). */
+  private handOffChecks(task: Task, head: string | null) {
+    const handoff = this.store.private(task.id).handoff ?? [];
+    this.store.savePrivate(task.id, { ...this.store.private(task.id), proveJob: null });
+    if (!handoff.length || !head) {
+      task.appleChecks = null;
+      return;
+    }
+    const needs = [...new Set(handoff.flatMap((c) => c.requires))].sort();
+    task.appleChecks = { state: "waiting", head, commands: handoff.map((c) => c.command), needs, machine: null, reason: null, checks: [], at: now(), message: null };
+    this.event(task, "factory", `handed ${handoff.length} check${handoff.length === 1 ? "" : "s"} it couldn't run (${needs.join(", ")}) to a machine that can, for ${head.slice(0, 7)}`);
+  }
+
+  /** Why merging waits on the handed-off checks, or null when they passed on the current head (or there are none). */
+  private appleBlocks(task: Task): string | null {
+    const a = task.appleChecks;
+    if (!a) return null;
+    const head = task.pr?.head ?? null;
+    if (a.head !== head) return "Its Apple checks haven't run on the current head yet.";
+    if (a.state === "passed") return null;
+    if (a.state === "failed") return `Its Apple checks failed on ${a.head.slice(0, 7)}; fix them first.`;
+    return a.state === "running" ? `Its Apple checks are still running on ${a.machine ?? "a Mac"}.` : `Its Apple checks are waiting: ${a.reason ?? "for a machine"}.`;
+  }
+
+  /** Keeps each reviewing task's Apple checks on its current head and sends the waiting ones to a
+   *  machine with their tags: its owner's first, else (shareable) a teammate's within what it lends. */
+  private async proveChecks(machines: Machine[]) {
+    const live = this.store.liveSessions();
+    const busy = (m: string, kind?: string) => live.filter((s) => s.machine === m && (!kind || s.kind === kind)).length;
+    for (const listed of this.store.tasks()) {
+      const task = this.store.task(listed.id);
+      const a = task?.appleChecks;
+      if (!task || !a || task.state !== "reviewing" || !task.pr || task.pr.state !== "open") continue;
+      const priv = this.store.private(task.id);
+      // A new head (a push, a recheck, a fix after review): the old results don't count.
+      if (task.pr.head && task.pr.head !== a.head) {
+        task.appleChecks = { ...a, state: "waiting", head: task.pr.head, machine: null, reason: null, checks: [], at: now(), message: null };
+        this.store.savePrivate(task.id, { ...priv, proveJob: null });
+        this.event(task, "factory", `new head ${task.pr.head.slice(0, 7)}: its Apple checks run again`);
+        this.save(task);
+      }
+      const now_ = task.appleChecks!;
+      const job = this.store.private(task.id).proveJob;
+      // Running on a machine that dropped before it answered: send it again.
+      if (now_.state === "running" && job && machines.find((m) => m.id === job.machine)?.online) continue;
+      if (now_.state !== "waiting" && now_.state !== "running") continue;
+      const fits = (m: Machine) => m.online && !this.store.settings(m.id).paused && now_.needs.every((t) => (m.tags ?? []).includes(t));
+      const fewest = (ms: Machine[]) => ms.sort((x, y) => busy(x.id) - busy(y.id))[0];
+      const machine = fewest(machines.filter((m) => m.owner === task.owner && fits(m))) ?? (task.shareable ? fewest(machines.filter((m) => fits(m) && this.lends(m, task.owner, busy))) : undefined);
+      if (!machine) {
+        const reason = this.appleWaiting(task, now_.needs, machines);
+        if (now_.state !== "waiting" || now_.reason !== reason) {
+          task.appleChecks = { ...now_, state: "waiting", machine: null, reason };
+          this.store.savePrivate(task.id, { ...this.store.private(task.id), proveJob: null });
+          this.save(task);
+        }
+        continue;
+      }
+      const goal = this.store.goal(task.goal) ?? null;
+      const id = crypto.randomUUID();
+      const sent = await this.toRunner(machine.id, {
+        type: "task.prove_checks",
+        taskId: task.id,
+        jobId: id,
+        repo: taskRepo(task, goal),
+        repoDir: machine.id === task.machine ? priv.repoDir : null,
+        branch: task.pr.branch,
+        head: now_.head,
+        base: task.pr.base,
+        checks: now_.commands.join("\n"),
+      });
+      if (!sent) continue;
+      this.store.savePrivate(task.id, { ...this.store.private(task.id), proveJob: { id, machine: machine.id, head: now_.head, at: now() } });
+      task.appleChecks = { ...now_, state: "running", machine: machine.name, reason: null };
+      this.event(task, "factory", `sent its Apple checks to ${machine.name}${machine.owner !== task.owner ? ` (${machine.owner}'s, lent to the team)` : ""}`);
+      this.save(task);
+    }
+  }
+
+  /** Why no machine runs a task's handed-off checks yet. */
+  private appleWaiting(task: Task, needs: string[], machines: Machine[]): string {
+    const tags = needs.join(", ");
+    const has = (m: Machine) => needs.every((t) => (m.tags ?? []).includes(t));
+    const mine = machines.filter((m) => m.owner === task.owner && has(m));
+    const team = task.shareable ? ", or a team machine that lends a slot" : "";
+    if (!mine.length) return `None of ${task.owner}'s machines has ${tags}; add or tag one${team ? `, or wait for a team machine with ${tags} that lends a slot` : ""}.`;
+    const names = mine.map((m) => m.name).join(", ");
+    if (!mine.some((m) => m.online)) return `Waiting for ${names} (${tags}) to come online${team}.`;
+    return `${names} (${tags}) ${mine.length === 1 ? "is" : "are"} paused${team}.`;
+  }
+
+  /** A proof job's answer: kept only when it's the job and head the task is waiting on. */
+  private async checksProved(machine: string, msg: Extract<RunnerMessage, { type: "task.checks_proved" }>) {
+    const task = this.store.task(msg.taskId);
+    const a = task?.appleChecks;
+    const job = task && this.store.private(task.id).proveJob;
+    if (!task || !a || !job || job.id !== msg.jobId || job.machine !== machine || a.head !== msg.head || job.head !== msg.head || a.state !== "running") return;
+    const ok = msg.ok && msg.checks.length > 0 && msg.checks.every((c) => !c.timedOut && c.code === 0);
+    task.appleChecks = { ...a, state: ok ? "passed" : "failed", checks: msg.checks, message: msg.message ?? null, reason: null, at: now() };
+    this.store.savePrivate(task.id, { ...this.store.private(task.id), proveJob: null });
+    if (ok) this.event(task, "factory", `Apple checks passed on ${a.machine ?? machine} for ${a.head.slice(0, 7)}`);
+    else {
+      const bad = msg.checks.find((c) => c.timedOut || c.code !== 0);
+      const how = bad ? `\`${bad.command}\` ${bad.timedOut ? "timed out" : bad.code == null ? "was killed" : `exited ${bad.code}`}` : msg.message ?? "they couldn't run";
+      this.event(task, "factory", `Apple checks failed on ${a.machine ?? machine} for ${a.head.slice(0, 7)}: ${how}`);
+      const output = bad?.output.trim() ? `\n\n\`\`\`\n${bad.output.trim().slice(-4000)}\n\`\`\`` : "";
+      task.comments.push({ id: crypto.randomUUID(), author: "factory", text: `Apple checks failed on ${a.machine ?? machine} at ${a.head.slice(0, 7)}: ${how}.${output}\n\nMerge waits until they pass on the current head.`, at: now(), anchor: "Apple checks", via: null });
+    }
+    this.save(task);
+    await this.autoMerge(task);
+  }
+
   /** Starts `role` for `task`, or says why it can't yet. */
   private async dispatch(task: Task, role: Role, machines: Machine[]): Promise<string | null> {
     const goal = this.store.goal(task.goal);
@@ -1540,12 +1668,7 @@ export class Engine {
       const own = usable.filter((m) => m.owner === task.owner && (task.force || busy(m.id) < this.capacity(m)));
       machine = own.sort((a, b) => busy(a.id) - busy(b.id))[0];
       if (!machine && task.shareable) {
-        const lent = usable.filter((m) => {
-          const s = this.store.settings(m.id);
-          const load = m.health ? m.health.load1 / Math.max(1, m.health.cores) : 0;
-          const lendable = s.lendIdle ? this.capacity(m) : s.teamSlots;
-          return m.owner !== task.owner && busy(m.id, "team") < lendable && busy(m.id) < this.capacity(m) && load < s.loadCap;
-        });
+        const lent = usable.filter((m) => this.lends(m, task.owner, busy));
         machine = lent.sort((a, b) => busy(a.id) - busy(b.id))[0];
         kind = "team";
       }
@@ -1783,6 +1906,7 @@ export class Engine {
         return null;
       }
       case "task.finished": return this.finished(msg), null;
+      case "task.checks_proved": return await this.checksProved(machine, msg), null;
       case "task.handed_off": return this.handedOff(machine, msg), null;
       case "task.diff": {
         const task = this.store.task(msg.taskId);
@@ -1844,7 +1968,7 @@ export class Engine {
         const task = this.store.task(msg.taskId);
         const goal = task && this.store.goal(task.goal);
         // The machine running its handed-off Apple checks fetches the branch too, nothing more.
-        const proving = !!task && task.appleChecks?.state === "running" && task.appleChecks.machine === machine && msg.purpose === "fetch";
+        const proving = !!task && task.appleChecks?.state === "running" && this.store.private(task.id).proveJob?.machine === machine && msg.purpose === "fetch";
         if (!task || (task.machine !== machine && !proving)) return await reply(null, "That task isn't running on this machine.", "api"), null;
         const repo = taskRepo(task, goal ?? null);
         if (repo && repo.toLowerCase() !== `${msg.owner}/${msg.repo}`.toLowerCase()) return await reply(null, `${task.id} works on ${repo}, not ${msg.owner}/${msg.repo}.`, "api"), null;
@@ -1876,7 +2000,7 @@ export class Engine {
     if (msg.taskId) {
       const task = this.store.task(msg.taskId);
       // The machine running its handed-off Apple checks gets them too, for that run.
-      const proving = task?.appleChecks?.state === "running" && task.appleChecks.machine === machine;
+      const proving = !!task && task.appleChecks?.state === "running" && this.store.private(task.id).proveJob?.machine === machine;
       if (!task || (task.machine !== machine && !proving)) return reply(null, "That task isn't assigned to this machine.", "forbidden");
       // Only while an agent works on it there: a merged or cancelled task keeps its last machine.
       if (!SECRET_STATES.has(task.state)) return reply(null, `${task.id} isn't being planned, built or reviewed (it's ${task.state}).`, "forbidden");
@@ -1984,6 +2108,7 @@ export class Engine {
     review.rounds.push({ number: review.rounds.length + 1, verdict: "inProgress", found: 0, at: now(), fix: null });
     task.autoReview = review;
     this.event(task, "builder", `pushed ${msg.commit?.slice(0, 7) ?? msg.branch}${msg.pushed === "fallback" ? " with the machine's credentials" : ""}`);
+    this.handOffChecks(task, msg.commit ?? null);
     this.save(task);
     if (task.machine && priv.worktree) this.hooks.waitUntil(this.toRunner(task.machine, { type: "task.diff", taskId: task.id, cwd: priv.worktree, base }));
     if (msg.pushed === "app" && msg.owner && msg.repo) this.hooks.waitUntil(this.openPull(task.id, msg.owner, msg.repo));
@@ -2918,10 +3043,13 @@ export class Engine {
         if (unproven.length) fail(`Prove these first (or raise a hand): ${unproven.map((d) => `"${d.text}"`).join(", ")}.`);
         const priv = this.store.private(task.id);
         if (!priv.worktree || !priv.repoDir) fail("The factory doesn't know where this worktree came from; raise a hand.");
-        this.store.savePrivate(task.id, { ...priv, finishing: true });
         // Only the checks this machine can run: a `[macos] ` line is left to a Mac (or CI) when it's on Linux.
         // A machine the factory can't see (removed, or not loaded) runs them all rather than skipping on unknown tags.
         const { run: checks, skipped } = checksFor(this.store.scriptsFor(taskRepo(task, goal ?? null)), here ? here.tags ?? [] : null);
+        // What it skips is handed to a machine with the tags once it's pushed (`proveChecks`).
+        const parsed = checkCommands(this.store.scriptsFor(taskRepo(task, goal ?? null))).map(parseCheck);
+        const handoff = skipped.map((c) => ({ command: c.command, requires: parsed.find((p): p is { command: string; requires: string[] } => !("error" in p) && p.command === c.command)?.requires ?? c.missing }));
+        this.store.savePrivate(task.id, { ...priv, finishing: true, handoff });
         const skipNote = skipped.length ? ` ${skipped.length} check${skipped.length === 1 ? "" : "s"} skipped on this machine (${skipped.map((c) => `needs ${c.missing.join(", ")}`).join("; ")}).` : "";
         task.liveLog = checks.length ? RUNNING_CHECKS : "Committing and pushing…";
         task.comments.push({ id: crypto.randomUUID(), author: "builder", text: str(a.summary, "summary"), at: now(), anchor: "Summary", via: null });
@@ -3069,6 +3197,7 @@ export class Engine {
     if (task.state !== "reviewing" || !task.pr || task.autoReview?.rounds.at(-1)?.verdict !== "passed") return false;
     if (task.reviews.length < task.reviewsNeeded || task.doneWhen.some((d) => d.status !== "proven")) return false;
     if (task.pr.checks.some((c) => c.status !== "passed")) return false; // CI first
+    if (this.appleBlocks(task)) return false; // and the checks handed to a Mac
     if (this.heldFor(task)) return false; // an incident freeze on its repo
     return !this.store.private(task.id).merging && !task.hand;
   }
