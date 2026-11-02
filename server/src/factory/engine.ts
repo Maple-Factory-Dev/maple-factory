@@ -1843,7 +1843,9 @@ export class Engine {
         }
         const task = this.store.task(msg.taskId);
         const goal = task && this.store.goal(task.goal);
-        if (!task || task.machine !== machine) return await reply(null, "That task isn't running on this machine.", "api"), null;
+        // The machine running its handed-off Apple checks fetches the branch too, nothing more.
+        const proving = !!task && task.appleChecks?.state === "running" && task.appleChecks.machine === machine && msg.purpose === "fetch";
+        if (!task || (task.machine !== machine && !proving)) return await reply(null, "That task isn't running on this machine.", "api"), null;
         const repo = taskRepo(task, goal ?? null);
         if (repo && repo.toLowerCase() !== `${msg.owner}/${msg.repo}`.toLowerCase()) return await reply(null, `${task.id} works on ${repo}, not ${msg.owner}/${msg.repo}.`, "api"), null;
         try {
@@ -1873,7 +1875,9 @@ export class Engine {
     let actor: string;
     if (msg.taskId) {
       const task = this.store.task(msg.taskId);
-      if (!task || task.machine !== machine) return reply(null, "That task isn't assigned to this machine.", "forbidden");
+      // The machine running its handed-off Apple checks gets them too, for that run.
+      const proving = task?.appleChecks?.state === "running" && task.appleChecks.machine === machine;
+      if (!task || (task.machine !== machine && !proving)) return reply(null, "That task isn't assigned to this machine.", "forbidden");
       // Only while an agent works on it there: a merged or cancelled task keeps its last machine.
       if (!SECRET_STATES.has(task.state)) return reply(null, `${task.id} isn't being planned, built or reviewed (it's ${task.state}).`, "forbidden");
       const taskRepoName = taskRepo(task, this.store.goal(task.goal) ?? null);
