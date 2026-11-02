@@ -180,6 +180,16 @@ enum DemoData {
                     .init(who: "reviewer", text: "passed round 2", at: ago(20)),
                 ]
             },
+            task("API-33", goal: "g-api", title: "Sign in with Apple for API tokens", state: .reviewing, owner: "kit", updated: 6) { t in
+                // Proved on the Linux droplet: its checks passed there, the Apple one couldn't run.
+                t.brief = "Let people mint API tokens after signing in with Apple."
+                t.machine = "droplet"
+                t.diff = .init(added: 96, removed: 14, files: ["server/src/auth/apple.ts", "apps/ios/Sources/SignIn.swift"])
+                t.pr = .init(number: 418, url: "https://github.com/acme/api/pull/418", state: .open, branch: "agent/api-33", base: "main",
+                             checks: [.init(name: "test", status: .passed, duration: "1m 4s", required: true), .init(name: "lint", status: .passed, duration: "16s", required: true)])
+                t.checksNotRun = [.init(command: "xcodebuild test", reason: "needs macos", kind: .requirement, status: .open, machine: "droplet", at: ago(6))]
+                t.events = [.init(who: "factory", text: "1 check not run here: needs macos", at: ago(6))]
+            },
             task("BIL-7", goal: "g-web", title: "Invoice PDFs with line items", state: .building, owner: "sam", updated: 35) { t in
                 t.brief = "Render each invoice as a PDF with its usage line items."
                 t.hand = .init(reason: .needsInput, summary: "Stripe's invoice API doesn't return usage line items for metered prices. Build them from our own usage table instead?", at: ago(35), assignee: me,

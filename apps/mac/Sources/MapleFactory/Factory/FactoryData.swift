@@ -332,6 +332,15 @@ enum FactoryData {
         // Onboarding revamp
         FactoryTask(id: "ONB-23", goal: "Onboarding revamp", title: "Import a repo from GitHub during sign-up", state: .drafting,
                     detail: "Edited 3h ago", span: 12...24, updated: "3h"),
+        // Proved on the Linux droplet: CI passed, the Apple check couldn't run there.
+        {
+            var t = FactoryTask(id: "ONB-24", goal: "Onboarding revamp", title: "Sign in with Apple on the welcome screen", state: .reviewing,
+                                agent: agents[2], owner: chris, detail: "1 check not run here", diff: (96, 14), span: 8...14, updated: "6m", footprint: (4, 110, false), areas: ["Onboarding"],
+                                pr: PullRequest(number: 501, state: .open, checks: CICheck.standard()))
+            t.machine = "droplet"
+            t.checksNotRun = [Wire.TaskNotRun(command: "xcodebuild test -scheme Atlas", reason: "needs macos", kind: .requirement, status: .open, machine: "droplet", at: 0)]
+            return t
+        }(),
         FactoryTask(id: "ONB-21", goal: "Onboarding revamp", title: "Workspace templates picker", state: .planning,
                     agent: agents[2], detail: "Drafting plan · 2 of 4", span: 10...21, updated: "5m", footprint: (6, 340, true)),
         FactoryTask(id: "ONB-19", goal: "Onboarding revamp", title: "Invite-teammates step", state: .reviewing,

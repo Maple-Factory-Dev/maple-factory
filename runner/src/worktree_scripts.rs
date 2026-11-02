@@ -31,7 +31,7 @@ use sha2::{Digest, Sha256};
 
 use crate::protocol::Outbound;
 use crate::tasks::Emit;
-pub use crate::wire::{CheckRun, WorktreeScripts};
+pub use crate::wire::{CheckRun, NotRunCheck, NotRunKind, WorktreeScripts};
 
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(600);
 /// The end of a failed script's output that goes into the error (and the app).
@@ -199,15 +199,66 @@ pub fn check_commands(scripts: Option<&WorktreeScripts>) -> Vec<&str> {
     scripts.and_then(|s| s.checks.as_deref()).unwrap_or("").lines().map(str::trim).filter(|c| !c.is_empty()).collect()
 }
 
+/// A check line split into the machine tags its `[macos, xcode] ` prefix asks for and its command.
+/// A line with no prefix, or one that can't be read (the hub refuses those when they're saved), needs
+/// nothing and runs as written, so it fails loudly instead of vanishing.
+pub fn tagged(line: &str) -> (Vec<String>, &str) {
+    let l = line.trim();
+    let Some(rest) = l.strip_prefix('[') else { return (vec![], l) };
+    let Some(close) = rest.find(']') else { return (vec![], l) };
+    let tags: Vec<String> = rest[..close].split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
+    let command = rest[close + 1..].trim();
+    if tags.is_empty() || command.is_empty() {
+        return (vec![], l);
+    }
+    (tags, command)
+}
+
+/// The check this machine (with `have`) can't run, and why (`needs macos`); None: it can run it.
+pub fn requirement_skip(line: &str, have: &[String]) -> Option<NotRunCheck> {
+    let (tags, command) = tagged(line);
+    let missing: Vec<&str> = tags.iter().filter(|t| !have.contains(t)).map(String::as_str).collect();
+    (!missing.is_empty()).then(|| NotRunCheck {
+        command: command.to_string(),
+        reason: format!("needs {}", missing.join(", ")),
+        kind: Some(NotRunKind::Requirement),
+    })
+}
+
+/// The checks that weren't reached after one failed (`timed_out`: ran out of time).
+pub fn not_reached<'a>(rest: impl IntoIterator<Item = &'a str>, timed_out: bool) -> Vec<NotRunCheck> {
+    let (reason, kind) = if timed_out { ("timed out budget", NotRunKind::TimedOut) } else { ("skipped after an earlier failure", NotRunKind::AfterFailure) };
+    rest.into_iter().map(|line| NotRunCheck { command: tagged(line).1.to_string(), reason: reason.into(), kind: Some(kind) }).collect()
+}
+
 /// Runs the repo's checks one after another in the worktree, stopping at the first that fails (exits
 /// non-zero, is killed or runs past the timeout). Each comes back with its exit code and the scrubbed
-/// end of its output; the last one failed when `passed` says not.
-pub async fn checks(scripts: Option<&WorktreeScripts>, ctx: &Context<'_>) -> Vec<CheckRun> {
+/// end of its output; the last one failed when `passed` says not. A line tagged for what this machine
+/// lacks (`[macos] xcodebuild test` on Linux) isn't run: it comes back in the second list with
+/// `needs macos`, as do the checks after a failure, with why they weren't reached.
+pub async fn checks(scripts: Option<&WorktreeScripts>, ctx: &Context<'_>) -> (Vec<CheckRun>, Vec<NotRunCheck>) {
+    checks_with(scripts, ctx, &crate::capabilities::current()).await
+}
+
+/// `checks` for a machine with the tags `have`.
+pub async fn checks_with(scripts: Option<&WorktreeScripts>, ctx: &Context<'_>, have: &[String]) -> (Vec<CheckRun>, Vec<NotRunCheck>) {
     crate::secrets::remember(ctx.env.iter().map(|(_, v)| v));
     let limit = timeout(scripts);
     let env = environment(Phase::Checks, ctx);
     let mut ran = Vec::new();
-    for command in check_commands(scripts) {
+    let mut not_run = Vec::new();
+    let all = check_commands(scripts);
+    for (i, line) in all.iter().enumerate() {
+        if let Some(skip) = requirement_skip(line, have) {
+            let text = format!("check `{}` not run here: {}", skip.command, skip.reason);
+            tracing::info!("task {}: {text}", ctx.task_id);
+            if let Some(emit) = ctx.emit {
+                emit(Outbound::TaskProgress { task_id: ctx.task_id.to_string(), text });
+            }
+            not_run.push(skip);
+            continue;
+        }
+        let command = tagged(line).1;
         tracing::info!("task {}: running its check: {command}", ctx.task_id);
         let r = crate::proof::run_check_env(ctx.worktree, command, ctx.path, &env, limit).await;
         let lines: Vec<String> = scrub(&r.tail, ctx.env).lines().map(str::to_string).collect();
@@ -224,12 +275,14 @@ pub async fn checks(scripts: Option<&WorktreeScripts>, ctx: &Context<'_>) -> Vec
             emit(Outbound::TaskProgress { task_id: ctx.task_id.to_string(), text: line });
         }
         let ok = passed(&run);
+        let timed_out = run.timed_out;
         ran.push(run);
         if !ok {
+            not_run.extend(not_reached(all[i + 1..].iter().copied(), timed_out));
             break;
         }
     }
-    ran
+    (ran, not_run)
 }
 
 /// Whether a check exited 0.

@@ -1,0 +1,8 @@
+{
+  "wire": { "type": "task.finished", "taskId": "MF-2", "ok": true, "branch": "agent/mf-2", "commit": "abc1234",
+    "checks": [{ "command": "cargo test", "code": 0, "timedOut": false, "ms": 4100, "output": "ok" }],
+    "notRun": [{ "command": "xcodebuild test -scheme MapleFactory", "reason": "needs macos", "kind": "requirement" }] },
+  "notRun": [
+    { "command": "xcodebuild test -scheme MapleFactory", "reason": "needs macos", "kind": "requirement" }
+  ]
+}

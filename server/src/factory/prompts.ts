@@ -238,7 +238,7 @@ ${task.plan.map((s, i) => `${i + 1}. ${s.text} (${s.file})`).join("\n")}
 
 ## Done when, with the builder's evidence
 ${done}${budgetSection(budget)}
-${previous.length ? `\n## Open findings from earlier rounds (say which are fixed)\n${previous.map((f) => `- (${f.id}) [${f.severity}] ${f.text}`).join("\n")}\n` : ""}${asked}
+${notRunSection(task)}${previous.length ? `\n## Open findings from earlier rounds (say which are fixed)\n${previous.map((f) => `- (${f.id}) [${f.severity}] ${f.text}`).join("\n")}\n` : ""}${asked}
 Review the change with \`git diff origin/${base}...HEAD\` (and \`git log origin/${base}..HEAD\`). Answer three things:
 1. Did it do the ask? One check per part of the brief: met, partial or missed.
 2. Are the proofs real? One check per Done when item: does the evidence actually show it? An ATTESTED item was signed off by a person themselves: accept it as proven, don't flag its proof as not real.
@@ -248,4 +248,12 @@ ${classifySection(classifier)}Then call \`submit_review\` once: verdict "passed"
 List \`fixed\` with the ids of earlier findings this round resolves. End your turn after it succeeds.
 ${ARTIFACTS(task, "reviewer")}
 ${THREADS}`;
+}
+
+/** The checks the last push couldn't run on its machine (`needs macos`): not failures, so the reviewer doesn't count them as such. */
+function notRunSection(task: Task): string {
+  const items = task.checksNotRun ?? [];
+  if (!items.length) return "";
+  const lines = items.map((n) => `- \`${n.command}\`: not run here (${n.reason})${n.status === "waived" ? `; waived by ${n.by}: ${n.note}` : "; open until a person waives it"}`);
+  return `\n## Checks not run on its machine\n${lines.join("\n")}\n\nThese weren't run, so they neither passed nor failed: don't treat them as failures or ask the builder to make them pass here. A person waives each (or it runs on a machine that can) before it merges.\n`;
 }

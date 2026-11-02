@@ -197,6 +197,9 @@ pub enum Outbound {
         /// The repo's checks that ran, in order; the last failed when the finish stopped on one.
         #[serde(skip_serializing_if = "Option::is_none")]
         checks: Option<Vec<crate::wire::CheckRun>>,
+        /// The checks it didn't run, each with why (`needs macos`, after an earlier failure).
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        not_run: Vec<crate::wire::NotRunCheck>,
     },
     /// How `task.handoff` went: the branch is on origin at `commit`, or `message` says why not.
     #[serde(rename = "task.handed_off")]
@@ -214,13 +217,13 @@ pub enum Outbound {
     /// A task's check is starting (`n` of `of`), for the Tasks list.
     #[serde(rename = "task.check")]
     TaskCheck { task_id: String, command: String, n: usize, of: usize },
-    /// How `task.prove` went: each check that ran, the ones that didn't (after a failure), the
+    /// How `task.prove` went: each check that ran, the ones that didn't and why, the
     /// screens captured once they all passed, and the worktree's HEAD; or why they couldn't run at all.
     #[serde(rename = "task.proved")]
     TaskProved {
         task_id: String,
         results: Vec<crate::proof::CheckResult>,
-        not_run: Vec<String>,
+        not_run: Vec<crate::wire::NotRunCheck>,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         screens: Vec<crate::proof::ScreenProof>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1111,9 +1114,31 @@ mod tests {
             reason: None,
             message: Some("nope".into()),
             checks: None,
+            not_run: vec![],
         })
         .unwrap();
         assert_eq!(out, serde_json::json!({"type":"task.finished","taskId":"t1","ok":false,"branch":"agent/x","base":null,"message":"nope"}));
+        // The checks it didn't run go as {command, reason, kind}.
+        let out = serde_json::to_value(Outbound::TaskFinished {
+            task_id: "t1".into(),
+            ok: true,
+            pushed: Some("app"),
+            owner: None,
+            repo: None,
+            branch: "agent/x".into(),
+            base: Some("main".into()),
+            commit: Some("abc".into()),
+            reason: None,
+            message: None,
+            checks: None,
+            not_run: vec![crate::wire::NotRunCheck {
+                command: "xcodebuild test".into(),
+                reason: "needs macos".into(),
+                kind: Some(crate::wire::NotRunKind::Requirement),
+            }],
+        })
+        .unwrap();
+        assert_eq!(out["notRun"], serde_json::json!([{"command":"xcodebuild test","reason":"needs macos","kind":"requirement"}]));
         let msg: Inbound = serde_json::from_str(
             r#"{"type":"task.handoff","taskId":"t1","cwd":"~/.worktrees/app/fix-1a2b","repoDir":"~/app","branch":"agent/fix-1a2b","base":"main","title":"Fix it","fallback":true}"#,
         )
@@ -1142,7 +1167,11 @@ mod tests {
         let out = serde_json::to_value(Outbound::TaskProved {
             task_id: "t1".into(),
             results: vec![result],
-            not_run: vec!["true".into()],
+            not_run: vec![crate::wire::NotRunCheck {
+                command: "true".into(),
+                reason: "skipped after an earlier failure".into(),
+                kind: Some(crate::wire::NotRunKind::AfterFailure),
+            }],
             screens: vec![],
             head: None,
             error: None,
@@ -1150,7 +1179,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             out,
-            serde_json::json!({"type":"task.proved","taskId":"t1","results":[{"command":"false","code":1,"ms":6,"timedOut":false,"tail":"no"}],"notRun":["true"]})
+            serde_json::json!({"type":"task.proved","taskId":"t1","results":[{"command":"false","code":1,"ms":6,"timedOut":false,"tail":"no"}],"notRun":[{"command":"true","reason":"skipped after an earlier failure","kind":"afterFailure"}]})
         );
         let shot = crate::proof::ScreenProof {
             kind: "screen",
