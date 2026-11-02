@@ -56,10 +56,32 @@ export function checkCommands(s: WorktreeScripts | null | undefined): string[] {
 /** The most path rules a repo may have. */
 export const MAX_PATH_RULES = 20;
 
-/** One check line read: its command and the machine tags it needs (from a leading `[macos] ` or `[xcode,macos] `), or why the prefix can't be read. */
-export function parseCheck(line: string): { command: string; requires: string[] } | { error: string } {
+/** A trailing ` → gha:<name>` / ` -> gha:<name>`: the GitHub check run that covers this check when no machine here can run it. */
+const COVER = /\s(?:→|->)((?:(?!→|->).)*)$/;
+
+/** A check line without its ` → gha:<name>` suffix: what a runner may run as shell. */
+export function stripCover(line: string): string {
   const l = line.trim();
-  if (!l.startsWith("[")) return { command: l, requires: [] };
+  const m = COVER.exec(l);
+  return m && m[1]!.trim().startsWith("gha:") ? l.slice(0, m.index).trim() : l;
+}
+
+/** One check line read: its command, the machine tags it needs (from a leading `[macos] ` or `[xcode,macos] `) and the GitHub check that covers it (a trailing ` → gha:mac-build`), or why it can't be read. */
+export function parseCheck(line: string): { command: string; requires: string[]; covers?: string } | { error: string } {
+  let l = line.trim();
+  let covers: string | undefined;
+  const m = COVER.exec(l);
+  if (m) {
+    const target = m[1]!.trim();
+    const name = target.startsWith("gha:") ? target.slice(4).trim() : null;
+    if (name == null) return { error: `The check \`${l}\` ends with an arrow but not a GitHub check; write it like \`[macos] xcodebuild test → gha:mac-build\`.` };
+    if (!name) return { error: `The check \`${l}\` names an empty GitHub check after gha:; write it like \`→ gha:mac-build\`.` };
+    covers = name;
+    l = l.slice(0, m.index).trim();
+    if (!l) return { error: `The check \`${line.trim()}\` names a GitHub check but no command before it.` };
+  }
+  const extra = covers ? { covers } : {};
+  if (!l.startsWith("[")) return { command: l, requires: [], ...extra };
   const close = l.indexOf("]");
   if (close < 0) return { error: `The check \`${l}\` opens a [ for its machine tags but never closes it; write it like \`[macos] xcodebuild test\`.` };
   const tags = l.slice(1, close).split(",").map((t) => t.trim());
@@ -68,7 +90,7 @@ export function parseCheck(line: string): { command: string; requires: string[] 
   const bad = tags.find((t) => !TAG.test(t) || t.length > 32);
   if (bad != null) return { error: `The check \`${l}\` asks for the tag "${bad}"; a tag is lowercase a-z, 0-9 and dashes, like macos or xcode.` };
   if (!command) return { error: `The check \`${l}\` has machine tags but no command after them.` };
-  return { command, requires: [...new Set(tags)].sort() };
+  return { command, requires: [...new Set(tags)].sort(), ...extra };
 }
 
 /** A repo's checks split for a machine with these tags: the commands it runs (prefixes stripped), and those it skips with the tags it lacks. A line that can't be read runs as written, so the check fails loudly instead of vanishing. Tags of null (a machine the factory can't see) runs every check: one that can't run there fails loudly rather than being skipped unseen. */
@@ -78,7 +100,7 @@ export function checksFor(s: WorktreeScripts | null | undefined, tags: readonly 
   const skipped: { command: string; missing: string[] }[] = [];
   for (const line of checkCommands(s)) {
     const c = parseCheck(line);
-    if ("error" in c) { run.push(line); continue; }
+    if ("error" in c) { run.push(stripCover(line)); continue; }
     const missing = tags ? c.requires.filter((t) => !have.has(t)) : [];
     if (missing.length) skipped.push({ command: c.command, missing });
     else run.push(c.command);

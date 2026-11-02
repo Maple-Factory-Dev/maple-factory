@@ -25,7 +25,7 @@ import { followedUp, Scout, SCOUT_PREFIX, type Candidate, type ScoutPick } from 
 import { SlackAsks, SLACK_PREFIX, type Ask, type Proposal } from "./slack-asks.ts";
 import { threadAddress } from "../slack.ts";
 import { loginFor } from "../slack-links.ts";
-import { checkCommands, checksFor, parseCheck, pathRules, RepoSetup, requiresFor, SCRIPT_VARIABLES, scriptsProblem, SETUP_PREFIX, tidyScripts } from "./repo-setup.ts";
+import { checkCommands, checksFor, parseCheck, stripCover, pathRules, RepoSetup, requiresFor, SCRIPT_VARIABLES, scriptsProblem, SETUP_PREFIX, tidyScripts } from "./repo-setup.ts";
 import { merged, redacted } from "./connectors.ts";
 import { assess, budgetCostUsd, budgetMinutes, budgetUse, type BudgetUse, overBudgetMode, validPolicy } from "./policy.ts";
 import { cycleSplit, findingDetail, manualReason, type StatKind } from "./stats.ts";
@@ -3120,8 +3120,9 @@ export class Engine {
         const scripts = this.store.scriptsFor(taskRepo(task, goal ?? null));
         const { run: checks, skipped } = checksFor(scripts, here ? here.tags ?? [] : null);
         // With their `[tag] ` prefixes, for runners that skip (and say why) what their machine can't run.
+        // Never with a ` → gha:<name>` suffix: older and current runners would run it as shell.
         const lines = checkCommands(scripts);
-        const checkLines = lines.some((l) => l.trim().startsWith("[")) ? lines.join("\n") : null;
+        const checkLines = lines.some((l) => l.trim().startsWith("[")) ? lines.map(stripCover).join("\n") : null;
         // What it skips is handed to a machine with the tags once it's pushed (`proveChecks`).
         const parsed = lines.map(parseCheck);
         const handoff = skipped.map((c) => ({ command: c.command, requires: parsed.find((p): p is { command: string; requires: string[] } => !("error" in p) && p.command === c.command)?.requires ?? c.missing }));
