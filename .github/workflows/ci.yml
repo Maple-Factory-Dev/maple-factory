@@ -1,6 +1,6 @@
 # Lightweight checks for the runner and the server. Linux runners only: nothing here needs macOS.
-# mac.yml (job mac-build) builds the Mac app and runs the MapleKit tests on macos-15. A repo's
-# `[macos]` check can name it to be covered when no Mac is online: `[macos] swift test → gha:mac-build`.
+# mac.yml (job mac-build) builds the Mac app and runs the MapleKit tests on macos-15. It's manual-only
+# for now (workflow_dispatch); a `[macos] … → gha:mac-build` check stays open until someone runs it.
 # The README's "CI" section has the local commands that reproduce each job.
 name: CI
 
