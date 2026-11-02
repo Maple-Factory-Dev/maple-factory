@@ -114,7 +114,6 @@ struct SignInView: View {
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(RoundedRectangle(cornerRadius: 12).fill(Color(.secondarySystemBackground)))
-                .accessibilityIdentifier("signin-checks")
             }
 
             Button(action: connect) {
@@ -282,6 +281,7 @@ struct SignInView: View {
                     ProgressView().controlSize(.small)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Waiting for GitHub…").font(.subheadline.weight(.medium))
+                            .accessibilityIdentifier("signin-waiting")
                         Text("Code expires in \(remaining(until: device.expires, now: context.date))")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -295,7 +295,6 @@ struct SignInView: View {
                     }
                 }
             }
-            .accessibilityIdentifier("signin-waiting")
         }
         .accessibilityElement(children: .contain)
     }

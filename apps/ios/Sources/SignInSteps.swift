@@ -136,7 +136,8 @@ struct FactoryHeader: View {
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             VStack(alignment: .leading, spacing: 2) {
                 Text(org).font(.headline)
-                Text(host).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                // Wraps rather than truncates at big text sizes: the host is how you know it's the right factory.
+                Text(host).font(.caption.monospaced()).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
             Label("Connected", systemImage: "checkmark.circle.fill")

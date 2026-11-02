@@ -26,7 +26,12 @@ struct MapleFactoryApp: App {
             .tint(Theme.accent)
             .animation(.default, value: store.isSignedIn)
             .task {
-                if UserDefaults.standard.bool(forKey: "demo") { store.startDemo() } else { store.restore() }
+                if UserDefaults.standard.bool(forKey: "demo") {
+                    store.startDemo()
+                } else if UserDefaults.standard.string(forKey: "onboardingStep") == nil {
+                    // `-onboardingStep` shows the sign-in screen's sample even when a factory is saved here.
+                    store.restore()
+                }
                 // `-pushRef <id>`: as if that task's notification were tapped (NotificationSettingsTests).
                 AppDelegate.open(ref: UserDefaults.standard.string(forKey: "pushRef"), in: store)
             }
