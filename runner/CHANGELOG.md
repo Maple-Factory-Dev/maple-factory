@@ -5,6 +5,10 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.104.0 — 2026-11-02
+
+A check this machine can't run (one marked `[macos]` on Linux, say) is reported as not run, with the reason, instead of failing the task.
+
 ## 0.103.0 — 2026-11-02
 
 Understands the year-long merges calendar in the factory's statistics; nothing changes in how tasks run.

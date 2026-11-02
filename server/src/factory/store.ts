@@ -19,6 +19,8 @@ export interface TaskPrivate {
   finishing: boolean;
   /** Finishes in a row the repo's checks stopped, since its last push (or its last hand about them). */
   checkFailures?: number;
+  /** The checks its last finish left out for its machine (`needs macos`), kept for its `task.finished`. */
+  skippedChecks?: import("../wire.ts").NotRunCheck[];
   /// A merge was sent and hasn't been answered.
   merging?: boolean;
   /** When that merge was sent, so one that never answers is noticed (none on a merge from before this was kept). */

@@ -81,6 +81,7 @@ import SwiftUI
         task.machine = t.machine
         task.requires = t.requires ?? []
         task.appleChecks = t.appleChecks
+        task.checksNotRun = t.checksNotRun ?? []
         task.pushed = t.pr?.head
         task.gitBranch = t.branch
         task.splitFrom = t.splitFrom

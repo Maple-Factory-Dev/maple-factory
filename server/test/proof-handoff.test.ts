@@ -120,9 +120,12 @@ test("a passing answer unblocks merge; until then merge waits and says why", asy
   f.reviewed();
   assert.equal(f.mergeReady(), false);
   await assert.rejects(f.engine.command({ type: "task.merge", id: "MF-1" } as never, ME), /Apple checks are still running on mbp-14/);
+  // MF-335 lists it as not run on the Linux box until it runs elsewhere (or is waived).
+  assert.deepEqual(f.task().checksNotRun!.map((n) => [n.command, n.status]), [[XCODE, "open"]]);
   await f.proved("mbp-14", f.jobs()[0]!, [PASS]);
   assert.equal(f.task().appleChecks!.state, "passed");
   assert.deepEqual(f.task().appleChecks!.checks, [PASS]);
+  assert.deepEqual(f.task().checksNotRun, []);
   assert.equal(f.mergeReady(), true);
 });
 
@@ -234,4 +237,13 @@ test("a finish on a Mac that ran everything leaves no hand-off", async () => {
   assert.equal(f.sent.find((m) => m.type === "task.finish")!.checks, `npm run lint\n${XCODE}`);
   assert.equal(f.task().appleChecks ?? null, null);
   assert.equal(f.jobs().length, 0);
+});
+
+test("a person waiving the check lets it merge without the Mac", async () => {
+  const f = factory([machine("linux", "me", ["linux"]), machine("mbp-14", "me", ["macos", "xcode"], false)]);
+  await f.buildAndPush();
+  f.reviewed();
+  assert.equal(f.mergeReady(), false);
+  await f.engine.command({ type: "task.waiveCheck", id: "MF-1", command: XCODE, note: "UI-only change, ran it locally" } as never, ME);
+  assert.equal(f.mergeReady(), true);
 });

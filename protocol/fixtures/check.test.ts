@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { checkDir, checkEvents, checkJsonl } from "./check.ts";
+import { checkDir, checkEvents, checkJsonl, checkNotRunDir, normalizeNotRun } from "./check.ts";
 
 const dir = join(dirname(fileURLToPath(import.meta.url)), "session-events");
 const load = (f: string) => JSON.parse(readFileSync(join(dir, f), "utf8")) as Record<string, unknown>[];
@@ -38,4 +38,10 @@ test("a missing required field, an unknown field and a bad enum fail", () => {
 test("a broken source line fails", () => {
   assert.deepEqual(checkJsonl('{"a":1}\n\n', "x.jsonl"), []);
   assert.match(checkJsonl('{"a":1}\n{"a":', "x.jsonl").join(), /x.jsonl:2/);
+});
+
+test("the not-run fixtures pass, including an older runner's plain strings", () => {
+  const notRunDir = join(dirname(fileURLToPath(import.meta.url)), "not-run");
+  assert.deepEqual(checkNotRunDir(notRunDir), []);
+  assert.deepEqual(normalizeNotRun(["npm test"]), [{ command: "npm test", reason: "skipped after an earlier failure", kind: "afterFailure" }]);
 });

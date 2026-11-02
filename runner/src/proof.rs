@@ -507,14 +507,15 @@ async fn prove_task(
     let settings = crate::factory::settings_at(&dir, &base, &p.projects).await.unwrap_or_default();
     let commands: Vec<String> = settings.test.clone().unwrap_or_default().lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect();
     let total = commands.len();
-    let (results, not_run) = run_checks(&dir, &commands, path, limit, |n, command| {
+    let (results, not_run) = run_checks(&dir, &commands, &crate::capabilities::current(), path, limit, |n, command| {
         tracing::info!("task {}: check {n} of {total}: {command}", p.task_id);
         emit(Outbound::TaskCheck { task_id: p.task_id.clone(), command: command.to_string(), n, of: total });
     })
     .await;
-    // Screens only once every check passed: a failure goes back to the builder first.
+    // Screens only once every check that ran passed: a failure goes back to the builder first. A check
+    // this machine can't run (`needs macos`) doesn't hold them up.
     let screens = match shots {
-        Some(shots) if not_run.is_empty() && results.iter().all(CheckResult::passed) => {
+        Some(shots) if not_run.iter().all(|n| n.kind == Some(crate::wire::NotRunKind::Requirement)) && results.iter().all(CheckResult::passed) => {
             capture_screens(emit, &p.task_id, &dir, &settings, &base, path, shots).await
         }
         _ => vec![],
@@ -523,25 +524,37 @@ async fn prove_task(
 }
 
 /// Runs `commands` in `dir` one after another and stops at the first that fails; the results, and
-/// the commands that didn't run. `started` hears each one (numbered from 1) as it starts.
+/// the commands that didn't run with why: a `[macos] ` line on a machine without `macos` (in `have`)
+/// is skipped with `needs macos`, and those after a failure with `skipped after an earlier failure`
+/// (`timed out budget` when it ran out of time). `started` hears each one (numbered from 1) as it starts.
 pub async fn run_checks(
     dir: &Path,
     commands: &[String],
+    have: &[String],
     path: Option<&str>,
     limit: Duration,
     started: impl Fn(usize, &str),
-) -> (Vec<CheckResult>, Vec<String>) {
+) -> (Vec<CheckResult>, Vec<crate::wire::NotRunCheck>) {
+    use crate::worktree_scripts::{not_reached, requirement_skip, tagged};
     let mut results = Vec::new();
-    for (i, command) in commands.iter().enumerate() {
+    let mut not_run = Vec::new();
+    for (i, line) in commands.iter().enumerate() {
+        if let Some(skip) = requirement_skip(line, have) {
+            not_run.push(skip);
+            continue;
+        }
+        let command = tagged(line).1;
         started(i + 1, command);
         let result = run_check(dir, command, path, limit).await;
         let passed = result.passed();
+        let timed_out = result.timed_out;
         results.push(result);
         if !passed {
-            return (results, commands[i + 1..].to_vec());
+            not_run.extend(not_reached(commands[i + 1..].iter().map(String::as_str), timed_out));
+            return (results, not_run);
         }
     }
-    (results, vec![])
+    (results, not_run)
 }
 
 /// One check: `sh -c <command>` in `dir`, in a process group of its own, with stdout and stderr
@@ -1460,7 +1473,7 @@ mod tests {
         let dir = temp("checks");
         let commands: Vec<String> = ["true", "echo out; echo err >&2; pwd", "false", "touch never"].map(String::from).to_vec();
         let started = std::sync::Mutex::new(vec![]);
-        let (results, not_run) = run_checks(&dir, &commands, None, Duration::from_secs(30), |n, c| started.lock().unwrap().push(format!("{n} {c}"))).await;
+        let (results, not_run) = run_checks(&dir, &commands, &[], None, Duration::from_secs(30), |n, c| started.lock().unwrap().push(format!("{n} {c}"))).await;
         assert_eq!(started.into_inner().unwrap(), ["1 true", "2 echo out; echo err >&2; pwd", "3 false"]);
         assert_eq!(
             results.iter().map(|r| (r.command.as_str(), r.code, r.passed())).collect::<Vec<_>>(),
@@ -1468,8 +1481,46 @@ mod tests {
         );
         // stdout and stderr together, in the worktree.
         assert_eq!(results[1].tail, format!("out\nerr\n{}", dir.display()));
-        assert_eq!(not_run, ["touch never"]);
+        assert_eq!(not_run.iter().map(|n| (n.command.as_str(), n.reason.as_str())).collect::<Vec<_>>(), [("touch never", "skipped after an earlier failure")]);
         assert!(!dir.join("never").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_check_this_machine_cant_run_is_skipped_with_why_and_never_runs() {
+        use crate::wire::NotRunKind;
+        let dir = temp("checks-tags");
+        let commands: Vec<String> = ["[macos] touch mac-ran", "true", "[macos, xcode] touch xcode-ran", "[linux] touch linux-ran"].map(String::from).to_vec();
+        let started = std::sync::Mutex::new(vec![]);
+        let have = ["linux".to_string()];
+        let (results, not_run) =
+            run_checks(&dir, &commands, &have, None, Duration::from_secs(30), |n, c| started.lock().unwrap().push(format!("{n} {c}"))).await;
+        assert_eq!(started.into_inner().unwrap(), ["2 true", "4 touch linux-ran"]);
+        assert!(results.iter().all(CheckResult::passed));
+        let got: Vec<_> = not_run.iter().map(|n| (n.command.as_str(), n.reason.as_str(), n.kind)).collect();
+        assert_eq!(
+            got,
+            [("touch mac-ran", "needs macos", Some(NotRunKind::Requirement)), ("touch xcode-ran", "needs macos, xcode", Some(NotRunKind::Requirement))]
+        );
+        assert!(!dir.join("mac-ran").exists() && !dir.join("xcode-ran").exists());
+        assert!(dir.join("linux-ran").exists());
+        // On a Mac it runs.
+        let (results, not_run) = run_checks(&dir, &commands[..1], &["macos".to_string()], None, Duration::from_secs(30), |_, _| {}).await;
+        assert_eq!((results.len(), not_run.len()), (1, 0));
+        assert!(dir.join("mac-ran").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn checks_after_one_that_timed_out_say_so() {
+        let dir = temp("checks-timeout");
+        let commands: Vec<String> = ["sleep 5", "true", "[macos] true"].map(String::from).to_vec();
+        let (results, not_run) = run_checks(&dir, &commands, &[], None, Duration::from_millis(300), |_, _| {}).await;
+        assert!(results[0].timed_out);
+        let got: Vec<_> = not_run.iter().map(|n| (n.command.as_str(), n.reason.as_str())).collect();
+        assert_eq!(got, [("true", "timed out budget"), ("true", "timed out budget")]);
+        let out = serde_json::to_value(&not_run[0]).unwrap();
+        assert_eq!(out, json!({"command":"true","reason":"timed out budget","kind":"timedOut"}));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1570,7 +1621,7 @@ mod tests {
         let ran: Vec<(&str, i64)> = out["results"].as_array().unwrap().iter().map(|r| (r["command"].as_str().unwrap(), r["code"].as_i64().unwrap())).collect();
         assert_eq!(ran, [("echo from the base", 0), ("exit 3", 3)]);
         assert_eq!(out["results"][0]["tail"], "from the base");
-        assert_eq!(out["notRun"], json!(["echo not reached"]));
+        assert_eq!(out["notRun"], json!([{"command":"echo not reached","reason":"skipped after an earlier failure","kind":"afterFailure"}]));
         assert_eq!(out["head"].as_str().map(str::len), Some(40));
         let checks: Vec<String> =
             sent.lock().unwrap().iter().filter(|m| m["type"] == "task.check").map(|m| format!("{} of {}: {}", m["n"], m["of"], m["command"])).collect();

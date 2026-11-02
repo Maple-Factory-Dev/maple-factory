@@ -28,6 +28,12 @@ export const StepProgressValues: readonly StepProgress[] = ["done","active","pen
 export type DiffSide = "new" | "old";
 export const DiffSideValues: readonly DiffSide[] = ["new","old"];
 
+export type NotRunKind = "requirement" | "afterFailure" | "timedOut";
+export const NotRunKindValues: readonly NotRunKind[] = ["requirement","afterFailure","timedOut"];
+
+export type NotRunStatus = "open" | "waived";
+export const NotRunStatusValues: readonly NotRunStatus[] = ["open","waived"];
+
 export type ProofKind = "screenshot" | "video" | "terminal" | "tests";
 export const ProofKindValues: readonly ProofKind[] = ["screenshot","video","terminal","tests"];
 
@@ -951,6 +957,8 @@ export interface Task {
   requires?: string[] | null;
   /** Checks its building machine skipped (they need macos, xcode…), run on a machine that has the tags for its current head. Merge waits for them to pass. */
   appleChecks?: AppleChecks | null;
+  /** Checks its last finish couldn't run on that machine (`needs macos`), open until a person waives them. None: none (or an older server). */
+  checksNotRun?: TaskNotRun[] | null;
 }
 
 /** A risk check: code that raises a change's risk when touched (paths), or a plain-language rule the planner judges (rule). */
@@ -1066,6 +1074,29 @@ export interface RiskAcceptance {
   by: string;
   at: number;
   note?: string | null;
+}
+
+/** A check that wasn't run, and why: `needs macos`, `skipped after an earlier failure`, `timed out budget`. */
+export interface NotRunCheck {
+  command: string;
+  reason: string;
+  /** None (an older runner sent a plain string): afterFailure. */
+  kind?: NotRunKind | null;
+}
+
+/** A check a task's finish couldn't run on its machine (a requirement it lacked). It doesn't fail the proof, but auto-merge waits until each one is waived. */
+export interface TaskNotRun {
+  command: string;
+  reason: string;
+  kind: NotRunKind;
+  status: NotRunStatus;
+  machine?: string | null;
+  at: number;
+  /** Why the person waived it. */
+  note?: string | null;
+  /** Login of the person who waived it. */
+  by?: string | null;
+  resolvedAt?: number | null;
 }
 
 /** One of a repo's checks, run in a task's worktree before its finish is committed. */
@@ -1979,6 +2010,8 @@ export interface RunnerMessage_TaskFinished {
   message?: string | null;
   /** The repo's checks that ran, in order; the last one failed when the finish stopped on a check (nothing committed or pushed). */
   checks?: CheckRun[] | null;
+  /** Checks it didn't run, each with why. Older runners send plain strings (read as skipped after an earlier failure). */
+  notRun?: NotRunCheck[] | null;
 }
 
 /** The answer to `task.prove_checks`: the handed-off checks' results on that head. */
@@ -2189,6 +2222,8 @@ export interface ServerToRunner_TaskFinish {
   fallback: boolean;
   /** The repo's checks (commands, one per line) to run in the worktree before committing; any failing stops the finish. */
   checks?: string | null;
+  /** The same checks with their `[tag] ` prefixes kept (`[macos] xcodebuild test`), so the runner can skip what this machine can't run, with a reason. Older runners read only `checks`. */
+  checkLines?: string | null;
 }
 
 /** A proof job: fetch the branch at exactly `head` into a temporary worktree, run only `checks` there, answer with `task.checks_proved` and remove the worktree. No agent session. */
@@ -2773,6 +2808,14 @@ export interface ClientMessage_TaskComment {
   replyTo?: string | null;
 }
 
+/** Waive a check a task couldn't run on its machine, with a note saying why that's fine. People only; agents can't. */
+export interface ClientMessage_TaskWaiveCheck {
+  type: "task.waiveCheck";
+  id: string;
+  command: string;
+  note: string;
+}
+
 /** A change request for the planner or builder. */
 export interface ClientMessage_TaskSteer {
   type: "task.steer";
@@ -2964,8 +3007,8 @@ export interface ClientMessage_TaskGet {
 }
 
 /** App (macOS, web) → server. */
-export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionSubscribeEvents | ClientMessage_SessionUnsubscribeEvents | ClientMessage_SessionSendInput | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_SessionShare | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalScout | ClientMessage_RecurringSave | ClientMessage_RecurringDelete | ClientMessage_RecurringPause | ClientMessage_RecurringRunNow | ClientMessage_RepoSetupStart | ClientMessage_RepoSetupCancel | ClientMessage_QuietHoursSet | ClientMessage_PushRegister | ClientMessage_PushUnregister | ClientMessage_PushDevices | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_MachineAgentLogin | ClientMessage_RunnerCheck | ClientMessage_PolicySave | ClientMessage_PromptsSave | ClientMessage_AdminsGrant | ClientMessage_AdminsRevoke | ClientMessage_MembersRevoke | ClientMessage_ConnectorsSave | ClientMessage_IntegrationsSave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_ReposOwnersSet | ClientMessage_SecretsSet | ClientMessage_SecretsDelete | ClientMessage_ReposHoldMerges | ClientMessage_ReposReleaseMerges | ClientMessage_ReposScriptsSet | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskFollowUp | ClientMessage_TaskAssign | ClientMessage_TaskRequestReviewers | ClientMessage_TaskMoveGoal | ClientMessage_TaskPlan | ClientMessage_TaskBacklog | ClientMessage_TaskComment | ClientMessage_TaskSteer | ClientMessage_TaskReview | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskRequestReview | ClientMessage_TaskMerge | ClientMessage_TaskHoldMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRankDraft | ClientMessage_TaskRerunChecks | ClientMessage_TaskRecheckGitHub | ClientMessage_TaskRerunCheck | ClientMessage_TaskCheckLog | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange | ClientMessage_StatsGet | ClientMessage_ReportGet | ClientMessage_TasksOlder | ClientMessage_TaskGet;
-export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.subscribeEvents","session.unsubscribeEvents","session.sendInput","session.resize","session.kill","session.share","goal.save","draft.start","draft.goal","draft.cancel","goal.scout","recurring.save","recurring.delete","recurring.pause","recurring.runNow","repo.setup.start","repo.setup.cancel","quietHours.set","push.register","push.unregister","push.devices","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","machine.agent_login","runner.check","policy.save","prompts.save","admins.grant","admins.revoke","members.revoke","connectors.save","integrations.save","repos.refresh","repos.add","repos.remove","repos.owners.set","secrets.set","secrets.delete","repos.holdMerges","repos.releaseMerges","repos.scripts.set","goal.acceptRisk","task.create","task.edit","task.followUp","task.assign","task.requestReviewers","task.moveGoal","task.plan","task.backlog","task.comment","task.steer","task.review","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.requestReview","task.merge","task.holdMerge","task.cancel","task.retry","task.queue","task.rankDraft","task.rerunChecks","task.recheckGitHub","task.rerunCheck","task.checkLog","task.split","task.move","task.checkedIt","task.mockupChange","stats.get","report.get","tasks.older","task.get"] as const;
+export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionSubscribeEvents | ClientMessage_SessionUnsubscribeEvents | ClientMessage_SessionSendInput | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_SessionShare | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalScout | ClientMessage_RecurringSave | ClientMessage_RecurringDelete | ClientMessage_RecurringPause | ClientMessage_RecurringRunNow | ClientMessage_RepoSetupStart | ClientMessage_RepoSetupCancel | ClientMessage_QuietHoursSet | ClientMessage_PushRegister | ClientMessage_PushUnregister | ClientMessage_PushDevices | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_MachineAgentLogin | ClientMessage_RunnerCheck | ClientMessage_PolicySave | ClientMessage_PromptsSave | ClientMessage_AdminsGrant | ClientMessage_AdminsRevoke | ClientMessage_MembersRevoke | ClientMessage_ConnectorsSave | ClientMessage_IntegrationsSave | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_ReposOwnersSet | ClientMessage_SecretsSet | ClientMessage_SecretsDelete | ClientMessage_ReposHoldMerges | ClientMessage_ReposReleaseMerges | ClientMessage_ReposScriptsSet | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskFollowUp | ClientMessage_TaskAssign | ClientMessage_TaskRequestReviewers | ClientMessage_TaskMoveGoal | ClientMessage_TaskPlan | ClientMessage_TaskBacklog | ClientMessage_TaskComment | ClientMessage_TaskWaiveCheck | ClientMessage_TaskSteer | ClientMessage_TaskReview | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskRequestReview | ClientMessage_TaskMerge | ClientMessage_TaskHoldMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRankDraft | ClientMessage_TaskRerunChecks | ClientMessage_TaskRecheckGitHub | ClientMessage_TaskRerunCheck | ClientMessage_TaskCheckLog | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange | ClientMessage_StatsGet | ClientMessage_ReportGet | ClientMessage_TasksOlder | ClientMessage_TaskGet;
+export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","presence","session.open","session.attach","session.detach","session.subscribeEvents","session.unsubscribeEvents","session.sendInput","session.resize","session.kill","session.share","goal.save","draft.start","draft.goal","draft.cancel","goal.scout","recurring.save","recurring.delete","recurring.pause","recurring.runNow","repo.setup.start","repo.setup.cancel","quietHours.set","push.register","push.unregister","push.devices","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","machine.agent_login","runner.check","policy.save","prompts.save","admins.grant","admins.revoke","members.revoke","connectors.save","integrations.save","repos.refresh","repos.add","repos.remove","repos.owners.set","secrets.set","secrets.delete","repos.holdMerges","repos.releaseMerges","repos.scripts.set","goal.acceptRisk","task.create","task.edit","task.followUp","task.assign","task.requestReviewers","task.moveGoal","task.plan","task.backlog","task.comment","task.waiveCheck","task.steer","task.review","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.requestReview","task.merge","task.holdMerge","task.cancel","task.retry","task.queue","task.rankDraft","task.rerunChecks","task.recheckGitHub","task.rerunCheck","task.checkLog","task.split","task.move","task.checkedIt","task.mockupChange","stats.get","report.get","tasks.older","task.get"] as const;
 
 export interface ServerToClient_Snapshot {
   type: "snapshot";

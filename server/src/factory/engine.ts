@@ -9,7 +9,7 @@ import type { Env } from "../env.ts";
 import { ArtifactKindValues, PriorityValues, RoleValues } from "../wire.ts";
 import type {
   Artifact, ArtifactKind, ChangeRequest, CheckRun, ClientMessage, Comment, DiffCommit, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
-  Classification, McpConnector, Priority, PromptAdditions, RiskLevel, ServerToRunner, SessionEnd, Task, WorktreeScripts,
+  Classification, McpConnector, NotRunCheck, Priority, PromptAdditions, RiskLevel, ServerToRunner, SessionEnd, Task, WorktreeScripts,
 } from "../wire.ts";
 import { audit, machineHub } from "../util.ts";
 import { cleanTags, TAG } from "../machines.ts";
@@ -974,6 +974,18 @@ export class Engine {
         await this.startMerge(task, who);
         return;
       }
+      case "task.waiveCheck": {
+        if (isAgent(who)) fail("Only a person can waive a check.");
+        const note = typeof msg.note === "string" ? msg.note.trim() : "";
+        if (!note) fail("Say why it's fine without that check: a note is needed to waive it.");
+        const item = (task.checksNotRun ?? []).find((n) => n.command === msg.command) ?? fail("That check isn't waiting to be waived.");
+        if (item.status === "waived") fail("It's already waived.");
+        Object.assign(item, { status: "waived", note, by: who, resolvedAt: now() });
+        this.event(task, who, `waived the check \`${item.command}\` (${item.reason}): ${note}`);
+        this.save(task);
+        await this.autoMerge(task);
+        return;
+      }
       case "task.holdMerge": {
         // Too late to hold: the countdown ran out and the factory is merging it.
         if (this.countdownDone(task) || (task.mergeAt == null && this.store.private(task.id).merging)) return;
@@ -1516,8 +1528,15 @@ export class Engine {
 
   /** After a push: the checks the building machine skipped wait for a machine with their tags, for
    *  `head`. A finish that skipped none drops any earlier hand-off (it ran them all itself). */
-  private handOffChecks(task: Task, head: string | null) {
-    const handoff = this.store.private(task.id).handoff ?? [];
+  private handOffChecks(task: Task, head: string | null, notRun: NotRunCheck[] = []) {
+    const handoff = [...(this.store.private(task.id).handoff ?? [])];
+    // The runner may skip more itself (tags the factory didn't know): those go to a Mac too.
+    const lines = checkCommands(this.store.scriptsFor(taskRepo(task, this.store.goal(task.goal) ?? null))).map(parseCheck);
+    for (const n of notRun) {
+      if (n.kind !== "requirement" || handoff.some((h) => h.command === n.command)) continue;
+      const line = lines.find((p): p is { command: string; requires: string[] } => !("error" in p) && p.command === n.command);
+      if (line?.requires.length) handoff.push({ command: n.command, requires: line.requires });
+    }
     this.store.savePrivate(task.id, { ...this.store.private(task.id), proveJob: null });
     if (!handoff.length || !head) {
       task.appleChecks = null;
@@ -1532,6 +1551,9 @@ export class Engine {
   private appleBlocks(task: Task): string | null {
     const a = task.appleChecks;
     if (!a) return null;
+    // A person waived every one of them (task.waiveCheck): they don't hold the merge.
+    const waived = (c: string) => (task.checksNotRun ?? []).some((n) => n.command === c && n.status === "waived");
+    if (a.commands.every(waived)) return null;
     const head = task.pr?.head ?? null;
     if (a.head !== head) return "Its Apple checks haven't run on the current head yet.";
     if (a.state === "passed") return null;
@@ -1615,7 +1637,11 @@ export class Engine {
     const ok = msg.ok && msg.checks.length > 0 && msg.checks.every((c) => !c.timedOut && c.code === 0);
     task.appleChecks = { ...a, state: ok ? "passed" : "failed", checks: msg.checks, message: msg.message ?? null, reason: null, at: now() };
     this.store.savePrivate(task.id, { ...this.store.private(task.id), proveJob: null });
-    if (ok) this.event(task, "factory", `Apple checks passed on ${a.machine ?? machine} for ${a.head.slice(0, 7)}`);
+    if (ok) {
+      this.event(task, "factory", `Apple checks passed on ${a.machine ?? machine} for ${a.head.slice(0, 7)}`);
+      // They ran elsewhere: no longer "not run" items waiting to be waived.
+      if (task.checksNotRun) task.checksNotRun = task.checksNotRun.filter((n) => n.status !== "open" || !a.commands.includes(n.command));
+    }
     else {
       const bad = msg.checks.find((c) => c.timedOut || c.code !== 0);
       const how = bad ? `\`${bad.command}\` ${bad.timedOut ? "timed out" : bad.code == null ? "was killed" : `exited ${bad.code}`}` : msg.message ?? "they couldn't run";
@@ -2085,6 +2111,11 @@ export class Engine {
     this.store.savePrivate(task.id, { ...priv, finishing: false });
     // A push that was already under way when the task was cancelled (or merged): it stays that way.
     if (isFinished(task.state)) return;
+    // What wasn't run, and why: the runner's own list (plain strings from older runners), and the
+    // checks the factory left out for this machine (`needs macos`), once each.
+    const notRun = normalizeNotRun(msg.notRun);
+    for (const s of priv.skippedChecks ?? []) if (!notRun.some((n) => n.command === s.command)) notRun.push(s);
+    if (msg.ok) this.recordNotRun(task, notRun);
     const failed = msg.ok ? null : msg.checks?.findLast((c) => c.timedOut || c.code !== 0);
     if (failed) return this.checksFailed(task, failed, msg.message ?? null, msg.base ?? priv.base ?? "main");
     if (task.liveLog === RUNNING_CHECKS) task.liveLog = null;
@@ -2108,11 +2139,34 @@ export class Engine {
     review.rounds.push({ number: review.rounds.length + 1, verdict: "inProgress", found: 0, at: now(), fix: null });
     task.autoReview = review;
     this.event(task, "builder", `pushed ${msg.commit?.slice(0, 7) ?? msg.branch}${msg.pushed === "fallback" ? " with the machine's credentials" : ""}`);
-    this.handOffChecks(task, msg.commit ?? null);
+    this.handOffChecks(task, msg.commit ?? null, notRun);
     this.save(task);
     if (task.machine && priv.worktree) this.hooks.waitUntil(this.toRunner(task.machine, { type: "task.diff", taskId: task.id, cwd: priv.worktree, base }));
     if (msg.pushed === "app" && msg.owner && msg.repo) this.hooks.waitUntil(this.openPull(task.id, msg.owner, msg.repo));
     this.hooks.waitUntil(this.pump());
+  }
+
+  /** Keeps the checks a push couldn't run on its machine (a requirement it lacks) as open items on the
+   *  task: they don't fail anything, but auto-merge waits until a person waives each. A check waived
+   *  before stays waived; one that ran this time (or isn't a check any more) drops off. */
+  private recordNotRun(task: Task, notRun: NotRunCheck[]) {
+    const skipped = notRun.filter((n) => n.kind === "requirement");
+    const before = task.checksNotRun ?? [];
+    if (!skipped.length && !before.length) return;
+    const at = now();
+    task.checksNotRun = skipped.map((n) => {
+      const was = before.find((b) => b.command === n.command && b.status === "waived");
+      return was ? { ...was, reason: n.reason } : { command: n.command, reason: n.reason, kind: "requirement" as const, status: "open" as const, machine: task.machine ?? null, at, note: null, by: null, resolvedAt: null };
+    });
+    const open = task.checksNotRun.filter((n) => n.status === "open");
+    if (open.length) this.event(task, "factory", `${open.length} check${open.length === 1 ? "" : "s"} not run here: ${[...new Set(open.map((n) => n.reason))].join("; ")}`);
+  }
+
+  /** Why auto-merge is waiting on checks not run, or null: "waiting on 1 check not run here: needs macos". */
+  private notRunWaiting(task: Task) {
+    const open = (task.checksNotRun ?? []).filter((n) => n.status === "open");
+    if (!open.length) return null;
+    return `waiting on ${open.length} check${open.length === 1 ? "" : "s"} not run here: ${[...new Set(open.map((n) => n.reason))].join("; ")}`;
   }
 
   /** A finish one of the repo's checks stopped (nothing committed or pushed), or its merge check (committed,
@@ -3045,12 +3099,16 @@ export class Engine {
         if (!priv.worktree || !priv.repoDir) fail("The factory doesn't know where this worktree came from; raise a hand.");
         // Only the checks this machine can run: a `[macos] ` line is left to a Mac (or CI) when it's on Linux.
         // A machine the factory can't see (removed, or not loaded) runs them all rather than skipping on unknown tags.
-        const { run: checks, skipped } = checksFor(this.store.scriptsFor(taskRepo(task, goal ?? null)), here ? here.tags ?? [] : null);
+        const scripts = this.store.scriptsFor(taskRepo(task, goal ?? null));
+        const { run: checks, skipped } = checksFor(scripts, here ? here.tags ?? [] : null);
+        // With their `[tag] ` prefixes, for runners that skip (and say why) what their machine can't run.
+        const lines = checkCommands(scripts);
+        const checkLines = lines.some((l) => l.trim().startsWith("[")) ? lines.join("\n") : null;
         // What it skips is handed to a machine with the tags once it's pushed (`proveChecks`).
-        const parsed = checkCommands(this.store.scriptsFor(taskRepo(task, goal ?? null))).map(parseCheck);
+        const parsed = lines.map(parseCheck);
         const handoff = skipped.map((c) => ({ command: c.command, requires: parsed.find((p): p is { command: string; requires: string[] } => !("error" in p) && p.command === c.command)?.requires ?? c.missing }));
-        this.store.savePrivate(task.id, { ...priv, finishing: true, handoff });
         const skipNote = skipped.length ? ` ${skipped.length} check${skipped.length === 1 ? "" : "s"} skipped on this machine (${skipped.map((c) => `needs ${c.missing.join(", ")}`).join("; ")}).` : "";
+        this.store.savePrivate(task.id, { ...priv, finishing: true, handoff, skippedChecks: skipped.map((c) => notRunFor(c.command, c.missing)) });
         task.liveLog = checks.length ? RUNNING_CHECKS : "Committing and pushing…";
         task.comments.push({ id: crypto.randomUUID(), author: "builder", text: str(a.summary, "summary"), at: now(), anchor: "Summary", via: null });
         this.hooks.waitUntil(this.toRunner(task.machine!, {
@@ -3063,6 +3121,7 @@ export class Engine {
           title: `${task.id}: ${task.title}`,
           fallback: true,
           ...(checks.length ? { checks: checks.join("\n") } : {}),
+          ...(checkLines ? { checkLines } : {}),
         }));
         if (checks.length) return { summary: `Finishing: the repo's checks run first (${checks.length}), then the factory commits and pushes and the review starts.${skipNote} End your turn now; if a check fails, it's typed into this session.` };
         return { summary: `Finishing: the factory is committing and pushing, then the review starts.${skipNote} End your turn now.` };
@@ -3199,6 +3258,7 @@ export class Engine {
     if (task.pr.checks.some((c) => c.status !== "passed")) return false; // CI first
     if (this.appleBlocks(task)) return false; // and the checks handed to a Mac
     if (this.heldFor(task)) return false; // an incident freeze on its repo
+    if (this.notRunWaiting(task)) return false; // checks its machine couldn't run, until a person waives them
     return !this.store.private(task.id).merging && !task.hand;
   }
 
@@ -3228,6 +3288,15 @@ export class Engine {
   private async autoMerge(task: Task) {
     // A gate that dropped stops a countdown even when nothing else here saves the task.
     const stop = () => { if (task.mergeAt != null) this.save(task); };
+    // Ready but for checks its machine couldn't run: say what it's waiting on.
+    const notRun = task.state === "reviewing" ? this.notRunWaiting(task) : null;
+    if (notRun && task.waiting !== notRun) {
+      task.waiting = notRun;
+      this.save(task, false);
+    } else if (!notRun && task.waiting?.startsWith("waiting on ") && task.waiting.includes("not run here")) {
+      task.waiting = null;
+      this.save(task, false);
+    }
     if (!this.mergeReady(task)) return stop();
     const a = this.assessment(task);
     const priv = this.store.private(task.id);
@@ -4147,6 +4216,22 @@ export function branchNote(branch: string, note: string): { text: string; outcom
 }
 
 /** Is this an agent's (planner, builder, reviewer) comment rather than a person's? */
+/** A not-run check for a requirement this machine lacks: `needs macos`. */
+const notRunFor = (command: string, missing: string[]): NotRunCheck => ({ command, reason: `needs ${missing.join(", ")}`, kind: "requirement" });
+
+/** `task.finished`'s `notRun` as the factory reads it: an older runner's plain strings were checks skipped after an earlier failure. */
+export function normalizeNotRun(notRun: unknown): NotRunCheck[] {
+  if (!Array.isArray(notRun)) return [];
+  return notRun.flatMap((n): NotRunCheck[] => {
+    if (typeof n === "string") return [{ command: n, reason: "skipped after an earlier failure", kind: "afterFailure" }];
+    if (n && typeof n === "object" && typeof (n as NotRunCheck).command === "string") {
+      const c = n as NotRunCheck;
+      return [{ command: c.command, reason: typeof c.reason === "string" && c.reason ? c.reason : "not run", kind: c.kind ?? "afterFailure" }];
+    }
+    return [];
+  });
+}
+
 const isAgent = (author: string) => (RoleValues as readonly string[]).includes(author);
 
 /** The thread under `root`: its first comment and replies, oldest first. */

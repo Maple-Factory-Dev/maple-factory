@@ -359,6 +359,8 @@ final class FactoryStore {
     func approveChanges(_ id: String) { send(.taskApproveChanges(.init(id: id))) }
     func merge(_ id: String) { send(.taskMerge(.init(id: id))) }
     func holdMerge(_ id: String) { send(.taskHoldMerge(.init(id: id))) }
+    /// Waives a check the task's machine couldn't run (`needs macos`), with why that's fine.
+    func waiveCheck(_ id: String, command: String, note: String) { send(.taskWaiveCheck(.init(id: id, command: command, note: note))) }
     func answer(_ id: String, text: String) { send(.taskAnswer(.init(id: id, text: text))) }
     func resolveHand(_ id: String, option: String?, note: String) { send(.taskResolveHand(.init(id: id, option: option, note: note))) }
     func comment(_ id: String, text: String) { send(.taskComment(.init(id: id, text: text))) }
@@ -872,6 +874,14 @@ final class FactoryStore {
             notice = .toast("Merged", taskId: m.id)
         case .taskHoldMerge(let m):
             update(m.id) { $0.mergeAt = nil }
+        case .taskWaiveCheck(let m):
+            update(m.id) { task in
+                guard let i = task.checksNotRun?.firstIndex(where: { $0.command == m.command && $0.status == .open }) else { return }
+                task.checksNotRun?[i].status = .waived
+                task.checksNotRun?[i].note = m.note
+                task.checksNotRun?[i].by = me
+                task.events.append(.init(who: me, text: "waived the check `\(m.command)`: \(m.note)", at: DemoData.now))
+            }
         case .taskAnswer(let m):
             update(m.id) { $0.question = nil; $0.events.append(.init(who: me, text: "answered: \(m.text)", at: DemoData.now)) }
         case .taskResolveHand(let m):
@@ -1326,6 +1336,8 @@ extension FactoryStore {
                                  shareable: false, agent: item.agent, repo: item.repo)
             feed.apply(.taskUpdated(.init(task: task)))
             update(m.id) { $0.lastTask = task.id; $0.lastRunAt = DemoData.now }
+            // A one-off is done once its task starts, the way the server removes it.
+            if item.once == true { feed.apply(.recurringDeleted(.init(id: m.id))) }
         case .recurringDelete(let m):
             feed.apply(.recurringDeleted(.init(id: m.id)))
         default:

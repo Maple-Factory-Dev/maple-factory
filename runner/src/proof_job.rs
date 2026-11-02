@@ -142,7 +142,7 @@ async fn run_checks(emit: Emit<'_>, p: &ProveChecks, root: &Path, dir: &Path) ->
         emit: Some(emit),
         path: path.as_deref(),
     };
-    crate::worktree_scripts::checks(Some(&scripts), &t.context(root, dir, &p.branch)).await
+    crate::worktree_scripts::checks(Some(&scripts), &t.context(root, dir, &p.branch)).await.0
 }
 
 /// Removes the temporary worktree, and its folder and git's note of it even if `worktree remove` can't.

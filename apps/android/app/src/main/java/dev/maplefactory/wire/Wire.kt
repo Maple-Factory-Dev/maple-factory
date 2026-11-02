@@ -200,6 +200,34 @@ enum class DiffSide(val raw: String) {
     object Serializer : WireEnumSerializer<DiffSide>("DiffSide", entries, { it.raw }, Unknown)
 }
 
+@Serializable(with = NotRunKind.Serializer::class)
+enum class NotRunKind(val raw: String) {
+    /** This machine doesn't have what the check needs (its `[macos]` tag, say). */
+    Requirement("requirement"),
+    /** An earlier check failed, so it wasn't reached. */
+    AfterFailure("afterFailure"),
+    /** An earlier check ran out of time, so it wasn't reached. */
+    TimedOut("timedOut"),
+    /** A value this build doesn't know yet; newer servers may send them. */
+    Unknown("unknown"),
+    ;
+
+    object Serializer : WireEnumSerializer<NotRunKind>("NotRunKind", entries, { it.raw }, Unknown)
+}
+
+@Serializable(with = NotRunStatus.Serializer::class)
+enum class NotRunStatus(val raw: String) {
+    /** Still to be resolved: run elsewhere, or waived by a person. */
+    Open("open"),
+    /** A person waived it with a note. */
+    Waived("waived"),
+    /** A value this build doesn't know yet; newer servers may send them. */
+    Unknown("unknown"),
+    ;
+
+    object Serializer : WireEnumSerializer<NotRunStatus>("NotRunStatus", entries, { it.raw }, Unknown)
+}
+
 @Serializable(with = ProofKind.Serializer::class)
 enum class ProofKind(val raw: String) {
     /** An image. */
@@ -1637,6 +1665,8 @@ data class Task(
     val requires: List<String>? = null,
     /** Checks its building machine skipped (they need macos, xcode…), run on a machine that has the tags for its current head. Merge waits for them to pass. */
     val appleChecks: AppleChecks? = null,
+    /** Checks its last finish couldn't run on that machine (`needs macos`), open until a person waives them. None: none (or an older server). */
+    val checksNotRun: List<TaskNotRun>? = null,
 )
 
 /** A risk check: code that raises a change's risk when touched (paths), or a plain-language rule the planner judges (rule). */
@@ -1760,6 +1790,31 @@ data class RiskAcceptance(
     val by: String,
     val at: Long,
     val note: String? = null,
+)
+
+/** A check that wasn't run, and why: `needs macos`, `skipped after an earlier failure`, `timed out budget`. */
+@Serializable
+data class NotRunCheck(
+    val command: String,
+    val reason: String,
+    /** None (an older runner sent a plain string): afterFailure. */
+    val kind: NotRunKind? = null,
+)
+
+/** A check a task's finish couldn't run on its machine (a requirement it lacked). It doesn't fail the proof, but auto-merge waits until each one is waived. */
+@Serializable
+data class TaskNotRun(
+    val command: String,
+    val reason: String,
+    val kind: NotRunKind,
+    val status: NotRunStatus,
+    val machine: String? = null,
+    val at: Long,
+    /** Why the person waived it. */
+    val note: String? = null,
+    /** Login of the person who waived it. */
+    val by: String? = null,
+    val resolvedAt: Long? = null,
 )
 
 /** One of a repo's checks, run in a task's worktree before its finish is committed. */
@@ -2747,6 +2802,8 @@ sealed class RunnerMessage {
         val message: String? = null,
         /** The repo's checks that ran, in order; the last one failed when the finish stopped on a check (nothing committed or pushed). */
         val checks: List<dev.maplefactory.wire.CheckRun>? = null,
+        /** Checks it didn't run, each with why. Older runners send plain strings (read as skipped after an earlier failure). */
+        val notRun: List<dev.maplefactory.wire.NotRunCheck>? = null,
     ) : RunnerMessage()
     /** The answer to `task.prove_checks`: the handed-off checks' results on that head. */
     @Serializable
@@ -3000,6 +3057,8 @@ sealed class ServerToRunner {
         val fallback: Boolean,
         /** The repo's checks (commands, one per line) to run in the worktree before committing; any failing stops the finish. */
         val checks: String? = null,
+        /** The same checks with their `[tag] ` prefixes kept (`[macos] xcodebuild test`), so the runner can skip what this machine can't run, with a reason. Older runners read only `checks`. */
+        val checkLines: String? = null,
     ) : ServerToRunner()
     /** A proof job: fetch the branch at exactly `head` into a temporary worktree, run only `checks` there, answer with `task.checks_proved` and remove the worktree. No agent session. */
     @Serializable
@@ -3558,6 +3617,13 @@ sealed class ClientMessage {
         /** The id of a comment on this task to reply to; a reply to a reply goes under its root. */
         val replyTo: String? = null,
     ) : ClientMessage()
+    /** Waive a check a task couldn't run on its machine, with a note saying why that's fine. People only; agents can't. */
+    @Serializable
+    data class TaskWaiveCheck(
+        val id: String,
+        val command: String,
+        val note: String,
+    ) : ClientMessage()
     /** A change request for the planner or builder. */
     @Serializable
     data class TaskSteer(
@@ -3791,6 +3857,7 @@ sealed class ClientMessage {
             "task.plan" -> json.decodeFromJsonElement(TaskPlan.serializer(), body)
             "task.backlog" -> json.decodeFromJsonElement(TaskBacklog.serializer(), body)
             "task.comment" -> json.decodeFromJsonElement(TaskComment.serializer(), body)
+            "task.waiveCheck" -> json.decodeFromJsonElement(TaskWaiveCheck.serializer(), body)
             "task.steer" -> json.decodeFromJsonElement(TaskSteer.serializer(), body)
             "task.review" -> json.decodeFromJsonElement(TaskReview.serializer(), body)
             "task.approvePlan" -> json.decodeFromJsonElement(TaskApprovePlan.serializer(), body)
@@ -3885,6 +3952,7 @@ sealed class ClientMessage {
             is TaskPlan -> "task.plan" to json.encodeToJsonElement(TaskPlan.serializer(), value)
             is TaskBacklog -> "task.backlog" to json.encodeToJsonElement(TaskBacklog.serializer(), value)
             is TaskComment -> "task.comment" to json.encodeToJsonElement(TaskComment.serializer(), value)
+            is TaskWaiveCheck -> "task.waiveCheck" to json.encodeToJsonElement(TaskWaiveCheck.serializer(), value)
             is TaskSteer -> "task.steer" to json.encodeToJsonElement(TaskSteer.serializer(), value)
             is TaskReview -> "task.review" to json.encodeToJsonElement(TaskReview.serializer(), value)
             is TaskApprovePlan -> "task.approvePlan" to json.encodeToJsonElement(TaskApprovePlan.serializer(), value)

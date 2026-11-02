@@ -1,0 +1,9 @@
+{
+  "wire": { "type": "task.finished", "taskId": "MF-1", "ok": false, "branch": "agent/mf-1", "reason": "checks",
+    "checks": [{ "command": "npm test", "code": 1, "timedOut": false, "ms": 900, "output": "1 failing" }],
+    "notRun": ["npm run lint", "cargo test"] },
+  "notRun": [
+    { "command": "npm run lint", "reason": "skipped after an earlier failure", "kind": "afterFailure" },
+    { "command": "cargo test", "reason": "skipped after an earlier failure", "kind": "afterFailure" }
+  ]
+}

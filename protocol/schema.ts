@@ -71,6 +71,14 @@ export const enums: Record<string, Enum> = {
   },
   StepProgress: { values: { done: "Finished.", active: "Being worked on.", pending: "Not started." } },
   DiffSide: { values: { new: "The changed file: added and unchanged lines.", old: "The file before: removed lines." } },
+  NotRunKind: {
+    values: {
+      requirement: "This machine doesn't have what the check needs (its `[macos]` tag, say).",
+      afterFailure: "An earlier check failed, so it wasn't reached.",
+      timedOut: "An earlier check ran out of time, so it wasn't reached.",
+    },
+  },
+  NotRunStatus: { values: { open: "Still to be resolved: run elsewhere, or waived by a person.", waived: "A person waived it with a note." } },
   ProofKind: { values: { screenshot: "An image.", video: "A recording.", terminal: "A command and its output.", tests: "A test run." } },
   ProofStatus: { values: { pending: "No evidence yet.", proving: "Being proven.", proven: "Proven.", failed: "The proof failed." } },
   DraftState: {
@@ -787,9 +795,11 @@ export const structs: Record<string, Struct> = {
       findings: "Findings?",
       requires: "string[]?",
       appleChecks: "AppleChecks?",
+      checksNotRun: "TaskNotRun[]?",
     },
     fieldDocs: {
       appleChecks: "Checks its building machine skipped (they need macos, xcode…), run on a machine that has the tags for its current head. Merge waits for them to pass.",
+      checksNotRun: "Checks its last finish couldn't run on that machine (`needs macos`), open until a person waives them. None: none (or an older server).",
       requires: "Machine tags the task needs (macos, xcode…): only a machine with every one of them takes it. Set by the planner and the repo's path rules; none: any machine.",
       findings: "A research task's answer: set when the planner answered the brief's question instead of planning a change, which closes it. None: not a research task (or an older server).",
       classification: "The risk classifier's grade of the built change, when the org's policy turns it on.",
@@ -922,6 +932,16 @@ export const structs: Record<string, Struct> = {
   RiskAcceptance: {
     doc: "A goal letting the factory merge without human review, up to a risk level, on the record.",
     fields: { goal: "string", upTo: "RiskLevel", by: "string", at: "u64", note: "string?" },
+  },
+  NotRunCheck: {
+    doc: "A check that wasn't run, and why: `needs macos`, `skipped after an earlier failure`, `timed out budget`.",
+    fields: { command: "string", reason: "string", kind: "NotRunKind?" },
+    fieldDocs: { kind: "None (an older runner sent a plain string): afterFailure." },
+  },
+  TaskNotRun: {
+    doc: "A check a task's finish couldn't run on its machine (a requirement it lacked). It doesn't fail the proof, but auto-merge waits until each one is waived.",
+    fields: { command: "string", reason: "string", kind: "NotRunKind", status: "NotRunStatus", machine: "string?", at: "u64", note: "string?", by: "string?", resolvedAt: "u64?" },
+    fieldDocs: { note: "Why the person waived it.", by: "Login of the person who waived it." },
   },
   CheckRun: {
     doc: "One of a repo's checks, run in a task's worktree before its finish is committed.",
@@ -1460,8 +1480,10 @@ export const unions: Record<string, Union> = {
           reason: "string?",
           message: "string?",
           checks: "CheckRun[]?",
+          notRun: "NotRunCheck[]?",
         },
         fieldDocs: {
+          notRun: "Checks it didn't run, each with why. Older runners send plain strings (read as skipped after an earlier failure).",
           pushed: "app (a GitHub App token) or fallback (the machine's credentials).",
           checks: "The repo's checks that ran, in order; the last one failed when the finish stopped on a check (nothing committed or pushed).",
         },
@@ -1565,8 +1587,9 @@ export const unions: Record<string, Union> = {
       },
       "task.finish": {
         doc: "Commit what's left in a task's worktree and push its branch.",
-        fields: { taskId: "string", cwd: "string", repoDir: "string", branch: "string", base: "string?", title: "string", fallback: "bool", checks: "string?" },
+        fields: { taskId: "string", cwd: "string", repoDir: "string", branch: "string", base: "string?", title: "string", fallback: "bool", checks: "string?", checkLines: "string?" },
         fieldDocs: {
+          checkLines: "The same checks with their `[tag] ` prefixes kept (`[macos] xcodebuild test`), so the runner can skip what this machine can't run, with a reason. Older runners read only `checks`.",
           fallback: "Push with the machine's own credentials (no GitHub App).",
           checks: "The repo's checks (commands, one per line) to run in the worktree before committing; any failing stops the finish.",
         },
@@ -1800,6 +1823,10 @@ export const unions: Record<string, Union> = {
         doc: "Comment on a task, or reply in a comment thread. A reply in a thread an agent is part of, or a comment that @mentions @planner, @builder or @reviewer, is typed into the task's live session as conversation.",
         fields: { id: "string", text: "string", anchor: "string?", replyTo: "string?" },
         fieldDocs: { replyTo: "The id of a comment on this task to reply to; a reply to a reply goes under its root." },
+      },
+      "task.waiveCheck": {
+        doc: "Waive a check a task couldn't run on its machine, with a note saying why that's fine. People only; agents can't.",
+        fields: { id: "string", command: "string", note: "string" },
       },
       "task.steer": { doc: "A change request for the planner or builder.", fields: { id: "string", text: "string", anchor: "string?" } },
       "task.review": {

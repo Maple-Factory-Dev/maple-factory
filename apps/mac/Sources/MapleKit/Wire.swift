@@ -401,6 +401,90 @@ public enum Wire {
         public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
+    public enum NotRunKind: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// This machine doesn't have what the check needs (its `[macos]` tag, say).
+        case requirement
+        /// An earlier check failed, so it wasn't reached.
+        case afterFailure
+        /// An earlier check ran out of time, so it wasn't reached.
+        case timedOut
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [NotRunKind] = [.requirement, .afterFailure, .timedOut]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "requirement": self = .requirement
+            case "afterFailure": self = .afterFailure
+            case "timedOut": self = .timedOut
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .requirement: "requirement"
+            case .afterFailure: "afterFailure"
+            case .timedOut: "timedOut"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: NotRunKind, b: NotRunKind) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
+    public enum NotRunStatus: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// Still to be resolved: run elsewhere, or waived by a person.
+        case open
+        /// A person waived it with a note.
+        case waived
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [NotRunStatus] = [.open, .waived]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "open": self = .open
+            case "waived": self = .waived
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .open: "open"
+            case .waived: "waived"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: NotRunStatus, b: NotRunStatus) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
     public enum ProofKind: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// An image.
         case screenshot
@@ -3546,8 +3630,10 @@ public enum Wire {
         public var requires: [String]?
         /// Checks its building machine skipped (they need macos, xcode…), run on a machine that has the tags for its current head. Merge waits for them to pass.
         public var appleChecks: AppleChecks?
+        /// Checks its last finish couldn't run on that machine (`needs macos`), open until a person waives them. None: none (or an older server).
+        public var checksNotRun: [TaskNotRun]?
 
-        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, suggestedTitle: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, requested: [String] = [], comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], stages: [StageSpan] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], artifacts: [Artifact] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, scoutedFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, priority: Priority? = nil, followUpOf: String? = nil, mergeAt: UInt64? = nil, mergeForecast: MergeForecast? = nil, classification: Classification? = nil, findings: Findings? = nil, requires: [String]? = nil, appleChecks: AppleChecks? = nil) {
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, suggestedTitle: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, requested: [String] = [], comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], stages: [StageSpan] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], artifacts: [Artifact] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, scoutedFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, priority: Priority? = nil, followUpOf: String? = nil, mergeAt: UInt64? = nil, mergeForecast: MergeForecast? = nil, classification: Classification? = nil, findings: Findings? = nil, requires: [String]? = nil, appleChecks: AppleChecks? = nil, checksNotRun: [TaskNotRun]? = nil) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -3607,6 +3693,7 @@ public enum Wire {
             self.findings = findings
             self.requires = requires
             self.appleChecks = appleChecks
+            self.checksNotRun = checksNotRun
         }
 
         public init(from decoder: Decoder) throws {
@@ -3670,6 +3757,7 @@ public enum Wire {
             findings = try c.decodeIfPresent(Findings.self, forKey: .findings)
             requires = try c.decodeIfPresent([String].self, forKey: .requires)
             appleChecks = try c.decodeIfPresent(AppleChecks.self, forKey: .appleChecks)
+            checksNotRun = try c.decodeIfPresent([TaskNotRun].self, forKey: .checksNotRun)
         }
     }
 
@@ -3920,6 +4008,47 @@ public enum Wire {
             self.by = by
             self.at = at
             self.note = note
+        }
+    }
+
+    /// A check that wasn't run, and why: `needs macos`, `skipped after an earlier failure`, `timed out budget`.
+    public struct NotRunCheck: Codable, Hashable, Sendable {
+        public var command: String
+        public var reason: String
+        /// None (an older runner sent a plain string): afterFailure.
+        public var kind: NotRunKind?
+
+        public init(command: String, reason: String, kind: NotRunKind? = nil) {
+            self.command = command
+            self.reason = reason
+            self.kind = kind
+        }
+    }
+
+    /// A check a task's finish couldn't run on its machine (a requirement it lacked). It doesn't fail the proof, but auto-merge waits until each one is waived.
+    public struct TaskNotRun: Codable, Hashable, Sendable {
+        public var command: String
+        public var reason: String
+        public var kind: NotRunKind
+        public var status: NotRunStatus
+        public var machine: String?
+        public var at: UInt64
+        /// Why the person waived it.
+        public var note: String?
+        /// Login of the person who waived it.
+        public var by: String?
+        public var resolvedAt: UInt64?
+
+        public init(command: String, reason: String, kind: NotRunKind, status: NotRunStatus, machine: String? = nil, at: UInt64, note: String? = nil, by: String? = nil, resolvedAt: UInt64? = nil) {
+            self.command = command
+            self.reason = reason
+            self.kind = kind
+            self.status = status
+            self.machine = machine
+            self.at = at
+            self.note = note
+            self.by = by
+            self.resolvedAt = resolvedAt
         }
     }
 
@@ -5792,8 +5921,10 @@ public enum Wire {
         public var message: String?
         /// The repo's checks that ran, in order; the last one failed when the finish stopped on a check (nothing committed or pushed).
         public var checks: [CheckRun]?
+        /// Checks it didn't run, each with why. Older runners send plain strings (read as skipped after an earlier failure).
+        public var notRun: [NotRunCheck]?
 
-        public init(taskId: String, ok: Bool, pushed: String? = nil, owner: String? = nil, repo: String? = nil, branch: String, base: String? = nil, commit: String? = nil, reason: String? = nil, message: String? = nil, checks: [CheckRun]? = nil) {
+        public init(taskId: String, ok: Bool, pushed: String? = nil, owner: String? = nil, repo: String? = nil, branch: String, base: String? = nil, commit: String? = nil, reason: String? = nil, message: String? = nil, checks: [CheckRun]? = nil, notRun: [NotRunCheck]? = nil) {
             self.taskId = taskId
             self.ok = ok
             self.pushed = pushed
@@ -5805,6 +5936,7 @@ public enum Wire {
             self.reason = reason
             self.message = message
             self.checks = checks
+            self.notRun = notRun
         }
     }
 
@@ -6317,8 +6449,10 @@ public enum Wire {
         public var fallback: Bool
         /// The repo's checks (commands, one per line) to run in the worktree before committing; any failing stops the finish.
         public var checks: String?
+        /// The same checks with their `[tag] ` prefixes kept (`[macos] xcodebuild test`), so the runner can skip what this machine can't run, with a reason. Older runners read only `checks`.
+        public var checkLines: String?
 
-        public init(taskId: String, cwd: String, repoDir: String, branch: String, base: String? = nil, title: String, fallback: Bool, checks: String? = nil) {
+        public init(taskId: String, cwd: String, repoDir: String, branch: String, base: String? = nil, title: String, fallback: Bool, checks: String? = nil, checkLines: String? = nil) {
             self.taskId = taskId
             self.cwd = cwd
             self.repoDir = repoDir
@@ -6327,6 +6461,7 @@ public enum Wire {
             self.title = title
             self.fallback = fallback
             self.checks = checks
+            self.checkLines = checkLines
         }
     }
 
@@ -7429,6 +7564,19 @@ public enum Wire {
         }
     }
 
+    /// Waive a check a task couldn't run on its machine, with a note saying why that's fine. People only; agents can't.
+    public struct ClientMessageTaskWaiveCheck: Codable, Hashable, Sendable {
+        public var id: String
+        public var command: String
+        public var note: String
+
+        public init(id: String, command: String, note: String) {
+            self.id = id
+            self.command = command
+            self.note = note
+        }
+    }
+
     /// A change request for the planner or builder.
     public struct ClientMessageTaskSteer: Codable, Hashable, Sendable {
         public var id: String
@@ -7798,6 +7946,7 @@ public enum Wire {
         case taskPlan(ClientMessageTaskPlan)
         case taskBacklog(ClientMessageTaskBacklog)
         case taskComment(ClientMessageTaskComment)
+        case taskWaiveCheck(ClientMessageTaskWaiveCheck)
         case taskSteer(ClientMessageTaskSteer)
         case taskReview(ClientMessageTaskReview)
         case taskApprovePlan(ClientMessageTaskApprovePlan)
@@ -7896,6 +8045,7 @@ public enum Wire {
             case "task.plan": self = .taskPlan(try ClientMessageTaskPlan(from: decoder))
             case "task.backlog": self = .taskBacklog(try ClientMessageTaskBacklog(from: decoder))
             case "task.comment": self = .taskComment(try ClientMessageTaskComment(from: decoder))
+            case "task.waiveCheck": self = .taskWaiveCheck(try ClientMessageTaskWaiveCheck(from: decoder))
             case "task.steer": self = .taskSteer(try ClientMessageTaskSteer(from: decoder))
             case "task.review": self = .taskReview(try ClientMessageTaskReview(from: decoder))
             case "task.approvePlan": self = .taskApprovePlan(try ClientMessageTaskApprovePlan(from: decoder))
@@ -8117,6 +8267,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskComment(let body):
                 try c.encode("task.comment", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskWaiveCheck(let body):
+                try c.encode("task.waiveCheck", forKey: .type)
                 try body.encode(to: encoder)
             case .taskSteer(let body):
                 try c.encode("task.steer", forKey: .type)

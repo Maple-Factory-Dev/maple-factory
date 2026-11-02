@@ -252,6 +252,8 @@ struct FactoryTask: Identifiable {
     var requires: [String] = []
     /// Checks its Linux box skipped, run on a Mac for the PR's head (MF-336).
     var appleChecks: Wire.AppleChecks?
+    /// Checks its last push couldn't run on that machine (`needs macos`): open until a person waives them.
+    var checksNotRun: [Wire.TaskNotRun] = []
     /// Its last pushed commit (live only).
     var pushed: String? = nil
     /// Its git branch, once it has one (live only).
