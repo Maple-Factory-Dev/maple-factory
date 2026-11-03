@@ -2634,6 +2634,8 @@ final class AppState {
                 case "draft": draftWithAI()
                 case "watch": watchingAIDraft = true
                 case "goal": goalSheet = .new
+                // Help › Send Feedback… (`ui:feedback`).
+                case "feedback": showsFeedback = true
                 case "note": newNote()
                 case "settings": NotificationCenter.default.post(name: AppState.demoSettings, object: nil)
                 // The sidebar's cog clicked (`ui:settings-cog`), or a pane picked from its menu (`ui:settings-pane:secrets`).
