@@ -46,6 +46,24 @@ const ok = (text) => console.log(`  ✓ ${text}`);
 const fail = (text) => { throw new Error(text); };
 const flag = (name) => process.argv.includes(name);
 
+/** How long each stage took: every stage logs its own, and `ship` ends with them all and the total. */
+const timings = [];
+const duration = (ms) => { const s = Math.round(ms / 1000); return s >= 60 ? `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s` : `${s}s`; };
+async function timed(name, fn) {
+  const start = Date.now();
+  try { return await fn(); } finally {
+    const ms = Date.now() - start;
+    timings.push([name, ms]);
+    console.log(`  ⏱ ${name}: ${duration(ms)}`);
+  }
+}
+function timingSummary() {
+  if (!timings.length) return;
+  const total = timings.reduce((sum, [, ms]) => sum + ms, 0);
+  heading("Stage times");
+  for (const [name, ms] of [...timings, ["total", total]]) console.log(`  ${name.padEnd(10)} ${duration(ms).padStart(7)}  (${(ms / 1000).toFixed(1)}s)`);
+}
+
 /** .env.release into process.env, without overriding what's already set. Optional: in CI the
  *  environment has it all, and need() says what's missing from both. */
 function loadEnv() {
@@ -605,14 +623,18 @@ async function cmdShip(v) {
   need("R2_ACCOUNT_ID", "R2_BUCKET", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY");
   if (process.env.MAPLE_SKIP_SYMBOLS !== "1") need("SENTRY_AUTH_TOKEN");
   sparkleBin("sign_update");
-  cmdBuild(v);
-  cmdNotarize(v);
-  cmdDmg(v);
-  cmdSign(v);
-  cmdAppcast();
-  if (!(await ask(`Publish to ${updatesURL()}?`))) return console.log("Stopped before publishing; `publish` when ready.");
-  if (process.env.MAPLE_STOP_BEFORE_PUBLISH === "1") return console.log("MAPLE_STOP_BEFORE_PUBLISH=1: stopped before publishing.");
-  cmdPublish();
+  try {
+    await timed("build", () => cmdBuild(v));
+    await timed("notarize", () => cmdNotarize(v));
+    await timed("dmg", () => cmdDmg(v));
+    await timed("sign", () => cmdSign(v));
+    await timed("appcast", () => cmdAppcast());
+    if (!(await ask(`Publish to ${updatesURL()}?`))) return console.log("Stopped before publishing; `publish` when ready.");
+    if (process.env.MAPLE_STOP_BEFORE_PUBLISH === "1") return console.log("MAPLE_STOP_BEFORE_PUBLISH=1: stopped before publishing.");
+    await timed("publish", () => cmdPublish());
+  } finally {
+    timingSummary();
+  }
   console.log(`\n  ✓ ${r.version} shipped. Commit apps/mac/releases/${r.version}/ and apps/mac/version.json.`);
 }
 
