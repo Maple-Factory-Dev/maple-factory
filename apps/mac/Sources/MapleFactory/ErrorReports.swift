@@ -67,6 +67,18 @@ enum ErrorReports {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 8) { stallForTest() }
             }
         }
+        // `-feedbackTest "message"`: once the window is up, that message as Bug feedback with the window's
+        // screenshot, as Send in Help › Send Feedback… would, to see it arrive.
+        if let message = AppDefaults.string(forKey: "feedbackTest"), !message.isEmpty {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+                let shot = FeedbackSheet.screenshotOfMainWindow()
+                let draft = FeedbackDraft(kind: .bug, message: message, attachScreenshot: true)
+                DispatchQueue.global().async {
+                    let sent = sendFeedback(draft, screenshot: shot)
+                    FileHandle.standardError.write(Data("feedbackTest: sent=\(sent) screenshot=\(shot?.count ?? 0) bytes\n".utf8))
+                }
+            }
+        }
     }
 
     /// The screen on view, as a `screen` tag on every event after and a navigation breadcrumb, so a hang
