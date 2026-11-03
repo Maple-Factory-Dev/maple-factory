@@ -69,6 +69,12 @@ struct MapleFactoryApp: App {
                     .keyboardShortcut("u", modifiers: [.command, .shift])
                     .disabled((Updater.shared.available || Updater.shared.isDemo) && !Updater.shared.canCheckNow)
             }
+            CommandGroup(replacing: .help) {
+                // Beta testers' bugs and ideas, to Maple Factory's Sentry project (or an email, from a build that can't).
+                // No shortcut: ⌥⌘F is Edit › Find › Find and Replace….
+                Button("Send Feedback…") { state.showsFeedback = true }
+                Link("Maple Factory Help", destination: URL(string: "https://maplefactory.dev")!)
+            }
             CommandGroup(after: .sidebar) {
                 // Jump to any task, goal or page, or run a common action.
                 Button("Command Menu…") { state.togglePalette() }
@@ -383,6 +389,9 @@ struct ContentView: View {
             let unfinished = state.unfinishedTasks(in: state.archiving ?? "")
             let ids = unfinished.prefix(6).map(\.id).joined(separator: ", ") + (unfinished.count > 6 ? " and \(unfinished.count - 6) more" : "")
             Text("\(ids) \(unfinished.count == 1 ? "isn't" : "aren't") finished. Ending cancels \(unfinished.count == 1 ? "it" : "them"): sessions stop and pull requests close. Cleaning up also removes \(unfinished.count == 1 ? "its worktree" : "their worktrees"), but never anything uncommitted or unpushed. Letting them finish archives the goal and leaves the work running.")
+        }
+        .sheet(isPresented: Binding(get: { state.showsFeedback }, set: { state.showsFeedback = $0 })) {
+            FeedbackSheet().environment(state)
         }
         .sheet(item: Binding(get: { state.checkLogShown }, set: { state.checkLogShown = $0 })) { request in
             CheckLogSheet(request: request).environment(state)
