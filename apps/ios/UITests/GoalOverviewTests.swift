@@ -201,7 +201,7 @@ final class GoalOverviewTests: XCTestCase {
             XCTAssertTrue(lead.label.contains("andrea"), "Goal settings' lead isn't andrea: \(lead.label)")
             let repos = app.descendants(matching: .any).matching(identifier: "goal-settings-repo")
             XCTAssertEqual(repos.count, 2, "Goal settings should list both of Mobile app's repos")
-            let labels = repos.allElementsBoundByIndex.map(\.label).joined(separator: " | ")
+            let labels = repos.allElementsBoundByIndex.map { $0.label }.joined(separator: " | ")
             XCTAssertTrue(labels.contains("acme/app") && labels.contains("acme/push"), "Goal settings lost a repo: \(labels)")
             snap("goal-settings-about-\(mode)")
         }
