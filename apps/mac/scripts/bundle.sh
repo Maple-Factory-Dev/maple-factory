@@ -13,8 +13,19 @@ here="$(dirname "$(dirname "$(realpath "$0")")")"
 root="$(dirname "$(dirname "$here")")"
 cd "$here"
 
+# The runner (Apple silicon, like the app) builds alongside the app: cargo starts first, in the
+# background, and is waited on (its exit status with it) before its binary is copied in.
+target=aarch64-apple-darwin
+rustup target list --installed | grep -qx "$target" || rustup target add "$target"
+(cd "$root/runner" && exec cargo build --release --target "$target" --quiet) &
+cargo_pid=$!
+# If swift build fails, set -e exits here: don't leave cargo running behind.
+trap 'kill "$cargo_pid" 2>/dev/null || true' EXIT
+
 swift build -c "$config"
-bin="$(swift build -c "$config" --show-bin-path)"
+bin="$(swift build -c "$config" --show-bin-path)" # only prints the path; it doesn't build again
+mkdir -p "$here/build"
+echo "$bin" > "$here/build/bin-path" # for release.mjs's dsymutil
 version="$(plutil -extract version raw "$here/version.json")"
 build="$(plutil -extract build raw "$here/version.json")"
 updates="${UPDATES_URL:-https://updates.maplefactory.dev}"
@@ -31,11 +42,10 @@ mkdir -p "$app/Contents/Frameworks"
 ditto "$bin/Sparkle.framework" "$app/Contents/Frameworks/Sparkle.framework"
 install_name_tool -add_rpath @executable_path/../Frameworks "$app/Contents/MacOS/MapleFactory"
 
-# The runner (Apple silicon, like the app), and a tmux that needs nothing from Homebrew.
+# The runner, and a tmux that needs nothing from Homebrew.
 mkdir -p "$app/Contents/Helpers"
-target=aarch64-apple-darwin
-rustup target list --installed | grep -qx "$target" || rustup target add "$target"
-(cd "$root/runner" && cargo build --release --target "$target" --quiet)
+if ! wait "$cargo_pid"; then echo "bundle.sh: cargo build of the runner failed" >&2; exit 1; fi
+trap - EXIT
 cp "$root/runner/target/$target/release/maple-runner" "$app/Contents/Helpers/maple-runner"
 cp "$("$here/scripts/build-tmux.sh")" "$app/Contents/Helpers/tmux"
 
