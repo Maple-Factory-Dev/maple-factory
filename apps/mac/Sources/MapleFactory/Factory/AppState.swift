@@ -234,6 +234,8 @@ final class AppState {
     var machineSheet: MachineSheet? = nil
     /// The goal being made or edited, full page in place of the content (a live goal's id for .edit).
     var goalSheet: MachineSheet? = nil
+    /// Help › Send Feedback…'s sheet is up.
+    var showsFeedback = false
     /// The CI check whose log is open in the log sheet.
     var checkLogShown: CheckLogRequest? = nil
     /// The mockup's check logs, as they load.
@@ -1202,6 +1204,7 @@ final class AppState {
         case .action(.toggleSidebar): toggleSidebar()
         case .action(.toggleTaskPanel): toggleTaskPanel()
         case .action(.settings): openSettings?()
+        case .action(.sendFeedback): showsFeedback = true
         case .action(let action):
             if let appearance = action.appearance { setAppearance(appearance) }
         }

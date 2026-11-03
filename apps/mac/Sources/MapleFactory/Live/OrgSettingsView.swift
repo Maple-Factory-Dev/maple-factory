@@ -260,6 +260,8 @@ struct GeneralSettings: View {
                 } else if Self.debugBuild {
                     SettingsNote("This debug build never sends reports.", systemImage: "hammer")
                 }
+                SettingsNote("Feedback you send from Help › Send Feedback… goes to the same project, with the email you give, if any.",
+                             systemImage: "bubble.left")
                 SettingsBlock {
                     Link("What's sent, and what never is", destination: URL(string: "https://maplefactory.dev/security#errors")!)
                         .font(.system(size: 12))

@@ -3,7 +3,7 @@ import MapleKit
 
 /// Something the ⌘K palette can run that isn't a place: the menu's common commands.
 enum PaletteAction: String, CaseIterable, Hashable {
-    case newTask, newGoal, toggleSidebar, toggleTaskPanel, settings, themeSystem, themeLight, themeDark
+    case newTask, newGoal, toggleSidebar, toggleTaskPanel, settings, themeSystem, themeLight, themeDark, sendFeedback
 
     /// The theme a "Theme: …" action switches to; nil for the rest.
     var appearance: Appearance? {
@@ -25,6 +25,7 @@ enum PaletteAction: String, CaseIterable, Hashable {
         case .themeSystem: "Theme: System"
         case .themeLight: "Theme: Light"
         case .themeDark: "Theme: Dark"
+        case .sendFeedback: "Send feedback…"
         }
     }
 
@@ -36,6 +37,7 @@ enum PaletteAction: String, CaseIterable, Hashable {
         case .toggleTaskPanel: "sidebar.right"
         case .settings: "gearshape"
         case .themeSystem, .themeLight, .themeDark: appearance!.icon
+        case .sendFeedback: "bubble.left.and.exclamationmark.bubble.right"
         }
     }
 
@@ -46,8 +48,8 @@ enum PaletteAction: String, CaseIterable, Hashable {
         case .toggleSidebar: "⌃⌘S"
         case .toggleTaskPanel: "⌥⌘I"
         case .settings: "⌘,"
-        case .themeSystem, .themeLight, .themeDark: ""
-        }
+        case .themeSystem, .themeLight, .themeDark, .sendFeedback: ""
+                }
     }
 
     /// Other words people type for it.
@@ -61,6 +63,7 @@ enum PaletteAction: String, CaseIterable, Hashable {
         case .themeSystem: ["theme", "appearance", "mode", "color scheme", "auto"]
         case .themeLight: ["theme", "appearance", "mode", "color scheme", "light mode"]
         case .themeDark: ["theme", "appearance", "mode", "color scheme", "dark mode"]
+        case .sendFeedback: ["bug", "report", "idea", "beta", "help", "contact", "suggestion"]
         }
     }
 }
