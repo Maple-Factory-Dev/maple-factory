@@ -1,4 +1,4 @@
-# Releases Maple Factory.app the way a hand release does (RELEASING.md): swift build and swift test, then
+# Releases Maple Factory.app the way a hand release does (RELEASING.md): swift test (which builds), then
 # apps/mac/scripts/release.mjs new / build / notarize / dmg / sign / appcast / publish, one stage per step.
 # Only once the live appcast lists the new version first does it commit apps/mac/releases/<v> and
 # version.json to main as "Mac app <v> released: …" and push the mac-v<v> tag on that commit.
@@ -134,10 +134,33 @@ jobs:
           APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
         run: scripts/ci/import-signing-cert.sh import
 
-      - name: "Check: swift build"
-        working-directory: apps/mac
-        run: swift build
+      # Build caches: SwiftPM's (debug for swift test, release for bundle.sh), the runner's cargo target,
+      # and the tmux bundle.sh carries (build-tmux.sh's stamp rebuilds it when any input changes).
+      - name: Rust version
+        id: rust
+        run: echo "version=$(rustc --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
 
+      - uses: actions/cache@v4
+        with:
+          path: apps/mac/.build
+          key: mac-release-spm-${{ runner.os }}-${{ hashFiles('apps/mac/Package.resolved') }}
+          restore-keys: mac-release-spm-${{ runner.os }}-
+
+      - uses: actions/cache@v4
+        with:
+          path: runner/target
+          key: mac-release-cargo-${{ runner.os }}-${{ steps.rust.outputs.version }}-${{ hashFiles('runner/Cargo.lock') }}
+          restore-keys: mac-release-cargo-${{ runner.os }}-${{ steps.rust.outputs.version }}-
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            apps/mac/build/helpers
+            apps/mac/build/cache
+          key: mac-release-tmux-${{ runner.os }}-${{ hashFiles('apps/mac/scripts/build-tmux.sh') }}
+          restore-keys: mac-release-tmux-${{ runner.os }}-
+
+      # swift test builds the same debug tree a separate swift build would.
       - name: "Check: swift test"
         working-directory: apps/mac
         run: swift test
