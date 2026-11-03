@@ -183,8 +183,15 @@ final class GoalOverviewTests: XCTestCase {
             row.tap()
             XCTAssertTrue(app.navigationBars["Mobile app"].waitForExistence(timeout: 10), "the row didn't open the goal")
             XCTAssertTrue(app.buttons["goal-menu"].waitForExistence(timeout: 5), "no … menu on the goal")
-            XCTAssertFalse(app.descendants(matching: .any)["avatar-andrea"].exists, "the overview still has the lead's avatar")
+            // The header card: prefix chip, Follow pill and summary. Task rows below keep their owners' avatars.
+            let summary = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Ship the iPhone app")).firstMatch
+            XCTAssertTrue(summary.waitForExistence(timeout: 5), "the header lost the goal's summary")
+            XCTAssertTrue(app.staticTexts["APP"].exists, "the header lost the prefix chip")
+            XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Follow")).firstMatch.exists, "the header lost the Follow pill")
+            let header = app.cells.containing(.staticText, identifier: summary.label).firstMatch
+            XCTAssertFalse(header.descendants(matching: .any)["avatar-andrea"].exists, "the header still has the lead's avatar")
             XCTAssertFalse(app.staticTexts["andrea"].exists, "the overview still shows the lead's name")
+            XCTAssertFalse(app.staticTexts["acme/app"].exists, "the header still shows the repo")
             snap("goal-overview-no-lead-\(mode)")
 
             app.buttons["goal-menu"].tap()
@@ -192,7 +199,10 @@ final class GoalOverviewTests: XCTestCase {
             let lead = app.descendants(matching: .any)["goal-settings-lead"]
             XCTAssertTrue(lead.waitForExistence(timeout: 5), "Goal settings has no lead")
             XCTAssertTrue(lead.label.contains("andrea"), "Goal settings' lead isn't andrea: \(lead.label)")
-            XCTAssertTrue(app.descendants(matching: .any)["goal-settings-repo"].firstMatch.exists, "Goal settings has no repo")
+            let repos = app.descendants(matching: .any).matching(identifier: "goal-settings-repo")
+            XCTAssertEqual(repos.count, 2, "Goal settings should list both of Mobile app's repos")
+            let labels = repos.allElementsBoundByIndex.map(\.label).joined(separator: " | ")
+            XCTAssertTrue(labels.contains("acme/app") && labels.contains("acme/push"), "Goal settings lost a repo: \(labels)")
             snap("goal-settings-about-\(mode)")
         }
     }
