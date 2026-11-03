@@ -22,8 +22,8 @@
 // `build` tags the tree it built mac-v<version> and pushes it to origin: the next release's base. A
 // rehearsal (MAPLE_RELEASES_DIR set) or --no-tag doesn't.
 
-import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -404,8 +404,11 @@ function tagBuilt(v) {
 /** The app's debug symbols to Sentry, so its crash and hang reports read as source lines. A bundle that
  *  reports to Sentry (MapleSentryDSN in its Info.plist) doesn't go out without them: no SENTRY_AUTH_TOKEN
  *  stops the build, unless MAPLE_SKIP_SYMBOLS=1 says to go without. The dSYM is checked against the
- *  bundled binary (dwarfdump --uuid), so an upload that couldn't symbolicate this release fails too. */
-function uploadSymbols() {
+ *  bundled binary (dwarfdump --uuid), so an upload that couldn't symbolicate this release fails too.
+ *  With background, the dSYM is made and checked now and sentry-cli's check and upload run in a child
+ *  process: the returned promise settles when it's done (`ship` notarizes meanwhile, and waits on it
+ *  before publishing). Otherwise it uploads before returning. */
+function uploadSymbols({ background = false } = {}) {
   const binary = join(APP, "Contents/MacOS/MapleFactory");
   let dsn = "";
   try { dsn = capture("plutil", ["-extract", "MapleSentryDSN", "raw", join(APP, "Contents/Info.plist")]); } catch { /* no key */ }
@@ -418,26 +421,76 @@ function uploadSymbols() {
   }
   const dsym = join(here, "build/MapleFactory.dSYM");
   rmSync(dsym, { recursive: true, force: true });
-  run("dsymutil", [join(capture("swift", ["build", "-c", "release", "--show-bin-path"]), "MapleFactory"), "-o", dsym]);
-  sendSymbols(dsym, binary);
+  run("dsymutil", [join(builtBinPath(), "MapleFactory"), "-o", dsym]);
+  if (!background) return sendSymbols(dsym, binary);
+  checkUUIDs(dsym, binary);
+  return sendSymbolsInBackground(dsym);
+}
+
+/** Where bundle.sh's swift build put the binary: it records it in build/bin-path, so this needn't ask
+ *  SwiftPM again. Falls back to asking for a build made some other way. */
+function builtBinPath() {
+  const file = join(here, "build/bin-path");
+  if (existsSync(file)) {
+    const path = readFileSync(file, "utf8").trim();
+    if (existsSync(join(path, "MapleFactory"))) return path;
+  }
+  return capture("swift", ["build", "-c", "release", "--show-bin-path"]);
 }
 
 /** A Mach-O's or dSYM's UUIDs, one per architecture: "17F47C63-… (arm64)". */
 const uuids = (path) => [...capture("dwarfdump", ["--uuid", path]).matchAll(/UUID: ([0-9A-F-]+) \((\w+)\)/g)].map(([, u, arch]) => `${u} (${arch})`).sort().join(", ");
 
-/** dsym to Sentry once its UUID is the binary's and sentry-cli finds its debug info. */
-function sendSymbols(dsym, binary) {
+function checkUUIDs(dsym, binary) {
   const [want, have] = [uuids(binary), uuids(dsym)];
   console.log(`  binary ${want}\n  dSYM   ${have}`);
   if (!want || want !== have) fail(`The dSYM's UUID (${have || "none"}) isn't the binary's (${want || "none"}): it wouldn't symbolicate this release.`);
   ok(`dSYM UUID matches the binary: ${want}`);
+}
+
+const SENTRY_CLI = ["-y", "@sentry/cli@3.8.2"];
+const sentryProject = () => {
   const sentry = JSON.parse(readFileSync(join(here, "../../server/web/sentry.json"), "utf8"));
-  const cli = ["-y", "@sentry/cli@3.8.2"];
-  const check = capture("npx", [...cli, "debug-files", "check", join(dsym, "Contents/Resources/DWARF/MapleFactory")]);
+  return ["--org", sentry.org, "--project", sentry.projects.mac.slug];
+};
+
+/** dsym to Sentry once its UUID is the binary's and sentry-cli finds its debug info. */
+function sendSymbols(dsym, binary) {
+  checkUUIDs(dsym, binary);
+  const check = capture("npx", [...SENTRY_CLI, "debug-files", "check", join(dsym, "Contents/Resources/DWARF/MapleFactory")]);
   console.log(check.replace(/^/gm, "  "));
   if (!/Usable: yes/.test(check) || !/\bdebug\b/.test(check)) fail("sentry-cli debug-files check says the dSYM isn't usable.");
-  run("npx", [...cli, "debug-files", "upload", "--org", sentry.org, "--project", sentry.projects.mac.slug, "--wait", dsym]);
+  run("npx", [...SENTRY_CLI, "debug-files", "upload", ...sentryProject(), "--wait", dsym]);
   ok("dSYMs uploaded to Sentry");
+}
+
+/** sendSymbols' sentry-cli half in a child process, its output to build/sentry-upload.log (a file, not a
+ *  pipe: the stages around it block this process, and a full pipe would stall the child). Resolves when
+ *  the upload is done; rejects with the log if the check or the upload fails. */
+function sendSymbolsInBackground(dsym) {
+  const log = join(here, "build/sentry-upload.log");
+  const fd = openSync(log, "w");
+  const npx = `npx ${SENTRY_CLI.join(" ")}`;
+  const script = `set -u
+out=$(${npx} debug-files check "$1/Contents/Resources/DWARF/MapleFactory" 2>&1) || { echo "$out"; exit 1; }
+echo "$out"
+echo "$out" | grep -q "Usable: yes" && echo "$out" | grep -qw debug || { echo "sentry-cli debug-files check says the dSYM isn't usable."; exit 1; }
+shift
+exec ${npx} debug-files upload "$@" --wait "$0"`;
+  const args = ["-c", script, dsym, dsym, ...sentryProject()];
+  console.log(`  $ (in the background, to ${log}) sentry-cli debug-files check, then upload ${dsym}`);
+  const started = Date.now();
+  const child = spawn("sh", args, { cwd: here, stdio: ["ignore", fd, fd], env: process.env });
+  closeSync(fd);
+  return new Promise((resolve, reject) => {
+    child.on("error", reject);
+    child.on("exit", (code, signal) => {
+      const output = readFileSync(log, "utf8").trimEnd().replace(/^/gm, "  ");
+      const took = duration(Date.now() - started);
+      if (code === 0) resolve({ output, took });
+      else reject(Object.assign(new Error(`The dSYM upload to Sentry failed (${signal ?? `exit ${code}`}) after ${took}:\n${output}`), { output }));
+    });
+  });
 }
 
 /** One release's dSYM, after the fact: from apps/mac/.build/release (or --built <path to its MapleFactory>,
@@ -631,12 +684,22 @@ async function cmdShip(v) {
   sparkleBin("sign_update");
   try {
     await timed("build", () => buildApp(v));
-    await timed("symbols", () => uploadSymbols());
+    // The dSYM is made and checked here; its upload runs while the app notarizes, and is waited on below.
+    const upload = await timed("symbols", () => uploadSymbols({ background: true }));
+    upload?.catch(() => {}); // a failure is reported below, not as an unhandled rejection mid-notarize
     tagBuilt(r.version);
     await timed("notarize", () => cmdNotarize(v));
     await timed("dmg", () => cmdDmg(v));
     await timed("sign", () => cmdSign(v));
     await timed("appcast", () => cmdAppcast());
+    if (upload) {
+      heading("Waiting for the dSYM upload");
+      await timed("symbols↑", async () => {
+        const { output, took } = await upload.catch((e) => fail(e.message));
+        console.log(output);
+        ok(`dSYMs uploaded to Sentry (in the background, ${took})`);
+      });
+    }
     if (!(await ask(`Publish to ${updatesURL()}?`))) return console.log("Stopped before publishing; `publish` when ready.");
     if (process.env.MAPLE_STOP_BEFORE_PUBLISH === "1") return console.log("MAPLE_STOP_BEFORE_PUBLISH=1: stopped before publishing.");
     await timed("publish", () => cmdPublish());
