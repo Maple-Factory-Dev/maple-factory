@@ -137,7 +137,9 @@ commit to build, which must already be on `main`; blank: `main`). It stops first
 release commit is rebased onto `main` and pushed past its protection) or `mac-v<v>` is already on origin. Then:
 
 1. imports the Developer ID (`import-signing-cert.sh` with `APPLE_CERT_P12` / `APPLE_CERT_PASSWORD`; removed again
-   at the end, pass or fail), runs `swift build` and `swift test` in `apps/mac`;
+   at the end, pass or fail), restores its build caches (`apps/mac/.build` by `Package.resolved`, `runner/target`
+   by `Cargo.lock` and the Rust version, the tmux in `apps/mac/build/{helpers,cache}`) and runs `swift test` in
+   `apps/mac` (which builds the debug tree; there's no separate `swift build`);
 2. `release.mjs new <v> --channel <channel>`, then `scripts/ci/mac-release-notes.mjs <v>`: the `notes` input as
    the body, or else Added / Changed / Fixed bullets from the commit subjects since the last `mac-v` tag
    (release commits and merges left out, `MF-123:` and `(#n)` taken off). The frontmatter stays as `new` wrote it;
@@ -169,4 +171,18 @@ lists the sha, each URL checked and the DMG it redirects to.
 - Feed: `--to dir:<scratch>/feed` writes a feed-shaped folder and tags nothing.
 - Mac: `MAPLE_RELEASES_DIR=<scratch>/releases MAPLE_SITE_DIR=<scratch>/site` keeps the release out of the
   repo and skips the `mac-v` tag; `MAPLE_STOP_BEFORE_PUBLISH=1` makes `ship --yes` stop before publishing.
+
+## How long a Mac release takes
+
+`ship` logs each stage's time as it finishes (`⏱ notarize: 3m 12s`) and ends, pass or fail, with a table of
+them and the total. Where the time goes, and what overlaps:
+
+- `build`: `bundle.sh` starts the runner's `cargo build` in the background, runs `swift build`, then waits on
+  cargo (a failed cargo build still fails the bundle). It records SwiftPM's bin path in `build/bin-path`, so
+  the dSYM step doesn't ask SwiftPM again.
+- `symbols`: `dsymutil` and the dSYM-against-binary UUID check run right away, so a bad dSYM stops `ship` before
+  notarizing. sentry-cli's `debug-files check` and `upload --wait` then run in the background (output in
+  `apps/mac/build/sentry-upload.log`) while the app notarizes and the DMG is made.
+- `symbols↑`: after `appcast`, `ship` waits for that upload and stops there if it failed, before it asks to
+  publish. `build` run on its own still uploads before it returns.
 - Site: `node scripts/release-site.mjs --dry-run`.
