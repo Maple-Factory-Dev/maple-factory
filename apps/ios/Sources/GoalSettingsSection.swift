@@ -97,7 +97,8 @@ struct GoalSettingsSection: View {
 
 struct GoalSettingsRoute: Hashable { let goal: String }
 
-/// Goal settings, from the goal page's … menu: its Merging section (auto-merge and archiving).
+/// Goal settings, from the goal page's … menu: an About section (the goal's lead and repos, which the
+/// goal page's header leaves out) above its Merging section (auto-merge and archiving).
 struct GoalSettingsView: View {
     @Environment(FactoryStore.self) private var store
     let id: String
@@ -105,10 +106,39 @@ struct GoalSettingsView: View {
 
     var body: some View {
         Form {
-            if let goal = store.feed.goal(id) { GoalSettingsSection(goal: goal, onArchive: onArchive) }
+            if let goal = store.feed.goal(id) {
+                about(goal)
+                GoalSettingsSection(goal: goal, onArchive: onArchive)
+            }
         }
         .navigationTitle("Goal settings")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    /// Read-only: who leads the goal and where its work lands.
+    private func about(_ goal: Wire.Goal) -> some View {
+        Section("About") {
+            LabeledContent("Lead") {
+                HStack(spacing: 6) {
+                    Avatar(login: goal.lead, url: store.feed.member(goal.lead)?.avatarUrl, size: 22)
+                    Text(goal.lead)
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("goal-settings-lead")
+            ForEach(repos(goal), id: \.self) { repo in
+                LabeledContent("Repository") {
+                    Text(repo).font(.callout.monospaced()).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                }
+                .accessibilityIdentifier("goal-settings-repo")
+            }
+        }
+    }
+
+    /// The goal's repos, else its one repo, else its folder.
+    private func repos(_ goal: Wire.Goal) -> [String] {
+        if !goal.repos.isEmpty { return goal.repos }
+        return [goal.repo ?? goal.folder].compactMap { $0 }
     }
 }
 

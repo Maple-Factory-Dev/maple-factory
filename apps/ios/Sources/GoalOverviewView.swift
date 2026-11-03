@@ -109,17 +109,6 @@ struct GoalView: View {
                 if !goal.summary.isEmpty {
                     Text(goal.summary).font(.subheadline).foregroundStyle(.secondary)
                 }
-                HStack(spacing: 6) {
-                    Avatar(login: goal.lead, url: store.feed.member(goal.lead)?.avatarUrl, size: 18)
-                    Text(goal.lead)
-                    if let repo = goal.repo {
-                        Text("·").foregroundStyle(.tertiary)
-                        Image(systemName: "chevron.left.forwardslash.chevron.right").font(.caption2)
-                        Text(repo).lineLimit(1)
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
             }
             .padding(.vertical, 4)
         }
