@@ -471,24 +471,26 @@ function sendSymbolsInBackground(dsym) {
   const log = join(here, "build/sentry-upload.log");
   const fd = openSync(log, "w");
   const npx = `npx ${SENTRY_CLI.join(" ")}`;
+  // The child times itself: its exit is only seen here once the blocking stage running beside it returns.
   const script = `set -u
+start=$(date +%s)
 out=$(${npx} debug-files check "$1/Contents/Resources/DWARF/MapleFactory" 2>&1) || { echo "$out"; exit 1; }
 echo "$out"
 echo "$out" | grep -q "Usable: yes" && echo "$out" | grep -qw debug || { echo "sentry-cli debug-files check says the dSYM isn't usable."; exit 1; }
 shift
-exec ${npx} debug-files upload "$@" --wait "$0"`;
+${npx} debug-files upload "$@" --wait "$0" || exit $?
+echo "took $(( $(date +%s) - start ))s"`;
   const args = ["-c", script, dsym, dsym, ...sentryProject()];
   console.log(`  $ (in the background, to ${log}) sentry-cli debug-files check, then upload ${dsym}`);
-  const started = Date.now();
   const child = spawn("sh", args, { cwd: here, stdio: ["ignore", fd, fd], env: process.env });
   closeSync(fd);
   return new Promise((resolve, reject) => {
     child.on("error", reject);
     child.on("exit", (code, signal) => {
       const output = readFileSync(log, "utf8").trimEnd().replace(/^/gm, "  ");
-      const took = duration(Date.now() - started);
-      if (code === 0) resolve({ output, took });
-      else reject(Object.assign(new Error(`The dSYM upload to Sentry failed (${signal ?? `exit ${code}`}) after ${took}:\n${output}`), { output }));
+      const took = output.match(/took (\d+)s\s*$/)?.[1];
+      if (code === 0) resolve({ output, took: took ? duration(took * 1000) : "?" });
+      else reject(Object.assign(new Error(`The dSYM upload to Sentry failed (${signal ?? `exit ${code}`}):\n${output}`), { output }));
     });
   });
 }
@@ -685,7 +687,8 @@ async function cmdShip(v) {
   try {
     await timed("build", () => buildApp(v));
     // The dSYM is made and checked here; its upload runs while the app notarizes, and is waited on below.
-    const upload = await timed("symbols", () => uploadSymbols({ background: true }));
+    // (Wrapped, so timed() doesn't await the upload itself.)
+    const { upload } = await timed("symbols", () => ({ upload: uploadSymbols({ background: true }) }));
     upload?.catch(() => {}); // a failure is reported below, not as an unhandled rejection mid-notarize
     tagBuilt(r.version);
     await timed("notarize", () => cmdNotarize(v));
@@ -697,7 +700,7 @@ async function cmdShip(v) {
       await timed("symbols↑", async () => {
         const { output, took } = await upload.catch((e) => fail(e.message));
         console.log(output);
-        ok(`dSYMs uploaded to Sentry (in the background, ${took})`);
+        ok(`dSYMs uploaded to Sentry (in the background, in ${took})`);
       });
     }
     if (!(await ask(`Publish to ${updatesURL()}?`))) return console.log("Stopped before publishing; `publish` when ready.");
