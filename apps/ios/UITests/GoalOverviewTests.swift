@@ -21,12 +21,25 @@ final class GoalOverviewTests: XCTestCase {
     /// Every section open (Recently landed folded) unless `folds` says otherwise, so a fold left over
     /// from another run doesn't leak in.
     private func open(_ folds: [String: Bool] = [:]) {
-        var state = ["needsYou": true, "upNext": true, "drafts": true, "inMotion": true, "landed": false]
-        state.merge(folds) { $1 }
+        seedFolds(folds)
         app.launchArguments = ["-demo", "YES", "-tab", "goals", "-goal", "g-app"]
-            + state.sorted { $0.key < $1.key }.flatMap { ["-goalOverview.\($0.key)Open", $0.value ? "YES" : "NO"] }
         app.launch()
         XCTAssertTrue(app.navigationBars["Mobile app"].waitForExistence(timeout: 60), "the goal didn't open")
+    }
+
+    /// Sets the Overview's folds through GOAL_OVERVIEW_FOLDS, which the app writes into its normal defaults
+    /// at launch. Not launch arguments: those land in the argument domain, which outranks @AppStorage, so a tap wouldn't stick.
+    private func seedFolds(_ folds: [String: Bool] = [:]) {
+        var state = ["needsYou": true, "upNext": true, "drafts": true, "inMotion": true, "landed": false]
+        state.merge(folds) { $1 }
+        app.launchEnvironment["GOAL_OVERVIEW_FOLDS"] = state.sorted { $0.key < $1.key }
+            .map { "\($0.key)=\($0.value ? 1 : 0)" }.joined(separator: ",")
+    }
+
+    /// Waits for a section header to read `value` ("expanded" or "collapsed").
+    private func waitFor(_ header: XCUIElement, toRead value: String, _ message: String) {
+        let read = expectation(for: NSPredicate(format: "value == %@", value), evaluatedWith: header)
+        XCTAssertEqual(XCTWaiter.wait(for: [read], timeout: 5), .completed, message)
     }
 
     private func text(_ prefix: String) -> XCUIElement {
@@ -104,7 +117,7 @@ final class GoalOverviewTests: XCTestCase {
         needsYou.tap()
         XCTAssertTrue(card.waitForNonExistence(timeout: 5), "Needs you didn't fold")
         XCTAssertTrue(text("Needs you · 2").exists, "folding hid the title and count")
-        XCTAssertEqual(needsYou.value as? String, "collapsed")
+        waitFor(needsYou, toRead: "collapsed", "Needs you's header doesn't read collapsed")
         needsYou.tap()
         XCTAssertTrue(card.waitForExistence(timeout: 5), "Needs you didn't unfold")
 
@@ -115,39 +128,46 @@ final class GoalOverviewTests: XCTestCase {
         XCTAssertTrue(row.exists, "no APP-16 in In motion")
         inMotion.tap()
         XCTAssertTrue(row.waitForNonExistence(timeout: 5), "In motion didn't fold")
-        XCTAssertEqual(inMotion.value as? String, "collapsed")
+        waitFor(inMotion, toRead: "collapsed", "In motion's header doesn't read collapsed")
         XCTAssertTrue(text("In motion · ").exists, "folding hid In motion's title and count")
         inMotion.tap()
         XCTAssertTrue(row.waitForExistence(timeout: 5), "In motion didn't unfold")
-        XCTAssertEqual(inMotion.value as? String, "expanded")
+        waitFor(inMotion, toRead: "expanded", "In motion's header doesn't read expanded")
 
         // Drafts folds here too, and its Edit goes with the rows.
         let drafts = app.buttons["section-drafts"]
         reveal(drafts)
         XCTAssertTrue(drafts.exists, "Drafts can't fold")
         drafts.tap()
-        XCTAssertEqual(drafts.value as? String, "collapsed")
+        waitFor(drafts, toRead: "collapsed", "Drafts didn't fold")
         XCTAssertFalse(app.buttons["drafts-edit"].exists, "Edit shows on folded Drafts")
         drafts.tap()
+        waitFor(drafts, toRead: "expanded", "Drafts didn't unfold")
     }
 
-    /// A fold is kept across launches: started folded, Needs you shows its title and no cards.
+    /// A fold is kept across launches: started folded, Needs you shows its title and no cards, and a
+    /// section saved open (Recently landed here) comes back open. The demo Mobile app goal has nothing
+    /// queued or planning, so there's no Up next section; its title goes on Drafts ("Up next · Drafts").
     func testFoldedSectionsComeBackFolded() {
         XCUIDevice.shared.appearance = .light
-        open(["needsYou": false, "inMotion": false, "drafts": false])
+        open(["needsYou": false, "inMotion": false, "drafts": false, "landed": true])
         XCTAssertEqual(app.buttons["section-needs-you"].value as? String, "collapsed")
         XCTAssertTrue(text("Needs you · 2").exists)
         XCTAssertFalse(app.buttons["needs-you-APP-12"].exists, "Needs you started open")
-        XCTAssertEqual(app.buttons["section-up-next"].value as? String, "expanded")
         snap("goal-overview-folded-light")
         let drafts = app.buttons["section-drafts"]
         reveal(drafts)
+        XCTAssertEqual(drafts.value as? String, "collapsed")
+        XCTAssertTrue(drafts.label.hasPrefix("Up next · Drafts"), "Drafts doesn't carry Up next's title: \(drafts.label)")
         XCTAssertFalse(app.buttons["drafts-edit"].exists, "Edit shows on folded Drafts")
+        let landed = app.buttons["recently-landed"]
+        reveal(landed)
+        XCTAssertEqual(landed.value as? String, "expanded", "Recently landed, saved open, came back folded")
         snap("goal-overview-folded-drafts-light")
 
         app.terminate()
         XCUIDevice.shared.appearance = .dark
-        open(["needsYou": false, "inMotion": false, "drafts": false])
+        open(["needsYou": false, "inMotion": false, "drafts": false, "landed": true])
         XCTAssertFalse(app.buttons["needs-you-APP-12"].exists, "Needs you started open")
         snap("goal-overview-folded-dark")
 
@@ -171,7 +191,8 @@ final class GoalOverviewTests: XCTestCase {
             let mode = appearance == .dark ? "dark" : "light"
             app.terminate()
             XCUIDevice.shared.appearance = appearance
-            app.launchArguments = ["-demo", "YES", "-tab", "goals", "-goalOverview.landedOpen", "NO"]
+            seedFolds()
+            app.launchArguments = ["-demo", "YES", "-tab", "goals"]
             app.launch()
             let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Mobile app")).firstMatch
             XCTAssertTrue(row.waitForExistence(timeout: 60), "no Mobile app row in the Goals list")
