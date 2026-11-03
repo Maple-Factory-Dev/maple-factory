@@ -358,6 +358,13 @@ minimumSystemVersion: ${MINIMUM_SYSTEM}
 }
 
 function cmdBuild(v) {
+  const r = buildApp(v);
+  uploadSymbols();
+  tagBuilt(r.version);
+}
+
+/** bundle.sh with the Developer ID, then every nested signature checked. */
+function buildApp(v) {
   const r = release(v);
   heading(`Building ${r.version} (${r.build})`);
   loadEnv();
@@ -377,8 +384,7 @@ function cmdBuild(v) {
     run("codesign", ["--verify", "--strict", join(APP, nested)]);
   }
   ok(`signed ${APP}`);
-  uploadSymbols();
-  tagBuilt(r.version);
+  return r;
 }
 
 /** Tags HEAD mac-v<v> on origin: what this release was built from, and the next one's base. */
@@ -624,7 +630,9 @@ async function cmdShip(v) {
   if (process.env.MAPLE_SKIP_SYMBOLS !== "1") need("SENTRY_AUTH_TOKEN");
   sparkleBin("sign_update");
   try {
-    await timed("build", () => cmdBuild(v));
+    await timed("build", () => buildApp(v));
+    await timed("symbols", () => uploadSymbols());
+    tagBuilt(r.version);
     await timed("notarize", () => cmdNotarize(v));
     await timed("dmg", () => cmdDmg(v));
     await timed("sign", () => cmdSign(v));
