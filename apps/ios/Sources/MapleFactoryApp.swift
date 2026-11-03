@@ -2,7 +2,8 @@ import MapleKit
 import SwiftUI
 
 /// Maple Factory for iPhone. `-demo YES` opens the sample factory; otherwise the last factory
-/// signed into, or the sign-in screen.
+/// signed into, or the sign-in screen. UI tests set the goal Overview's folds with the
+/// `GOAL_OVERVIEW_FOLDS` launch environment variable (see `seedGoalOverviewFolds`).
 @main
 struct MapleFactoryApp: App {
     /// Owns the store, so a notification tapped on a cold launch can open its task (PushNotifications.swift).
@@ -11,6 +12,20 @@ struct MapleFactoryApp: App {
 
     init() {
         ErrorReports.start()
+        Self.seedGoalOverviewFolds()
+    }
+
+    /// UI tests only: `GOAL_OVERVIEW_FOLDS=drafts=1,inMotion=0,landed=0,needsYou=1,upNext=1` in the launch
+    /// environment sets the goal Overview's section folds (`goalOverview.<key>Open`) before the first view.
+    /// They go into the normal defaults, not the argument domain a `-goalOverview.<key>Open` launch
+    /// argument would use: that domain outranks what @AppStorage writes, so a header tap would never stick.
+    private static func seedGoalOverviewFolds() {
+        guard let folds = ProcessInfo.processInfo.environment["GOAL_OVERVIEW_FOLDS"] else { return }
+        for pair in folds.split(separator: ",") {
+            let parts = pair.split(separator: "=", maxSplits: 1)
+            guard parts.count == 2 else { continue }
+            UserDefaults.standard.set(parts[1] == "1", forKey: "goalOverview.\(parts[0])Open")
+        }
     }
 
     var body: some Scene {
