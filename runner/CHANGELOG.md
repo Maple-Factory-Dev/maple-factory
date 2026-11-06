@@ -5,6 +5,10 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## Unreleased
+
+Weekly dependency refresh: the runner moves to toml 1.2, along with patch updates to the crates under it; nothing changes in how tasks run.
+
 ## 0.106.0 — 2026-11-02
 
 Understands checks that a GitHub Actions run covers (a check marked `→ gha:<name>`); nothing changes in how tasks run.
