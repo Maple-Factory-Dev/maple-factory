@@ -140,19 +140,19 @@ jobs:
         id: rust
         run: echo "version=$(rustc --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: apps/mac/.build
           key: mac-release-spm-${{ runner.os }}-${{ hashFiles('apps/mac/Package.resolved') }}
           restore-keys: mac-release-spm-${{ runner.os }}-
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: runner/target
           key: mac-release-cargo-${{ runner.os }}-${{ steps.rust.outputs.version }}-${{ hashFiles('runner/Cargo.lock') }}
           restore-keys: mac-release-cargo-${{ runner.os }}-${{ steps.rust.outputs.version }}-
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             apps/mac/build/helpers
