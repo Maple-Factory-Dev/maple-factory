@@ -210,7 +210,7 @@ jobs:
       - name: "Stage: appcast"
         run: node apps/mac/scripts/release.mjs appcast --yes
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: maple-factory-${{ steps.version.outputs.version }}-dmg
           path: apps/mac/build/updates-site/releases/${{ steps.version.outputs.version }}/Maple-Factory-${{ steps.version.outputs.version }}.dmg
