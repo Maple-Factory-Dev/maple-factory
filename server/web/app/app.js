@@ -1736,7 +1736,8 @@ function mockupChange(t, m) {
 // same-origin (so it can't reach the session) and a CSP with no network. The first render's SVG comes
 // back by postMessage and is kept as an <img> (no scripts, no network), so feed updates don't redraw it.
 const DIAGRAM_PAGE = "/app/mermaid/diagram.html";
-const drawn = new Map(); // source → { svg } | { error }
+const drawn = new Map(); // theme + source → { svg } | { error }
+const drawnKey = (source) => `${diagramTheme()}\n${source}`;
 const diagramTheme = () => (document.documentElement.dataset.theme ?? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
 
 function diagramFrame(source, mode, query) {
@@ -1750,15 +1751,15 @@ window.addEventListener("message", (e) => {
   if (!d || d.type !== "maple.diagram.state") return;
   if (e.source === diagramViewer?.frame.contentWindow) { if (d.event === "close") closeDiagram(); return; }
   // An inline card's frame (sandboxed, so its origin is "null") hands back what it drew for that source.
-  if (e.origin !== "null" || typeof d.source !== "string" || drawn.has(d.source)) return;
-  if (d.event === "rendered" && typeof d.svg === "string") drawn.set(d.source, { svg: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(d.svg)}` });
-  else if (d.event === "error") drawn.set(d.source, { error: String(d.message ?? "") });
+  if (e.origin !== "null" || typeof d.source !== "string" || drawn.has(drawnKey(d.source))) return;
+  if (d.event === "rendered" && typeof d.svg === "string") drawn.set(drawnKey(d.source), { svg: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(d.svg)}` });
+  else if (d.event === "error") drawn.set(drawnKey(d.source), { error: String(d.message ?? "") });
   else return;
   render();
 });
 
 function diagram(t, d) {
-  const done = drawn.get(d.source);
+  const done = drawn.get(drawnKey(d.source));
   let body;
   if (done?.svg) body = h("img", { class: "diagram-img", src: done.svg, alt: d.title, draggable: "false" });
   else if (done?.error) body = h("div", { class: "diagram-error" }, h("div", { class: "msg" }, `Mermaid couldn't render this diagram.\n${done.error}`), h("pre", {}, d.source));
