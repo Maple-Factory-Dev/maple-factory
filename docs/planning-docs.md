@@ -65,9 +65,34 @@ and iOS apps show it in a `WKWebView` that carries the app's existing session to
 WebSocket is authed the same way as the feed; the native side only lists docs (from the feed) and
 opens one. One editor, one sync path, no native CRDT.
 
+## Editor (MF-361)
+
+- **Source** lives in `server/docs-editor/` (TipTap 3: StarterKit, task lists, Mention, Collaboration,
+  CollaborationCaret, BubbleMenu, `@tiptap/suggestion`; `y-websocket`; `prosemirror-markdown`). The shared type is
+  the `Y.XmlFragment` named **`prosemirror`**.
+- **Bundled and vendored**: `/app` is plain ES modules with no build step, and the installer deploys `server/web`
+  as static assets into each org's Cloudflare account. So `scripts/build-docs-editor.mjs` (with esbuild pinned
+  exactly) writes one checked-in ES module, `server/web/app/docs/editor.bundle.js`, plus `editor.css`. Rebuild with
+  `npm run build:docs`. `npm run gen:check` fails when the bundle doesn't match the source, `server/web/app/markdown.js`
+  or the lockfile. The doc page lazy-imports the bundle, so the rest of `/app` never downloads it.
+- **Awareness user**: `{ login, name, color, avatar }`, where `color` comes from a hash of the login (so a person
+  gets the same color everywhere).
+- **Markdown mapping** (`src/markdown.js`, tests in `server/test/docs-markdown.test.ts`): headings, bullet, ordered
+  and task lists (`- [ ]` / `- [x]`), quotes, fenced code with its language, links, bold/italic/code/strike. A
+  member mention is the `mention` node and exports as `@login`. A known task id is the `taskRef` node, which links
+  to `#/t/MF-12` and exports as `MF-12`; unknown ids stay text, resolved with `markdown.js`'s `taskResolver`.
+  Pasted plain text that looks like Markdown goes through the parser.
+- **Token auth for embeds**: a browser WebSocket can't set `Authorization`, so the embed sends
+  `Sec-WebSocket-Protocol: maple-token, mft_…`. It's accepted only on an upgrade to `/docs/<id>/sync`, looked up
+  like a bearer token (revoked or expired tokens get 401), and DocHub echoes `maple-token`.
+- **Embed bridge** (`/app/docs/embed.html`, for a WKWebView; `frame-ancestors 'none'` means it isn't iframable):
+  `window.mapleDocs.load({ docId, token, me, members, tasks })`, `setTheme('light'|'dark')`, `exportMarkdown()`,
+  `destroy()`. Events `ready`, `status`, `peers`, `synced`, `theme`, `error`, `openTask` are posted to
+  `window.webkit.messageHandlers.maple` if it exists, otherwise to `window.parent`, and logged as `[maple-docs]`.
+
 ## Deferred
 
-- The editor UI (web, and its WKWebView embedding).
+- Hosting the embed in the Mac and iOS apps (the native side of the bridge).
 - Comments and threads anchored in a doc.
 - Decisions recorded from a doc, and turning parts of it into tasks.
 - An MCP server so agents can read and edit docs.
