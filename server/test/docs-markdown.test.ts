@@ -183,3 +183,46 @@ test("a [!RESEARCH] quote (not a block here; MF-366) stays a plain quote", () =>
   doc.check();
   assert.equal(doc.firstChild!.type.name, "blockquote");
 });
+
+// MF-384: highlighted code blocks with a language picker.
+import { Editor } from "@tiptap/core";
+import { EditorState } from "@tiptap/pm/state";
+import { schemaExtensions } from "../docs-editor/src/schema.js";
+import { CODE_LANGUAGES, canonicalLanguage } from "../docs-editor/src/codeblock.js";
+
+test("code fences keep their language as written", () => {
+  for (const md of ["```ts\nconst a = 1;\n```\n", "```\nplain\n```\n", "```text\nplain\n```\n", "```swift\nlet a = 1\n```\n"]) {
+    const doc = fromMarkdown(schema, md, ctx);
+    assert.equal(toMarkdown(doc), md);
+  }
+  assert.equal(fromMarkdown(schema, "```ts\nx\n```\n", ctx).firstChild!.attrs.language, "ts");
+  assert.equal(fromMarkdown(schema, "```\nx\n```\n", ctx).firstChild!.attrs.language, null);
+  assert.equal(schema.nodes.codeBlock.create().attrs.language, null, "a new block is Plain text and exports a bare fence");
+});
+
+test("the picker maps fences to its languages", () => {
+  for (const plain of [null, "", "text", "txt", "plaintext", "TEXT"]) assert.equal(canonicalLanguage(plain), null, String(plain));
+  assert.equal(canonicalLanguage("ts"), "typescript");
+  assert.equal(canonicalLanguage("swift"), "swift");
+  assert.equal(canonicalLanguage("sh"), "bash");
+  assert.equal(canonicalLanguage("not-a-language"), undefined);
+  assert.ok(CODE_LANGUAGES.length > 150, `${CODE_LANGUAGES.length} languages`);
+  assert.deepEqual(CODE_LANGUAGES[0], { id: null, label: "Plain text" });
+  assert.deepEqual(CODE_LANGUAGES.slice(1, 4).map((l) => l.id), ["typescript", "javascript", "swift"]);
+  assert.equal(new Set(CODE_LANGUAGES.map((l) => l.id)).size, CODE_LANGUAGES.length, "no duplicates");
+});
+
+test("lowlight decorates ts blocks and leaves plain and unknown blocks alone", () => {
+  const editor = new Editor({ element: null, extensions: schemaExtensions(), content: { type: "doc", content: [{ type: "paragraph" }] } });
+  const plugin = editor.extensionManager.plugins.find((p: any) => p.key.startsWith("lowlight"))!;
+  const decorations = (md: string) => {
+    const state = EditorState.create({ doc: fromMarkdown(schema, md, ctx), plugins: [plugin] });
+    return (plugin.getState(state) as any).find().map((d: any) => d.type.attrs.class);
+  };
+  const ts = decorations("```ts\nconst a: number = 1;\n```\n");
+  assert.ok(ts.includes("hljs-keyword") && ts.includes("hljs-number"), ts.join(" "));
+  assert.deepEqual(decorations("```\nconst a: number = 1;\n```\n"), []);
+  assert.deepEqual(decorations("```text\nconst a: number = 1;\n```\n"), []);
+  assert.deepEqual(decorations("```not-a-language\nconst a: number = 1;\n```\n"), [], "no auto-detect guessing");
+  editor.destroy();
+});
