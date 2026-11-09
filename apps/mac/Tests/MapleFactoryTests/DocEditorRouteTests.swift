@@ -24,4 +24,28 @@ struct DocEditorRouteTests {
         let page = DocEditorView.pageURL(.demo(markdown: ""), dark: true)
         #expect(DocEditorView.route(page!, embed: page, isMainFrame: true) == .allow)
     }
+
+    // MARK: peers bridge event (MF-381)
+
+    @Test func peerKeepsItsAvatar() {
+        let peer = DocEditorStatus.Peer.parse(["login": "octo", "name": "Octo Cat", "color": "#ff0000", "avatar": "https://avatars.githubusercontent.com/u/1"])
+        #expect(peer == .init(login: "octo", name: "Octo Cat", color: "#ff0000", avatar: "https://avatars.githubusercontent.com/u/1"))
+    }
+
+    @Test func peerWithoutAvatarHasNone() {
+        #expect(DocEditorStatus.Peer.parse(["login": "octo", "name": "Octo"])?.avatar == nil)
+        #expect(DocEditorStatus.Peer.parse(["login": "octo", "avatar": ""])?.avatar == nil)
+        #expect(DocEditorStatus.Peer.parse(["login": "octo", "avatar": NSNull()])?.avatar == nil)
+    }
+
+    @Test func peerWithoutLoginIsDropped() {
+        #expect(DocEditorStatus.Peer.parse(["name": "Ghost", "avatar": "https://x/y.png"]) == nil)
+        #expect(DocEditorStatus.Peer.parse(["login": ""]) == nil)
+    }
+
+    @Test func peerDefaultsNameAndColor() {
+        let peer = DocEditorStatus.Peer.parse(["login": "octo"])
+        #expect(peer?.name == "octo")
+        #expect(peer?.color == "#888888")
+    }
 }

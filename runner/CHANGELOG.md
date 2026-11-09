@@ -5,6 +5,10 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.109.0 — 2026-11-09
+
+When tmux or the machine dies mid-task, the restarted session resumes the agent's own conversation instead of starting over, and the runner understands doc comment messages.
+
 ## 0.108.0 — 2026-11-09
 
 The runner understands the new shared planning docs messages, so it stays in step with servers that have Docs.
