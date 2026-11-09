@@ -1,0 +1,10 @@
+# Build context for server/Dockerfile.celld: only server/ and the workspace manifests are needed.
+**/node_modules
+**/.celld
+**/.wrangler
+**/.dev.vars
+target/
+apps/
+runner/
+.git/
+**/.build
