@@ -761,6 +761,73 @@ pub fn validate(tool: &str, args: &Value) -> Result<Value, String> {
             }
             out
         }
+        "list_docs" => {
+            let mut out = json!({ "limit": n("limit", 1, 200, 50)? });
+            if let Some(q) = s("q", 200, false)?.filter(|q| !q.trim().is_empty()) {
+                out["q"] = json!(q.trim());
+            }
+            if let Some(g) = s("goal", 64, false)?.filter(|g| !g.trim().is_empty()) {
+                out["goal"] = json!(g.trim());
+            }
+            out
+        }
+        "read_doc" | "comment_on_doc" | "reply_to_doc_thread" | "resolve_doc_thread" | "suggest_doc_edit" => {
+            let uuid = |k: &str, what: &str| -> Result<String, String> {
+                let v = s(k, 64, true)?.unwrap();
+                Uuid::parse_str(v.trim())
+                    .map(|u| u.to_string())
+                    .map_err(|_| format!("{k} must be a {what} id (a uuid) from {}.", if k == "doc" { "list_docs" } else { "read_doc" }))
+            };
+            let mut out = json!({ "doc": uuid("doc", "doc")? });
+            if matches!(tool, "reply_to_doc_thread" | "resolve_doc_thread") {
+                out["thread"] = json!(uuid("thread", "thread")?);
+            }
+            if matches!(tool, "comment_on_doc" | "reply_to_doc_thread") {
+                out["text"] = json!(s("text", MAX_DOC_TEXT, true)?);
+            }
+            if matches!(tool, "comment_on_doc" | "suggest_doc_edit") {
+                if let Some(block) = s("block", 64, false)?.map(|b| b.trim().to_string()).filter(|b| !b.is_empty()) {
+                    let ok = block.strip_prefix("b-").and_then(|r| r.split_once('-')).is_some_and(|(c, k)| {
+                        !c.is_empty()
+                            && c.chars().all(|x| x.is_ascii_digit() || x.is_ascii_lowercase())
+                            && !k.is_empty()
+                            && k.chars().all(|x| x.is_ascii_digit())
+                    });
+                    if !ok {
+                        return Err("block must be a block id like b-1x2y3z-7, from read_doc's <!-- block … --> markers.".into());
+                    }
+                    out["block"] = json!(block);
+                }
+                // Exact text: not trimmed, and never empty.
+                match obj.get("quote") {
+                    None | Some(Value::Null) => {}
+                    Some(Value::String(q)) if q.is_empty() => return Err("quote can't be empty: give the exact text, or leave it out.".into()),
+                    Some(Value::String(q)) if q.chars().count() > MAX_DOC_TEXT => {
+                        return Err(format!("quote is too long (at most {MAX_DOC_TEXT} characters)."));
+                    }
+                    Some(Value::String(q)) => out["quote"] = json!(q),
+                    Some(_) => return Err("quote must be a string.".into()),
+                }
+            }
+            if tool == "suggest_doc_edit" {
+                // May be empty: a suggested deletion.
+                match obj.get("replacement") {
+                    Some(Value::String(r)) if r.chars().count() > MAX_DOC_TEXT => {
+                        return Err(format!("replacement is too long (at most {MAX_DOC_TEXT} characters)."));
+                    }
+                    Some(Value::String(r)) => out["replacement"] = json!(r),
+                    None | Some(Value::Null) => return Err("replacement is required (an empty string suggests deleting the text).".into()),
+                    Some(_) => return Err("replacement must be a string.".into()),
+                }
+                if out.get("block").is_none() && out.get("quote").is_none() {
+                    return Err("Give the block or the exact quote the suggestion replaces.".into());
+                }
+                if let Some(note) = s("note", MAX_DOC_TEXT, false)?.filter(|x| !x.trim().is_empty()) {
+                    out["note"] = json!(note);
+                }
+            }
+            out
+        }
         "list_notes" => {
             let mut out = json!({ "limit": n("limit", 1, 200, 50)? });
             if let Some(q) = s("q", 200, false)?.filter(|q| !q.trim().is_empty()) {
@@ -1044,13 +1111,18 @@ fn list_tools(backend: &dyn Backend) -> Value {
     }
 }
 
+/// The factory's doc tools (MF-365): listed by the factory, but their arguments are checked here first.
+const DOC_TOOLS: &[&str] = &["list_docs", "read_doc", "comment_on_doc", "reply_to_doc_thread", "resolve_doc_thread", "suggest_doc_edit"];
+/// A doc comment's or suggestion's longest text, as the server's MAX_COMMENT / MAX_REPLACEMENT.
+const MAX_DOC_TEXT: usize = 10_000;
+
 /// Built-in names the factory also serves, with its own arguments: never checked against ours.
 const FACTORY_OWNED: &[&str] = &["prove", "share_artifact"];
 
 pub fn call_tool(backend: &dyn Backend, name: &str, args: &Value) -> Value {
     // The built-in tools are checked here; the factory checks its own. `prove` is the factory's in a
     // task session (its list is what the agent sees, with `item`), so it goes through as it came.
-    let args = if TOOL_NAMES.contains(&name) && !FACTORY_OWNED.contains(&name) {
+    let args = if (TOOL_NAMES.contains(&name) && !FACTORY_OWNED.contains(&name)) || DOC_TOOLS.contains(&name) {
         match validate(name, args) {
             Ok(args) => args,
             Err(e) => return tool_result(&e, None, true),
@@ -1320,6 +1392,41 @@ mod tests {
         assert!(err("edit_note", json!({"id": id, "old": "a", "new": 1})).contains("new must be a string"));
         assert!(err("edit_note", json!({"old": "a", "new": "b"})).contains("id or title"));
         assert!(err("edit_note", json!({"id": id, "old": "a", "new": "b", "version": 1.5})).contains("version"));
+    }
+
+    #[test]
+    fn validates_doc_tools() {
+        let ok = |t: &str, a: Value| validate(t, &a).unwrap();
+        let err = |t: &str, a: Value| validate(t, &a).unwrap_err();
+        let doc = "11111111-1111-4111-8111-111111111111";
+        let thread = "22222222-2222-4222-8222-222222222222";
+        assert_eq!(ok("list_docs", json!({})), json!({"limit": 50}));
+        assert_eq!(ok("list_docs", json!({"q": " plan ", "limit": 5})), json!({"limit": 5, "q": "plan"}));
+        assert!(err("list_docs", json!({"limit": 0})).contains("whole number"));
+        assert_eq!(ok("read_doc", json!({"doc": doc.to_uppercase()})), json!({"doc": doc}));
+        assert!(err("read_doc", json!({"doc": "nope"})).contains("doc must be a doc id"));
+        assert!(err("read_doc", json!({})).contains("doc is required"));
+        // A comment: anchored to a block, a quote (exact, untrimmed) or neither (the whole doc).
+        assert_eq!(ok("comment_on_doc", json!({"doc": doc, "text": "Why?"})), json!({"doc": doc, "text": "Why?"}));
+        assert_eq!(ok("comment_on_doc", json!({"doc": doc, "text": "Why?", "quote": " on Friday "}))["quote"], " on Friday ");
+        assert_eq!(ok("comment_on_doc", json!({"doc": doc, "text": "x", "block": " b-19ztglx-7 "}))["block"], "b-19ztglx-7");
+        assert!(err("comment_on_doc", json!({"doc": doc, "text": "x", "block": "para-3"})).contains("block must be a block id"));
+        assert!(err("comment_on_doc", json!({"doc": doc, "text": "x", "quote": ""})).contains("quote can't be empty"));
+        assert!(err("comment_on_doc", json!({"doc": doc, "text": "  "})).contains("text can't be empty"));
+        assert!(err("comment_on_doc", json!({"doc": doc, "text": "x".repeat(MAX_DOC_TEXT + 1)})).contains("too long"));
+        assert_eq!(ok("reply_to_doc_thread", json!({"doc": doc, "thread": thread, "text": "Done"})), json!({"doc": doc, "thread": thread, "text": "Done"}));
+        assert!(err("reply_to_doc_thread", json!({"doc": doc, "thread": "t1", "text": "x"})).contains("thread must be a thread id"));
+        assert_eq!(ok("resolve_doc_thread", json!({"doc": doc, "thread": thread})), json!({"doc": doc, "thread": thread}));
+        // A suggestion needs a block or a quote; an empty replacement is a deletion.
+        assert_eq!(
+            ok("suggest_doc_edit", json!({"doc": doc, "replacement": "on Monday", "quote": "on Friday", "note": "Moved"})),
+            json!({"doc": doc, "replacement": "on Monday", "quote": "on Friday", "note": "Moved"})
+        );
+        assert_eq!(ok("suggest_doc_edit", json!({"doc": doc, "replacement": "", "block": "b-a-1"}))["replacement"], "");
+        assert!(err("suggest_doc_edit", json!({"doc": doc, "replacement": "x"})).contains("block or the exact quote"));
+        assert!(err("suggest_doc_edit", json!({"doc": doc, "quote": "x"})).contains("replacement is required"));
+        assert!(err("suggest_doc_edit", json!({"doc": doc, "quote": "x", "replacement": "y".repeat(MAX_DOC_TEXT + 1)})).contains("too long"));
+        assert!(err("suggest_doc_edit", json!({"doc": "x", "quote": "x", "replacement": "y"})).contains("doc must be a doc id"));
     }
 
     #[test]
