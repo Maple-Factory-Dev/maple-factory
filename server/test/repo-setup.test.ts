@@ -5,6 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
+import { DOC_TOOL_NAMES } from "../src/factory/tools.ts";
 import { Engine } from "../src/factory/engine.ts";
 import { builderPrompt, plannerPrompt, reviewerPrompt } from "../src/factory/prompts.ts";
 import { parseSetup, scriptsProblem, tidyScripts } from "../src/factory/repo-setup.ts";
@@ -119,8 +120,8 @@ test("a task's session prompt carries its repo's instructions", async () => {
 test("maple MCP: personal sessions get get_repo_setup and save_repo_setup; factory sessions don't", async () => {
   const f = factory();
   const names = async (machine: string, session: string) => ((await f.mcp(machine, session, "tools/list")).result!.data.tools as { name: string }[]).map((t) => t.name);
-  assert.deepEqual(await names("boss-mbp", PERSONAL), ["get_repo_setup", "save_repo_setup"]);
-  assert.deepEqual(await names("pat-mbp", PERSONAL), ["get_repo_setup", "save_repo_setup"]);
+  assert.deepEqual(await names("boss-mbp", PERSONAL), [...DOC_TOOL_NAMES, "get_repo_setup", "save_repo_setup"]);
+  assert.deepEqual(await names("pat-mbp", PERSONAL), [...DOC_TOOL_NAMES, "get_repo_setup", "save_repo_setup"]);
   // A factory task's session (the machine says it has a task), with or without a session record.
   assert.deepEqual(await names("boss-mbp", FACTORY), []);
   assert.match((await f.mcp("boss-mbp", FACTORY, "save_repo_setup", { repo: REPO, prompts: { builder: "x" } })).error!, /isn't working on a factory task/);
