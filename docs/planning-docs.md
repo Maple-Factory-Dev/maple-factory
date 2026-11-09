@@ -134,10 +134,13 @@ form that stays readable on GitHub and for agents reading an exported doc. Type 
 | Toggle | a collapsible section with a heading | `> [!TOGGLE] heading`, then the quoted body |
 | Divider | a rule | `---` |
 | Task embed | a live card: id, title, state, PR and owner, redrawn as the feed changes (slash menu → pick a task) | `> [!TASK] MF-12 · title · state · PR #n · @owner` (only the id is read back) |
-| Research | ask an agent: Ask creates a `Research: <question>` task in the picked goal (the doc's by default); the block shows its live state, then the answer, with **Insert answer** (as editable text below) and **Open report** | `> [!RESEARCH] MF-40 · question`, then the answer quoted (only the id and question are read back) |
 
-The host passes full tasks (`tasks()`: id, title, state, pr, assignee, goal, findings), `goals()` and the
-doc's goal, and calls `handle.tasksChanged()` when the feed changes (the web app on `task.updated` and
-`snapshot`; app hosts through `mapleDocs.updateTasks(tasks)`). A research block's Ask raises
-`createResearch {question, goal, docId, pos}`; the host sends `task.create` and answers with
-`handle.setResearchTask(pos, id)`. Export snapshots each embed's current state and each answer.
+The host passes full tasks (`tasks()`: id, title, state, pr, assignee, goal) and calls
+`handle.tasksChanged()` when the feed changes (the web app on `task.updated` and `snapshot`; app hosts
+through `mapleDocs.updateTasks(tasks)`). Export snapshots each embed's current state.
+
+Images load only from `/attachments/`: an image in pasted or imported Markdown that points anywhere else
+(or sits inside other text) stays a plain link, so a doc never makes a viewer's browser fetch an outside URL.
+
+A `/research` block (ask an agent from inside a doc, answer embedded) was pulled out of MF-363 and left to
+MF-366; until then a `> [!RESEARCH]` quote imports as an ordinary quote.

@@ -182,7 +182,7 @@ function receive(m) {
   settings.receive(m);
   // Docs (MF-361): state.docs from the snapshot, doc.updated and doc.removed.
   if (docs.receive(m) && m.type !== "snapshot") return render();
-  if (m.type === "task.updated" || m.type === "snapshot") queueMicrotask(() => docs.tasksChanged(m)); // live task embeds (MF-363)
+  if (m.type === "task.updated" || m.type === "snapshot") queueMicrotask(() => docs.tasksChanged()); // live task embeds (MF-363)
   switch (m.type) {
     case "snapshot":
       Object.assign(state, { me: m.me, org: m.org, members: m.members, goals: m.goals, live: true });

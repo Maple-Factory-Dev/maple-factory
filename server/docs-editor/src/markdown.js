@@ -2,7 +2,8 @@
 // TipTap schema: headings, bullet/ordered/task lists, quotes, fenced code with its language, links, bold/
 // italic/code/strike, and two inline atoms: member mentions (`@login`) and task refs (`MF-12`). MF-363 adds
 // the planning visuals: ```mermaid and ```chart fences, GFM tables, attachment images and file links, and
-// GitHub alert quotes for callouts, toggles, task embeds and research blocks.
+// GitHub alert quotes for callouts, toggles and task embeds. Images
+// load only from /attachments/; any other image stays a plain link.
 import MarkdownIt from "markdown-it";
 import { MarkdownParser, MarkdownSerializer } from "prosemirror-markdown";
 import { Slice, Fragment } from "@tiptap/pm/model";
@@ -92,8 +93,19 @@ function tokenizer({ members, tasks }) {
   return md;
 }
 
-const ALERT = /^\[!(NOTE|TIP|WARNING|IMPORTANT|TOGGLE|TASK|RESEARCH)\][ \t]*([^\n]*)/;
+const ALERT = /^\[!(NOTE|TIP|WARNING|IMPORTANT|TOGGLE|TASK)\][ \t]*([^\n]*)/;
 const ATTACHMENT = /^\/attachments\//;
+
+/** An image that isn't an attachment alone in its paragraph (those became image nodes), as a link to its src:
+ *  docs never make viewers' browsers load outside URLs (tracking pixels in pasted or agent-written Markdown). */
+function imageAsLink(T, img) {
+  const src = img.attrGet("src") ?? "";
+  const open = new T("link_open", "a", 1);
+  open.attrs = [["href", src]];
+  const text = new T("text", "", 0);
+  text.content = img.content || src;
+  return [open, text, new T("link_close", "a", -1)];
+}
 
 /** A core rule (before task refs) that turns block tokens into the planning-visual tokens. */
 function visuals(state) {
@@ -102,6 +114,7 @@ function visuals(state) {
   const closeOf = (i) => { for (let j = i + 1; j < toks.length; j++) if (toks[j].type === "blockquote_close" && toks[j].level === toks[i].level) return j; return toks.length - 1; };
   for (let i = 0; i < toks.length; i++) {
     const tok = toks[i];
+    if (tok.type === "inline" && tok.children?.some((k) => k.type === "image")) tok.children = tok.children.flatMap((k) => (k.type === "image" ? imageAsLink(T, k) : [k]));
     if (tok.type === "fence") {
       const lang = tok.info.trim().split(/\s+/)[0];
       if (lang === "mermaid") tok.type = "mermaid";
@@ -117,7 +130,7 @@ function visuals(state) {
     } else if (tok.type === "paragraph_open" && toks[i + 1]?.type === "inline" && toks[i + 2]?.type === "paragraph_close") {
       const kids = toks[i + 1].children ?? [];
       let t = null;
-      if (kids.length === 1 && kids[0].type === "image") {
+      if (kids.length === 1 && kids[0].type === "image" && ATTACHMENT.test(kids[0].attrGet("src") ?? "")) {
         t = new T("doc_image", "", 0);
         const width = +(kids[0].attrGet("title") ?? "").match(/^width=(\d+)$/)?.[1] || null;
         t.attrs = [["src", kids[0].attrGet("src")], ["alt", kids[0].content], ["width", width]];
@@ -136,11 +149,11 @@ function visuals(state) {
       if (!m) continue;
       const [, kind, rest] = m;
       const j = closeOf(i);
-      if (kind === "TASK" || kind === "RESEARCH") {
-        // Atoms: only the marker line is read back; the rest (the task's live state, the answer) is a snapshot.
+      if (kind === "TASK") {
+        // An atom: only the marker line's id is read back; the rest (the task's live state) is a snapshot.
         const id = rest.match(new RegExp(`^(${TASK_ID.source})\\b`))?.[1] ?? null;
-        const t = new T(kind === "TASK" ? "task_embed" : "research", "", 0);
-        t.attrs = kind === "TASK" ? [["id", id]] : [["task", id], ["question", id ? rest.slice(id.length).replace(/^\s*·\s*/, "") : rest.trim()]];
+        const t = new T("task_embed", "", 0);
+        t.attrs = [["id", id]];
         toks.splice(i, j - i + 1, t);
         continue;
       }
@@ -184,7 +197,6 @@ export function markdownParser(schema, ctx = {}) {
     callout: { block: "callout", getAttrs: (tok) => ({ tone: tok.attrGet("tone") }) },
     toggle: { block: "toggle", getAttrs: (tok) => ({ summary: tok.attrGet("summary") }) },
     task_embed: { node: "taskEmbed", getAttrs: (tok) => ({ id: tok.attrGet("id") }), noCloseToken: true },
-    research: { node: "research", getAttrs: (tok) => ({ task: tok.attrGet("task"), question: tok.attrGet("question") }), noCloseToken: true },
     hardbreak: { node: "hardBreak" },
     mention: { node: "mention", getAttrs: (tok) => ({ id: tok.attrGet("id"), label: tok.attrGet("label") }) },
     taskref: { node: "taskRef", getAttrs: (tok) => ({ id: tok.attrGet("id"), title: tok.attrGet("title") }) },
@@ -215,15 +227,8 @@ const fence = (state, node, lang, body) => {
 const linkTarget = (href) => (/[\s()<>]/.test(href) ? `<${href.replace(/[<>]/g, encodeURIComponent)}>` : href);
 /** One table cell as single-line Markdown, its pipes escaped. */
 const cellText = (cell) => serializer.serialize(cell).trim().replace(/\n+/g, " ").replace(/(?<!\\)\|/g, "\\|");
-/** An alert quote: `> [!KIND] line`, then optional extra Markdown lines, each quoted. */
-const alert = (state, node, line, extra = null) => state.wrapBlock("> ", null, node, () => {
-  state.write(line);
-  for (const l of extra ? extra.trim().split("\n") : []) {
-    state.out += "\n";
-    if (l.trim()) state.write(l);
-    else state.out += state.delim.replace(/\s+$/, "");
-  }
-});
+/** An alert quote with a single marker line: `> [!KIND] line`. */
+const alert = (state, node, line) => state.wrapBlock("> ", null, node, () => state.write(line));
 
 const list = (indent, delim) => (state, node) => state.renderList(node, indent, typeof delim === "function" ? delim(node) : () => delim);
 
@@ -287,11 +292,6 @@ export const serializer = new MarkdownSerializer(
       const parts = [node.attrs.id ?? "", t?.title && oneLine(t.title), t?.state, t?.pr?.number && `PR #${t.pr.number}`, t?.assignee && `@${t.assignee}`];
       alert(state, node, `[!TASK] ${parts.filter(Boolean).join(" · ")}`);
     },
-    research: (state, node) => {
-      const t = exportTasks?.(node.attrs.task);
-      const q = oneLine(node.attrs.question);
-      alert(state, node, `[!RESEARCH] ${node.attrs.task ? `${node.attrs.task} · ${q}` : q}`, t?.findings?.answer ?? null);
-    },
   },
   {
     italic: { open: "*", close: "*", mixable: true, expelEnclosingWhitespace: true },
@@ -323,7 +323,7 @@ function backticks(node, side) {
 }
 
 /** A ProseMirror doc → Markdown. `tasks` (an id → task lookup) snapshots task embeds' state, PR and owner,
- *  and research blocks' answers, into the export. */
+ *  into the export. */
 export function toMarkdown(doc, { tasks = null } = {}) {
   exportTasks = tasks;
   try {

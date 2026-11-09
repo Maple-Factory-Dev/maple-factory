@@ -72,10 +72,6 @@ export const SLASH_ITEMS = [
   { title: "Callout", icon: "!", run: (c) => c.wrapIn("callout", { tone: "note" }) },
   { title: "Toggle", icon: "▸", run: (c) => c.wrapIn("toggle", { summary: "", open: true }) },
   { title: "Task embed", icon: "#", hint: "live card", run: (c, editor) => { if (editor.storage.docVisuals) editor.storage.docVisuals.embedNext = true; return c.insertContent("#"); } },
-  { title: "Research", icon: "?", hint: "ask an agent", run: (c, editor) => {
-      setTimeout(() => [...editor.view.dom.querySelectorAll(".doc-research textarea")].pop()?.focus(), 30);
-      return c.insertContent({ type: "research", attrs: { question: "", task: null, goal: null } });
-    } },
 ];
 
 /** `/` at the start of a word opens the block menu. */

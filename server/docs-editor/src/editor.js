@@ -5,7 +5,6 @@ import Collaboration from "@tiptap/extension-collaboration";
 import CollaborationCaret from "@tiptap/extension-collaboration-caret";
 import BubbleMenu from "@tiptap/extension-bubble-menu";
 import { Plugin } from "@tiptap/pm/state";
-import { DOMSerializer } from "@tiptap/pm/model";
 import * as Y from "yjs";
 import { WebsocketProvider } from "y-websocket";
 import { prosemirrorToYXmlFragment } from "@tiptap/y-tiptap";
@@ -66,12 +65,10 @@ function localProvider(ydoc) {
  * token: an app token sent as the socket's `maple-token` subprotocol (cookie auth when absent);
  * onEvent(name, data): status {status}, peers [{login,name,color,avatar}], synced, error {message}, openTask {id}.
  * demo: { markdown } opens a local-only doc seeded from Markdown, with no socket (the Mac app's signed-out mockup).
- * Planning visuals (MF-363): tasks() returns full tasks {id, title, state, pr, assignee, goal, findings} for
- * live embeds and research blocks; goals(): [{id, name}]; docGoal: the doc's goal id; upload(file) → {path,
- * name, mime, size} (default: POST /api/attachments); mermaidPage: the diagram page. onEvent also gets
- * createResearch {question, goal, docId, pos}, answered by handle.setResearchTask(pos, id).
+ * Planning visuals (MF-363): tasks() returns full tasks {id, title, state, pr, assignee, goal} for live
+ * embeds; upload(file) → {path, name, mime, size} (default: POST /api/attachments); mermaidPage: the diagram page.
  */
-export function createDocEditor({ el, docId, me, members = () => [], tasks = () => [], goals = () => [], docGoal = null, upload = null, mermaidPage = "/app/mermaid/diagram.html", theme, token, origin = location.origin, onEvent = () => {}, demo = null }) {
+export function createDocEditor({ el, docId, me, members = () => [], tasks = () => [], upload = null, mermaidPage = "/app/mermaid/diagram.html", theme, token, origin = location.origin, onEvent = () => {}, demo = null }) {
   const ydoc = new Y.Doc();
   let provider;
   if (demo) {
@@ -103,13 +100,8 @@ export function createDocEditor({ el, docId, me, members = () => [], tasks = () 
     if (!res.ok) throw new Error((await res.text()) || `upload failed (${res.status})`);
     return res.json();
   });
-  // The node views' callbacks (nodes.js). parseMarkdown/serializeFragment render research answers.
-  const host = {
-    tasks, members, goals, docGoal: () => docGoal, docId, onEvent, mermaidPage, origin,
-    listeners: new Set(),
-    parseMarkdown: (text) => fromMarkdown(docSchema, text, ctx()),
-    serializeFragment: (frag) => DOMSerializer.fromSchema(docSchema).serializeFragment(frag),
-  };
+  // The node views' callbacks (nodes.js).
+  const host = { tasks, members, docId, onEvent, mermaidPage, origin, listeners: new Set() };
   /** Uploads files and inserts each as an image or file chip at `pos` (the selection when absent). */
   async function insertFiles(files, pos = null) {
     for (const file of files) {
@@ -201,19 +193,8 @@ export function createDocEditor({ el, docId, me, members = () => [], tasks = () 
     provider,
     ydoc,
     exportMarkdown: () => toMarkdown(editor.state.doc, { tasks: resolver() }),
-    /** The host's tasks changed (a feed update): task embeds and research blocks redraw, the selection stays. */
+    /** The host's tasks changed (a feed update): task embeds redraw, the selection stays. */
     tasksChanged: () => host.listeners.forEach((f) => f()),
-    /** Answers a research block's createResearch: the block at `pos` (or the first unsent one) gets task `id`. */
-    setResearchTask(pos, id) {
-      let at = null;
-      const node = typeof pos === "number" ? editor.state.doc.nodeAt(pos) : null;
-      if (node?.type.name === "research" && !node.attrs.task) at = pos;
-      else editor.state.doc.descendants((n, p) => { if (at == null && n.type.name === "research" && !n.attrs.task && n.attrs.question) at = p; });
-      if (at == null) return false;
-      const n = editor.state.doc.nodeAt(at);
-      editor.view.dispatch(editor.state.tr.setNodeMarkup(at, null, { ...n.attrs, task: id }));
-      return true;
-    },
     insertFiles,
     setTheme,
     setEditable: (on) => editor.setEditable(on),

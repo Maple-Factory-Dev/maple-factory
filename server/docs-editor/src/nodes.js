@@ -1,12 +1,12 @@
 // Planning visuals for docs (MF-363, docs/planning-docs.md): Mermaid diagrams, tables, charts drawn from the
-// table above them, R2 images and file attachments, callouts and toggles, live task embeds and /research
-// blocks. The schema parts load in Node (the Markdown tests); node views only run in the browser.
+// table above them, R2 images and file attachments, callouts and toggles, and live task embeds.
+// The schema parts load in Node (the Markdown tests); node views only run in the browser.
 //
 // Host callbacks come in through one `host` object, shared by every node view of an editor:
-//   tasks(): full task objects {id, title, state, pr {number, url, state}, assignee, goal, findings}
-//   goals(): [{id, name}]; docGoal(): the doc's goal id; docId
-//   onEvent(name, data): openTask {id}, createResearch {question, goal, docId, pos}
-//   mermaidPage: the diagram page URL; parseMarkdown(text): a ProseMirror doc (set by the editor)
+//   tasks(): full task objects {id, title, state, pr {number, url, state}, assignee, goal}
+//   docId
+//   onEvent(name, data): openTask {id}
+//   mermaidPage: the diagram page URL
 //   listeners: redraw callbacks, run by the editor's tasksChanged()
 import { Node, mergeAttributes } from "@tiptap/core";
 import { Table, TableRow, TableHeader, TableCell } from "@tiptap/extension-table";
@@ -361,91 +361,6 @@ export const TaskEmbed = Node.create({
   },
 });
 
-export const Research = Node.create({
-  name: "research",
-  group: "block",
-  atom: true,
-  selectable: true,
-  draggable: true,
-  addOptions: () => ({ host: null }),
-  addAttributes: () => ({
-    task: { default: null, parseHTML: (e) => e.getAttribute("data-task") },
-    question: { default: "", parseHTML: (e) => e.getAttribute("data-question") ?? "" },
-    goal: { default: null, parseHTML: (e) => e.getAttribute("data-goal") },
-  }),
-  parseHTML: () => [{ tag: "div[data-type=research]" }],
-  renderHTML: ({ node }) => ["div", { "data-type": "research", "data-task": node.attrs.task, "data-question": node.attrs.question, "data-goal": node.attrs.goal, class: "doc-research" }, node.attrs.question],
-  addNodeView() {
-    const host = this.options.host;
-    return ({ node, editor, getPos }) => {
-      let current = node;
-      let sending = false;
-      const dom = el("div", { class: "doc-research", "data-type": "research", contenteditable: "false" });
-      let last = "";
-      const draw = (force) => {
-        const task = findTask(host, current.attrs.task);
-        const key = JSON.stringify([current.attrs, sending, task?.state, task?.title, task?.findings?.answer, task?.pr]);
-        if (key === last && !force) return;
-        if (dom.contains(document.activeElement) && !current.attrs.task) return; // don't wipe a question being typed
-        last = key;
-        dom.dataset.task = current.attrs.task ?? "";
-        const label = el("div", { class: "doc-block-label" }, "Research", current.attrs.task ? el("span", { class: "doc-embed-id" }, current.attrs.task) : null);
-        if (!current.attrs.task) {
-          const q = el("textarea", { class: "doc-research-q", rows: 2, placeholder: "Ask an agent a question…", "aria-label": "Research question" });
-          q.value = current.attrs.question;
-          const goals = host?.goals?.() ?? [];
-          const goal = el("select", { class: "doc-research-goal", "aria-label": "Goal" }, goals.map((g) => el("option", { value: g.id, selected: g.id === (current.attrs.goal ?? host?.docGoal?.()) }, g.name)));
-          const ask = () => {
-            const question = q.value.trim();
-            if (!question || sending) return;
-            sending = true;
-            const g = goal.value || host?.docGoal?.() || null;
-            setAttrs(editor, getPos, { question, goal: g });
-            host?.onEvent?.("createResearch", { question, goal: g, docId: host?.docId, pos: getPos() });
-            draw(true);
-          };
-          q.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey || !e.shiftKey)) { e.preventDefault(); ask(); } });
-          dom.replaceChildren(label, sending
-            ? el("div", { class: "doc-research-status" }, el("span", { class: "doc-spinner" }), `Creating a research task: ${current.attrs.question}`)
-            : el("div", { class: "doc-research-ask" }, q, el("div", { class: "row" }, goal, el("button", { type: "button", class: "doc-btn", onclick: ask }, "Ask"))));
-          return;
-        }
-        sending = false;
-        const answer = task?.findings?.answer;
-        const head = el("div", { class: "doc-research-question" }, current.attrs.question || task?.title || "");
-        if (!answer) {
-          dom.replaceChildren(label, head, el("div", { class: "doc-research-status" }, el("span", { class: "doc-spinner" }), taskCard(task, current.attrs.task, host)));
-          return;
-        }
-        const body = el("div", { class: "doc-research-answer doc-prose-like" });
-        try {
-          const parsed = host?.parseMarkdown?.(answer);
-          if (parsed) body.append(host.serializeFragment(parsed.content));
-          else body.textContent = answer;
-        } catch { body.textContent = answer; }
-        const insert = () => {
-          const parsed = host?.parseMarkdown?.(answer);
-          const pos = getPos();
-          if (!parsed || typeof pos !== "number") return;
-          editor.chain().focus().insertContentAt(pos + current.nodeSize, parsed.content.toJSON()).run();
-        };
-        dom.replaceChildren(label, head, body, el("div", { class: "row doc-research-actions" },
-          el("button", { type: "button", class: "doc-btn", "data-insert-answer": true, onclick: insert }, "Insert answer"),
-          el("button", { type: "button", class: "doc-btn ghost", onclick: () => host?.onEvent?.("openTask", { id: current.attrs.task, report: task.findings.report ?? null }) }, "Open report")));
-      };
-      draw();
-      const off = subscribe(host, () => draw());
-      return {
-        dom,
-        update(next) { if (next.type !== current.type) return false; current = next; draw(); return true; },
-        stopEvent: ownEvent,
-        ignoreMutation: () => true,
-        destroy: off,
-      };
-    };
-  },
-});
-
 /** The planning-visual extensions, sharing one `host`. */
 export function visualExtensions(host = null) {
   return [
@@ -458,6 +373,5 @@ export function visualExtensions(host = null) {
     Callout,
     Toggle,
     TaskEmbed.configure({ host }),
-    Research.configure({ host }),
   ];
 }
