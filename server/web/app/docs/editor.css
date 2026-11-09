@@ -144,3 +144,37 @@
 .doc-composer textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--stroke); border-radius: 6px; background: var(--bg, transparent); color: var(--text); font: inherit; padding: 6px; resize: vertical; }
 .doc-composer-actions { display: flex; gap: 6px; margin-top: 4px; }
 .doc-composer-mentions { position: absolute; z-index: 5; left: 0; right: 0; background: var(--card); border: 1px solid var(--stroke); border-radius: 8px; padding: 4px; box-shadow: 0 6px 20px rgba(0,0,0,.15); }
+
+/* Code blocks (MF-384): a language picker in the top-right corner, lowlight's hljs-* token colors. Plain text
+   blocks get no token spans, so they look as they always did. */
+.doc-codeblock { position: relative; }
+.doc-codeblock + * { margin-top: 0.6em; }
+.doc-code-head { position: absolute; top: 6px; right: 8px; z-index: 1; opacity: .55; transition: opacity .12s; }
+.doc-codeblock:hover .doc-code-head, .doc-code-head:focus-within { opacity: 1; }
+.doc-code-lang { appearance: none; -webkit-appearance: none; max-width: 160px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--muted); font: 500 11px/1.4 system-ui, sans-serif; padding: 2px 16px 2px 6px; cursor: pointer; background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%); background-position: right 8px center, right 4px center; background-size: 4px 4px; background-repeat: no-repeat; }
+.doc-code-lang:hover, .doc-code-lang:focus { border-color: var(--stroke); background-color: var(--card); color: var(--text); outline: none; }
+.doc-codeblock pre { padding-right: 24px; }
+.doc-prose .hljs-comment, .doc-prose .hljs-quote { color: #6a737d; font-style: italic; }
+.doc-prose .hljs-keyword, .doc-prose .hljs-selector-tag, .doc-prose .hljs-doctag, .doc-prose .hljs-meta .hljs-keyword, .doc-prose .hljs-template-tag { color: #cf222e; }
+.doc-prose .hljs-string, .doc-prose .hljs-regexp, .doc-prose .hljs-addition, .doc-prose .hljs-meta .hljs-string { color: #0a3069; }
+.doc-prose .hljs-number, .doc-prose .hljs-literal, .doc-prose .hljs-variable.constant_, .doc-prose .hljs-symbol, .doc-prose .hljs-bullet { color: #0550ae; }
+.doc-prose .hljs-title, .doc-prose .hljs-title.function_, .doc-prose .hljs-section { color: #8250df; }
+.doc-prose .hljs-title.class_, .doc-prose .hljs-type, .doc-prose .hljs-built_in, .doc-prose .hljs-selector-class, .doc-prose .hljs-selector-id { color: #953800; }
+.doc-prose .hljs-attr, .doc-prose .hljs-attribute, .doc-prose .hljs-property, .doc-prose .hljs-params, .doc-prose .hljs-variable, .doc-prose .hljs-template-variable { color: #0550ae; }
+.doc-prose .hljs-name, .doc-prose .hljs-tag, .doc-prose .hljs-selector-pseudo { color: #116329; }
+.doc-prose .hljs-meta { color: #6639ba; }
+.doc-prose .hljs-deletion { color: #82071e; background: color-mix(in srgb, #ff818266 50%, transparent); }
+.doc-prose .hljs-addition { background: color-mix(in srgb, #aceebb 60%, transparent); }
+.doc-prose .hljs-emphasis { font-style: italic; }
+.doc-prose .hljs-strong { font-weight: 700; }
+.doc-prose .hljs-link { text-decoration: underline; }
+.doc-editor[data-theme="dark"] .hljs-comment, .doc-editor[data-theme="dark"] .hljs-quote { color: #8b949e; }
+.doc-editor[data-theme="dark"] .hljs-keyword, .doc-editor[data-theme="dark"] .hljs-selector-tag, .doc-editor[data-theme="dark"] .hljs-doctag, .doc-editor[data-theme="dark"] .hljs-meta .hljs-keyword, .doc-editor[data-theme="dark"] .hljs-template-tag { color: #ff7b72; }
+.doc-editor[data-theme="dark"] .hljs-string, .doc-editor[data-theme="dark"] .hljs-regexp, .doc-editor[data-theme="dark"] .hljs-addition, .doc-editor[data-theme="dark"] .hljs-meta .hljs-string { color: #a5d6ff; }
+.doc-editor[data-theme="dark"] .hljs-number, .doc-editor[data-theme="dark"] .hljs-literal, .doc-editor[data-theme="dark"] .hljs-variable.constant_, .doc-editor[data-theme="dark"] .hljs-symbol, .doc-editor[data-theme="dark"] .hljs-bullet, .doc-editor[data-theme="dark"] .hljs-attr, .doc-editor[data-theme="dark"] .hljs-attribute, .doc-editor[data-theme="dark"] .hljs-property, .doc-editor[data-theme="dark"] .hljs-params, .doc-editor[data-theme="dark"] .hljs-variable, .doc-editor[data-theme="dark"] .hljs-template-variable { color: #79c0ff; }
+.doc-editor[data-theme="dark"] .hljs-title, .doc-editor[data-theme="dark"] .hljs-title.function_, .doc-editor[data-theme="dark"] .hljs-section { color: #d2a8ff; }
+.doc-editor[data-theme="dark"] .hljs-title.class_, .doc-editor[data-theme="dark"] .hljs-type, .doc-editor[data-theme="dark"] .hljs-built_in, .doc-editor[data-theme="dark"] .hljs-selector-class, .doc-editor[data-theme="dark"] .hljs-selector-id { color: #ffa657; }
+.doc-editor[data-theme="dark"] .hljs-name, .doc-editor[data-theme="dark"] .hljs-tag, .doc-editor[data-theme="dark"] .hljs-selector-pseudo { color: #7ee787; }
+.doc-editor[data-theme="dark"] .hljs-meta { color: #d2a8ff; }
+.doc-editor[data-theme="dark"] .hljs-deletion { color: #ffdcd7; background: color-mix(in srgb, #f85149 25%, transparent); }
+.doc-editor[data-theme="dark"] .hljs-addition { background: color-mix(in srgb, #2ea043 25%, transparent); }
