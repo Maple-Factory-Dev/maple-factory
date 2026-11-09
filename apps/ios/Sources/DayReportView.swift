@@ -91,19 +91,20 @@ struct DayReportView: View {
             }
             Spacer()
             HStack(spacing: 4) {
-                Button { step(-1) } label: { Image(systemName: "chevron.left").frame(width: 30, height: 30) }
+                Button { step(-1) } label: { Image(systemName: "chevron.left").frame(width: 18, height: 22) }
                     .accessibilityLabel("The day before")
                     .accessibilityIdentifier("dayReport.prev")
-                Button("Today") { day = Calendar.current.startOfDay(for: Date()) }
+                Button { day = Calendar.current.startOfDay(for: Date()) } label: { Text("Today").lineLimit(1).fixedSize() }
                     .disabled(isToday)
                     .accessibilityIdentifier("dayReport.today")
-                Button { step(1) } label: { Image(systemName: "chevron.right").frame(width: 30, height: 30) }
+                Button { step(1) } label: { Image(systemName: "chevron.right").frame(width: 18, height: 22) }
                     .disabled(isToday)
                     .accessibilityLabel("The day after")
                     .accessibilityIdentifier("dayReport.next")
             }
             .buttonStyle(.bordered)
             .buttonBorderShape(.capsule)
+            .fixedSize()
         }
     }
 
