@@ -54,6 +54,19 @@ import dev.maplefactory.wire.Worker
  * switcher has somewhere to go.
  */
 object DemoData {
+    /** MF-358's demo diagram (APP-14), the same as the iPhone's: "runner" matches three labels. */
+    const val APPROVAL_FLOW = """flowchart LR
+  plan[Plan v2 ready] --> push[Server sends APNs push]
+  push --> tap{Approve tapped?}
+  tap -- yes --> approve[task.approvePlan]
+  tap -- no --> wait[Waits in the inbox]
+  approve --> runner[Runner picks up the build]
+  runner -- needs a Mac --> mac[Runner on a Mac with Xcode]
+  runner -- failed --> retry[Runner retries once]"""
+
+    /** The `diagramSource` launch extra: swaps the demo diagram's source, e.g. to screenshot a parse error. */
+    var diagramSource: String? = null
+
     private val now: Long get() = System.currentTimeMillis()
     private fun ago(minutes: Double): Long = now - (minutes * 60_000).toLong()
 
@@ -148,6 +161,10 @@ object DemoData {
                 footprint = Footprint(files = 6, lines = 240, estimated = true),
                 mockups = listOf(
                     Mockup(id = "m1", title = "The notification", kind = "screen", html = MOCKUP_HTML, status = MockupStatus.Proposed, version = 1),
+                ),
+                diagrams = listOf(
+                    dev.maplefactory.wire.Diagram(id = "D1", title = "Approve from a push", source = diagramSource ?: APPROVAL_FLOW,
+                        notes = listOf("The runner only moves once the server records the approval.")),
                 ),
                 autoReview = AutoReview(
                     maxRounds = 3, rounds = listOf(ReviewRound(number = 1, verdict = ReviewVerdict.ChangesRequested, found = 1, at = ago(20.0))),

@@ -19,6 +19,7 @@ import { builderPrompt, cleanPrompts, MERGE_ANCHOR, type Moving, plannerPrompt, 
 import { goalRepos, OWNER, REPO, taskRepo } from "./repos.ts";
 import { affectedBy, emptyForecast, inFlight, refreshOverlaps, type Lane } from "./forecast.ts";
 import { allowed, isPersonalTool, personalTools, toolsFor } from "./tools.ts";
+import { parseDiagrams } from "./diagrams.ts";
 import { Drafts } from "./drafts.ts";
 import { everyText, Recurrings, whenText } from "./recurring.ts";
 import { followedUp, Scout, SCOUT_PREFIX, type Candidate, type ScoutPick } from "./scout.ts";
@@ -1227,6 +1228,7 @@ export class Engine {
             changes: [],
             events: [{ who, text: `split it off ${task.id}`, at: t }],
             mockups: [],
+            diagrams: [],
             artifacts: [],
             stages: [],
             question: null,
@@ -1429,6 +1431,7 @@ export class Engine {
       changes: [],
       events: [{ who, text: "created it", at: t }],
       mockups: [],
+      diagrams: [],
       artifacts: [],
       stages: [],
       followUps: [],
@@ -2928,6 +2931,7 @@ export class Engine {
         const done = arr(a.doneWhen).map((x) => obj(x));
         if (!steps.length) fail("steps: at least one.");
         if (!done.length) fail("doneWhen: at least one.");
+        const diagrams = parseDiagrams(a.diagrams, fail);
         // Work for the goal's other repos becomes tasks of their own once this plan is approved.
         const goal = this.store.goal(task.goal);
         const repos = goal ? goalRepos(goal) : [];
@@ -2971,6 +2975,7 @@ export class Engine {
         const fp = obj(a.footprint);
         task.footprint = { files: num(fp.files), lines: num(fp.lines), estimated: true };
         const version = task.planVersion;
+        task.diagrams = diagrams;
         task.mockups = arr(a.mockups).map((x, i) => {
           const m = obj(x);
           return {

@@ -8,10 +8,12 @@ enum ProofLightbox: Equatable {
     /// An HTML page (a mockup, or an HTML/SVG artifact) shown at Desktop, Tablet or Mobile width.
     /// `scripts`: false for mockups (no scripts at all), true for artifacts (scripts, but no network).
     case page(html: String, caption: String, scripts: Bool)
+    /// A Mermaid diagram in the viewer page, which pans, zooms and searches (MF-358).
+    case diagram(html: String, caption: String)
 
     var caption: String {
         switch self {
-        case let .image(_, caption, _), let .video(_, _, _, caption, _), let .page(_, caption, _): caption
+        case let .image(_, caption, _), let .video(_, _, _, caption, _), let .page(_, caption, _), let .diagram(_, caption): caption
         }
     }
 }
@@ -468,6 +470,9 @@ final class AppState {
         task.after = FactoryData.seedAfter[task.id] ?? []
         task.tickets = FactoryData.seedTicketLinks[task.id] ?? []
         task.mockups = FactoryData.seedMockups[task.id] ?? []
+        task.diagrams = FactoryData.seedDiagrams[task.id] ?? []
+        // `-diagramsource '<mermaid>'` swaps the demo diagrams' source, e.g. to screenshot a parse error.
+        if let source = AppDefaults.string(forKey: "diagramsource") { for i in task.diagrams.indices { task.diagrams[i].source = source } }
         task.artifacts = FactoryData.seedArtifacts[task.id] ?? []
         if task.id == "ATL-160" {
             task.intakeID = "req-sso"
@@ -2705,6 +2710,8 @@ final class AppState {
                 }
             // MF-296: the first HTML mockup or artifact on screen, opened large (`pageviewer:open`), shown at a width
             // (`pageviewer:desktop`, `:tablet`, `:mobile`, `:fit`) and put away (`pageviewer:close`).
+            // MF-358: the first diagram on screen, opened large (`diagram:open`; `-diagramquery runner` searches it).
+            case "diagram": NotificationCenter.default.post(name: DiagramsSection.demoOpen, object: nil)
             case "pageviewer":
                 switch parts[1] {
                 case "close": closeLightbox()

@@ -255,6 +255,7 @@ private fun Overview(store: FactoryStore, task: Task) {
             }
         }
         for (mockup in task.mockups) Card("Mockup: ${mockup.title}", Icons.Filled.Image) { MockupView(store, mockup) }
+        for (diagram in task.diagrams) Card("Diagram: ${diagram.title}", Icons.Filled.Image) { DiagramCardContent(diagram) }
     }
 }
 

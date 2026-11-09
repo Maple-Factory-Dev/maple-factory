@@ -653,6 +653,16 @@ export interface Mockup {
   differences: string[];
 }
 
+/** A Mermaid diagram the planner drew to explain the change: a flow, an architecture or a state machine. */
+export interface Diagram {
+  /** D1, D2… in the order the plan gave them. */
+  id: string;
+  title: string;
+  /** Mermaid source. Rendered offline with securityLevel 'strict'. */
+  source: string;
+  notes: string[];
+}
+
 /** A file an agent shared on a task: a chart, an image, a repro page. Sharing again under the same title replaces it with the next version. */
 export interface Artifact {
   id: string;
@@ -911,6 +921,7 @@ export interface Task {
   risk?: Risk | null;
   autoReview?: AutoReview | null;
   mockups: Mockup[];
+  diagrams: Diagram[];
   /** Files its agents shared: charts, images, pages. Empty on older tasks. */
   artifacts: Artifact[];
   tickets: TicketLink[];

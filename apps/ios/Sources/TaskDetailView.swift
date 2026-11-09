@@ -111,6 +111,9 @@ struct TaskDetailView: View {
         ForEach(task.mockups, id: \.id) { mockup in
             Card("Mockup: \(mockup.title)", icon: "photo.on.rectangle") { MockupView(task: task, mockup: mockup, compose: $compose) }
         }
+        ForEach(task.diagrams, id: \.id) { diagram in
+            Card("Diagram: \(diagram.title)", icon: "point.3.connected.trianglepath.dotted") { DiagramCard(diagram: diagram) }
+        }
         if !task.artifacts.isEmpty { ArtifactsSection(task: task) }
     }
 }

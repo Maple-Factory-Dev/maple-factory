@@ -384,6 +384,7 @@ struct TaskFocusView: View {
             if !task.artifacts.isEmpty { ArtifactsSection(task: task).id(section.anchor) }
         case .mockups:
             if !task.mockups.isEmpty { MockupsSection(task: task).id(section.anchor) }
+            if !task.diagrams.isEmpty { DiagramsSection(task: task) }
         case .brief:
             if hasBrief {
                 if layout.folded.contains(.brief) {

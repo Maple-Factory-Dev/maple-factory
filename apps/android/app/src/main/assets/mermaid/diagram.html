@@ -1,0 +1,278 @@
+<!doctype html>
+<!--
+  Maple Factory's Mermaid viewer (MF-358). One page shared by the web app, the Mac app, iOS and Android:
+  scripts/sync-mermaid.mjs copies it (and the pinned mermaid.min.js next to it) into each app, and
+  `node scripts/sync-mermaid.mjs --check` fails if a copy drifts.
+
+  Input, any of:
+    - window.MAPLE_DIAGRAM = { source, mode, theme, query } set before this page's scripts run
+    - postMessage({ type: "maple.diagram", source, mode, theme, query }) from the parent frame
+    - window.mapleDiagram.render({ source, mode, theme, query }) from native code (evaluateJavaScript)
+    - ?mode=inline|viewer&theme=light|dark&q=... on the URL (the source still comes from one of the above)
+  mode "inline" fits the diagram into the frame and takes no input; "viewer" adds pan, zoom, fit and search.
+  Agent-written source: securityLevel "strict", and the CSP below allows no network at all.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' file:; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; frame-src 'none'; form-action 'none'">
+<title>Diagram</title>
+<style>
+  :root { --bg: #ffffff; --fg: #1f2328; --muted: #656d76; --line: #d0d7de; --panel: rgba(255,255,255,.94); --hit: #f59e0b; --hit-bg: rgba(245,158,11,.18); --cur: #e8590c; --err-bg: #fff5f5; --err: #c92a2a; }
+  :root[data-theme="dark"] { --bg: #16181d; --fg: #e6edf3; --muted: #8d96a0; --line: #30363d; --panel: rgba(30,33,40,.94); --hit: #fbbf24; --hit-bg: rgba(251,191,36,.22); --cur: #ff922b; --err-bg: #2a1215; --err: #ff8787; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+  #stage { position: absolute; inset: 0; overflow: hidden; touch-action: none; }
+  body.viewer #stage { cursor: grab; }
+  body.viewer #stage.dragging { cursor: grabbing; }
+  #stage > svg { position: absolute; left: 0; top: 0; transform-origin: 0 0; max-width: none !important; }
+  #bar { position: absolute; top: 10px; right: 10px; display: none; gap: 6px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 5px; box-shadow: 0 2px 10px rgba(0,0,0,.12); z-index: 2; flex-wrap: wrap; max-width: calc(100% - 32px); }
+  body.viewer.ready #bar { display: flex; }
+  #bar button { font: inherit; min-width: 30px; height: 28px; border: 1px solid var(--line); background: transparent; color: var(--fg); border-radius: 7px; cursor: pointer; padding: 0 8px; }
+  #bar button:hover { background: var(--hit-bg); }
+  #q { font: inherit; height: 26px; width: 170px; border: 1px solid var(--line); border-radius: 7px; padding: 0 8px; background: var(--bg); color: var(--fg); }
+  #count { color: var(--muted); min-width: 48px; text-align: center; font-variant-numeric: tabular-nums; }
+  .sep { width: 1px; height: 20px; background: var(--line); }
+  .mf-hit rect, .mf-hit polygon, .mf-hit circle, .mf-hit ellipse, .mf-hit path.basic, .mf-hit .label-container { stroke: var(--hit) !important; stroke-width: 3px !important; }
+  text.mf-hit, .mf-hit text, .mf-hit span, .mf-hit div { text-decoration: underline; text-decoration-color: var(--hit); text-decoration-thickness: 2px; }
+  .mf-hit { filter: drop-shadow(0 0 4px var(--hit)); }
+  .mf-current { filter: drop-shadow(0 0 7px var(--cur)) drop-shadow(0 0 2px var(--cur)); }
+  .mf-current rect, .mf-current polygon, .mf-current circle, .mf-current ellipse, .mf-current .label-container { stroke: var(--cur) !important; stroke-width: 4px !important; }
+  #error { display: none; position: absolute; inset: 0; overflow: auto; padding: 14px; box-sizing: border-box; }
+  #error .msg { background: var(--err-bg); color: var(--err); border: 1px solid var(--err); border-radius: 8px; padding: 10px 12px; white-space: pre-wrap; font-weight: 600; }
+  #error .hint { color: var(--muted); margin: 10px 0 6px; }
+  #error pre { margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; overflow: auto; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
+  body.failed #error { display: block; }
+  body.failed #stage, body.failed #bar { display: none !important; }
+</style>
+<script>window.MAPLE_DIAGRAM = window.MAPLE_DIAGRAM || null;</script>
+<script src="mermaid.min.js"></script>
+</head>
+<body>
+<div id="stage" aria-label="Diagram"></div>
+<div id="bar" role="toolbar" aria-label="Diagram controls">
+  <input id="q" type="search" placeholder="Search" aria-label="Search the diagram" autocomplete="off" spellcheck="false">
+  <span id="count" aria-live="polite"></span>
+  <button id="prev" title="Previous match (↑)" aria-label="Previous match">↑</button>
+  <button id="next" title="Next match (↓ or Enter)" aria-label="Next match">↓</button>
+  <span class="sep"></span>
+  <button id="zout" title="Zoom out" aria-label="Zoom out">−</button>
+  <button id="zin" title="Zoom in" aria-label="Zoom in">+</button>
+  <button id="actual" title="Actual size">100%</button>
+  <button id="fit" title="Fit to window">Fit</button>
+</div>
+<div id="error" role="alert"><div class="msg"></div><div class="hint">This diagram's Mermaid source didn't parse. Here it is as written:</div><pre></pre></div>
+<script>
+(() => {
+  "use strict";
+  const params = new URLSearchParams(location.search);
+  const stage = document.getElementById("stage");
+  const q = document.getElementById("q");
+  const count = document.getElementById("count");
+  const state = { mode: params.get("mode") === "viewer" ? "viewer" : "inline", theme: null, svg: null, w: 0, h: 0, k: 1, x: 0, y: 0, hits: [], at: -1, seq: 0, source: null };
+  const darkQuery = window.matchMedia ? matchMedia("(prefers-color-scheme: dark)") : null;
+  const pickTheme = (t) => (t === "dark" || t === "light") ? t : (params.get("theme") === "dark" || params.get("theme") === "light") ? params.get("theme") : (darkQuery && darkQuery.matches ? "dark" : "light");
+
+  function notify(msg) {
+    try { if (window.parent !== window) window.parent.postMessage(Object.assign({ type: "maple.diagram.state" }, msg), "*"); } catch (_) {}
+    try { window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.mapleDiagram && window.webkit.messageHandlers.mapleDiagram.postMessage(msg); } catch (_) {}
+    try { window.MapleDiagram && window.MapleDiagram.post && window.MapleDiagram.post(JSON.stringify(msg)); } catch (_) {}
+  }
+
+  function apply() {
+    if (!state.svg) return;
+    state.svg.style.transform = `translate(${state.x}px, ${state.y}px) scale(${state.k})`;
+  }
+  function fit() {
+    if (!state.svg) return;
+    const cw = stage.clientWidth, ch = stage.clientHeight;
+    const pad = state.mode === "viewer" ? 24 : 8;
+    const top = state.mode === "viewer" && cw < 560 ? 56 : 0;
+    const k = Math.min((cw - pad * 2) / state.w, (ch - pad * 2 - top) / state.h, state.mode === "inline" ? 1.5 : 2);
+    state.k = Math.max(k, 0.02);
+    state.x = (cw - state.w * state.k) / 2;
+    state.y = top + (ch - top - state.h * state.k) / 2;
+    apply();
+  }
+  function zoomAt(factor, cx, cy) {
+    const k = Math.min(Math.max(state.k * factor, 0.05), 12);
+    const f = k / state.k;
+    state.x = cx - (cx - state.x) * f;
+    state.y = cy - (cy - state.y) * f;
+    state.k = k;
+    apply();
+  }
+  const centre = () => [stage.clientWidth / 2, stage.clientHeight / 2];
+  function actual() { const [cx, cy] = centre(); zoomAt(1 / state.k, cx, cy); }
+
+  function fail(err, source) {
+    document.body.classList.remove("ready");
+    document.body.classList.add("failed");
+    const text = String((err && (err.message || err.str)) || err || "Unknown error").trim();
+    document.querySelector("#error .msg").textContent = "Mermaid couldn't render this diagram.\n" + text;
+    document.querySelector("#error pre").textContent = source;
+    notify({ event: "error", message: text, source: state.mode === "inline" ? source : undefined });
+  }
+
+  async function render(opts) {
+    opts = opts || {};
+    const source = String(opts.source == null ? "" : opts.source);
+    if (opts.mode === "viewer" || opts.mode === "inline") state.mode = opts.mode;
+    state.theme = pickTheme(opts.theme);
+    state.source = source;
+    document.documentElement.dataset.theme = state.theme;
+    document.body.classList.toggle("viewer", state.mode === "viewer");
+    document.body.classList.remove("failed", "ready");
+    const seq = ++state.seq;
+    if (!window.mermaid) return fail("The bundled mermaid.min.js didn't load.", source);
+    if (!source.trim()) return fail("The diagram has no source.", source);
+    try {
+      mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: state.theme === "dark" ? "dark" : "default", suppressErrorRendering: true, fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" });
+      await mermaid.parse(source);
+      const { svg } = await mermaid.render("mf-diagram-" + seq, source);
+      if (seq !== state.seq) return;
+      stage.innerHTML = svg;
+      const el = stage.querySelector("svg");
+      const vb = el.viewBox && el.viewBox.baseVal;
+      const box = vb && vb.width ? vb : el.getBBox();
+      state.w = Math.max(box.width, 1); state.h = Math.max(box.height, 1);
+      el.setAttribute("width", state.w); el.setAttribute("height", state.h);
+      el.style.maxWidth = "none";
+      state.svg = el;
+      const markup = el.outerHTML;
+      fit();
+      document.body.classList.add("ready");
+      clearSearch();
+      const query = opts.query != null ? opts.query : params.get("q");
+      if (state.mode === "viewer" && query) { q.value = query; search(query); }
+      // The markup lets a host keep showing the drawn SVG as an image without re-rendering (the web's inline cards).
+      notify({ event: "rendered", width: state.w, height: state.h, svg: state.mode === "inline" ? markup : undefined, source: state.mode === "inline" ? source : undefined });
+    } catch (err) {
+      if (seq === state.seq) fail(err, source);
+    }
+  }
+
+  // Search: node, edge, cluster and message labels; the outermost match wins so a node lights up once.
+  const SELECTORS = ["g.node", "g.edgeLabel", "g.cluster", "g.stateGroup", "g.classGroup", "g.actor", "rect.actor", "text.actor", "text.messageText", "text.noteText", "text.loopText", "g.mindmap-node", "g.task", "text.taskText", "g.pieTitleText", "text"];
+  function clearSearch() {
+    for (const h of state.hits) h.classList.remove("mf-hit", "mf-current");
+    state.hits = []; state.at = -1; count.textContent = "";
+  }
+  function search(text) {
+    clearSearch();
+    const needle = String(text || "").trim().toLowerCase();
+    if (!needle || !state.svg) { notify({ event: "search", query: needle, count: 0, at: 0 }); return; }
+    const seen = new Set();
+    for (const sel of SELECTORS) {
+      for (const el of state.svg.querySelectorAll(sel)) {
+        if (seen.has(el)) continue;
+        let covered = false;
+        for (const h of state.hits) if (h.contains(el) || el.contains(h)) { covered = true; break; }
+        if (covered) continue;
+        if ((el.textContent || "").toLowerCase().includes(needle)) { state.hits.push(el); seen.add(el); }
+      }
+    }
+    // Reading order: top to bottom, then left to right.
+    const pos = new Map(state.hits.map((h) => { const r = h.getBoundingClientRect(); return [h, [Math.round(r.top / 8), r.left]]; }));
+    state.hits.sort((a, b) => pos.get(a)[0] - pos.get(b)[0] || pos.get(a)[1] - pos.get(b)[1]);
+    for (const h of state.hits) h.classList.add("mf-hit");
+    if (state.hits.length) go(0); else { count.textContent = "0 of 0"; notify({ event: "search", query: needle, count: 0, at: 0 }); }
+  }
+  function go(i) {
+    const n = state.hits.length;
+    if (!n) return;
+    if (state.at >= 0) state.hits[state.at].classList.remove("mf-current");
+    state.at = ((i % n) + n) % n;
+    const el = state.hits[state.at];
+    el.classList.add("mf-current");
+    count.textContent = `${state.at + 1} of ${n}`;
+    if (state.k < 0.8) { const [cx, cy] = centre(); zoomAt(1 / state.k, cx, cy); }
+    const r = el.getBoundingClientRect(), s = stage.getBoundingClientRect();
+    state.x += s.left + s.width / 2 - (r.left + r.width / 2);
+    state.y += s.top + s.height / 2 - (r.top + r.height / 2);
+    apply();
+    notify({ event: "search", query: q.value, count: n, at: state.at + 1 });
+  }
+
+  q.addEventListener("input", () => search(q.value));
+  q.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); go(state.at + (e.shiftKey ? -1 : 1)); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); go(state.at + 1); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); go(state.at - 1); }
+    else if (e.key === "Escape" && q.value) { e.preventDefault(); e.stopPropagation(); q.value = ""; search(""); }
+  });
+  document.getElementById("next").onclick = () => go(state.at + 1);
+  document.getElementById("prev").onclick = () => go(state.at - 1);
+  document.getElementById("zin").onclick = () => { const [cx, cy] = centre(); zoomAt(1.25, cx, cy); };
+  document.getElementById("zout").onclick = () => { const [cx, cy] = centre(); zoomAt(0.8, cx, cy); };
+  document.getElementById("actual").onclick = actual;
+  document.getElementById("fit").onclick = fit;
+  document.addEventListener("keydown", (e) => {
+    if (state.mode !== "viewer") return;
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") { e.preventDefault(); q.focus(); q.select(); return; }
+    if (e.target === q) return;
+    if (e.key === "+" || e.key === "=") { const [cx, cy] = centre(); zoomAt(1.25, cx, cy); }
+    else if (e.key === "-") { const [cx, cy] = centre(); zoomAt(0.8, cx, cy); }
+    else if (e.key === "0") fit();
+    else if (e.key === "1") actual();
+    else if (e.key === "Escape") notify({ event: "close" });
+  });
+
+  // Wheel zooms around the pointer (a trackpad pinch arrives as ctrl+wheel); drag pans; two fingers pinch.
+  stage.addEventListener("wheel", (e) => {
+    if (state.mode !== "viewer" || !state.svg) return;
+    e.preventDefault();
+    const s = stage.getBoundingClientRect();
+    if (!e.ctrlKey && Math.abs(e.deltaX) > Math.abs(e.deltaY) * 0.5 && e.deltaMode === 0 && Math.abs(e.deltaX) > 0) { state.x -= e.deltaX; state.y -= e.deltaY; apply(); return; }
+    const d = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+    zoomAt(Math.exp(-d * (e.ctrlKey ? 0.01 : 0.0025)), e.clientX - s.left, e.clientY - s.top);
+  }, { passive: false });
+  const pointers = new Map();
+  let pinch = null;
+  stage.addEventListener("pointerdown", (e) => {
+    if (state.mode !== "viewer") return;
+    stage.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    stage.classList.add("dragging");
+    if (pointers.size === 2) { const [a, b] = [...pointers.values()]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) }; }
+  });
+  stage.addEventListener("pointermove", (e) => {
+    const p = pointers.get(e.pointerId);
+    if (!p) return;
+    const s = stage.getBoundingClientRect();
+    if (pointers.size === 2 && pinch) {
+      p.x = e.clientX; p.y = e.clientY;
+      const [a, b] = [...pointers.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (pinch.d > 0) zoomAt(d / pinch.d, (a.x + b.x) / 2 - s.left, (a.y + b.y) / 2 - s.top);
+      pinch.d = d;
+      return;
+    }
+    state.x += e.clientX - p.x; state.y += e.clientY - p.y;
+    p.x = e.clientX; p.y = e.clientY;
+    apply();
+  });
+  const up = (e) => { pointers.delete(e.pointerId); if (pointers.size < 2) pinch = null; if (!pointers.size) stage.classList.remove("dragging"); };
+  stage.addEventListener("pointerup", up);
+  stage.addEventListener("pointercancel", up);
+  stage.addEventListener("dblclick", (e) => { if (state.mode === "viewer") { const s = stage.getBoundingClientRect(); zoomAt(e.shiftKey ? 0.5 : 2, e.clientX - s.left, e.clientY - s.top); } });
+
+  let resizeTimer = 0;
+  window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (state.mode === "inline" || !state.hits.length) fit(); }, 60); });
+  if (darkQuery && darkQuery.addEventListener) darkQuery.addEventListener("change", () => { if (state.source != null && !params.get("theme")) render({ source: state.source, query: q.value }); });
+
+  window.addEventListener("message", (e) => {
+    if (e.source !== window.parent) return;
+    const d = e.data;
+    if (!d || typeof d !== "object") return;
+    if (d.type === "maple.diagram") render(d);
+    else if (d.type === "maple.diagram.search") { q.value = String(d.query || ""); search(q.value); }
+  });
+
+  window.mapleDiagram = { render, search: (t) => { q.value = String(t || ""); search(q.value); return { count: state.hits.length, at: state.at + 1 }; }, next: () => go(state.at + 1), prev: () => go(state.at - 1), fit, zoom: (f) => { const [cx, cy] = centre(); zoomAt(f, cx, cy); }, focusSearch: () => { q.focus(); q.select(); }, state: () => ({ mode: state.mode, k: state.k, count: state.hits.length, at: state.at + 1, failed: document.body.classList.contains("failed") }) };
+  if (window.MAPLE_DIAGRAM) render(window.MAPLE_DIAGRAM);
+  else notify({ event: "ready" });
+})();
+</script>
+</body>
+</html>

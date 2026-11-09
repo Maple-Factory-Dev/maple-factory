@@ -1346,6 +1346,17 @@ data class Mockup(
     val differences: List<String> = emptyList(),
 )
 
+/** A Mermaid diagram the planner drew to explain the change: a flow, an architecture or a state machine. */
+@Serializable
+data class Diagram(
+    /** D1, D2… in the order the plan gave them. */
+    val id: String,
+    val title: String,
+    /** Mermaid source. Rendered offline with securityLevel 'strict'. */
+    val source: String,
+    val notes: List<String> = emptyList(),
+)
+
 /** A file an agent shared on a task: a chart, an image, a repro page. Sharing again under the same title replaces it with the next version. */
 @Serializable
 data class Artifact(
@@ -1439,7 +1450,7 @@ data class WorktreeScripts(
     val archive: String? = null,
     /** How long each one may run (default 600). */
     val timeoutSecs: Long? = null,
-    /** Path rules, one `glob tag[,tag]` per line (e.g. `apps/mac/** macos`): a task whose plan touches a matching file needs those machine tags. */
+    /** Path rules, one `glob tag[,tag]` per line (e.g. `apps/mac/&#42;* macos`): a task whose plan touches a matching file needs those machine tags. */
     val requirePaths: String? = null,
 )
 
@@ -1625,6 +1636,7 @@ data class Task(
     val risk: Risk? = null,
     val autoReview: AutoReview? = null,
     val mockups: List<Mockup> = emptyList(),
+    val diagrams: List<Diagram> = emptyList(),
     /** Files its agents shared: charts, images, pages. Empty on older tasks. */
     val artifacts: List<Artifact> = emptyList(),
     val tickets: List<TicketLink> = emptyList(),
