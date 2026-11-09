@@ -277,4 +277,26 @@ struct FeedStateTests {
         state.apply(try decode(#"{"type":"recurring.deleted","id":"r3"}"#))
         #expect(state.recurring(goal: "g1").map(\.id) == ["r2", "r1"])
     }
+
+    @Test func docsFollowTheSnapshotAndDeltas() throws {
+        var state = FeedState()
+        func doc(_ id: String, goal: String?, updated: Int, archived: Bool = false) -> String {
+            let g = goal.map { "\"goal\":\"\($0)\"," } ?? ""
+            return "{\"id\":\"\(id)\",\"title\":\"Doc \(id)\",\(g)\"createdBy\":\"andrea\",\"createdAt\":1,\"updatedAt\":\(updated),\"archived\":\(archived)}"
+        }
+        let snap = snapshot.replacingOccurrences(of: "\"runnerLatest\":\"0.10.1\"}",
+            with: "\"runnerLatest\":\"0.10.1\",\"docs\":[\(doc("d1", goal: "g1", updated: 5)),\(doc("d2", goal: nil, updated: 9)),\(doc("d3", goal: "g1", updated: 7, archived: true))]}")
+        state.apply(try decode(snap))
+        #expect(state.docs.count == 3)
+        #expect(state.activeDocs.map(\.id) == ["d2", "d1"])
+        #expect(state.docs(goal: "g1").map(\.id) == ["d1"])
+        #expect(state.docsWithoutGoal.map(\.id) == ["d2"])
+
+        state.apply(try decode("{\"type\":\"doc.updated\",\"doc\":\(doc("d4", goal: "g1", updated: 20))}"))
+        state.apply(try decode("{\"type\":\"doc.updated\",\"doc\":\(doc("d1", goal: "g1", updated: 6, archived: true))}"))
+        #expect(state.docs(goal: "g1").map(\.id) == ["d4"])
+        state.apply(try decode("{\"type\":\"doc.removed\",\"id\":\"d2\"}"))
+        #expect(state.activeDocs.map(\.id) == ["d4"])
+        #expect(state.docsWithoutGoal.isEmpty)
+    }
 }

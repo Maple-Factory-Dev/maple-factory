@@ -6,6 +6,7 @@ struct CommandPalette: View {
     static let rowHeight: CGFloat = 36
 
     @Environment(AppState.self) private var state
+    @Environment(FactoryClient.self) private var client
     @AppStorage("appearance") private var appearance = Appearance.system
     @FocusState private var fieldFocused: Bool
 
@@ -141,6 +142,12 @@ struct CommandPalette: View {
                 Text(page.title).font(.system(size: 13.5)).foregroundStyle(Theme.text)
                 Spacer(minLength: 8)
                 hint("Go to")
+            case .doc(let id):
+                let doc = client.docs.first { $0.id == id } ?? (id == DemoDoc.id ? DemoDoc.doc : nil)
+                icon("doc.richtext", color: Theme.textMuted)
+                Text(doc?.title ?? "Doc").font(.system(size: 13.5)).foregroundStyle(Theme.text).lineLimit(1)
+                Spacer(minLength: 8)
+                hint(DocsIndex.goalName(doc?.goal, client: client) ?? "Doc")
             case .action(let action):
                 icon(action.icon, color: Theme.accent)
                 Text(action.title).font(.system(size: 13.5)).foregroundStyle(Theme.text)

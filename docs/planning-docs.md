@@ -90,9 +90,28 @@ opens one. One editor, one sync path, no native CRDT.
   `destroy()`. Events `ready`, `status`, `peers`, `synced`, `theme`, `error`, `openTask` are posted to
   `window.webkit.messageHandlers.maple` if it exists, otherwise to `window.parent`, and logged as `[maple-docs]`.
 
+## In the Mac app (MF-362)
+
+- **Index:** `FeedState.docs` (and `FactoryClient.docs`) hold the snapshot's `docs`, kept current by `doc.updated`
+  (upsert) and `doc.removed`. `activeDocs` drops archived ones, newest edit first. The sidebar's Docs page lists
+  them by goal ("No goal" last); a goal's overview has a Docs section. Create, rename and archive send `doc.create`,
+  `doc.rename` and `doc.archive`. There's no command to move a doc to another goal yet.
+- **Native bridge:** `DocEditorView` hosts `<server>/app/docs/embed?theme=…` (the server redirects `embed.html` there, dropping the query) in a WKWebView with a `maple`
+  message handler. On `ready` it calls `mapleDocs.load(args)` through `callAsyncJavaScript` with the token as a
+  typed argument, so the token is never in a URL (each load and navigation is logged as `[docs] load|navigate <url>`).
+  It calls `setTheme` when the app's appearance changes, opens `openTask` natively, shows `status`/`synced`/`peers`
+  in a title bar, and shows `error` with a Retry. Navigation stays on the embed's origin; other links go to NSWorkspace.
+- **Demo mode:** `createDocEditor({ demo: { markdown } })` seeds the Y.Doc from Markdown (`seedFromMarkdown`), uses a
+  local Awareness with no socket, and posts `synced`. `scripts/build-docs-editor.mjs` copies embed.html, the bundle
+  and the CSS into `apps/mac/Sources/MapleFactory/Resources/DocsEmbed` (checked by `gen:check`). Signed out, the app
+  serves that copy on `maple-docs://` and opens one demo doc ("Docs in Maple Factory"). embed.html loads its CSS
+  relatively so the same file works from both places.
+- **Links and ⌘K:** `maplefactory://doc/<id>` opens a doc; `-destination docs` and `-destination doc:<id>` open the
+  page or a doc. ⌘K has "New doc", the Docs page, and a result for each doc.
+
 ## Deferred
 
-- Hosting the embed in the Mac and iOS apps (the native side of the bridge).
+- Hosting the embed in the iOS app.
 - Comments and threads anchored in a doc.
 - Decisions recorded from a doc, and turning parts of it into tasks.
 - An MCP server so agents can read and edit docs.

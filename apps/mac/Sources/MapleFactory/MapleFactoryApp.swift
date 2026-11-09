@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import MapleKit
 // Wire, the factory API and sign-in storage live in MapleKit, shared with iOS.
 @_exported import MapleKit
 
@@ -216,6 +217,8 @@ struct ContentView: View {
                         state.openingLiveSession = .init(machine: path[0], id: path[1])
                     } else if url.host() == "task", let id = path.first {
                         state.openFullView(id)
+                    } else if case .doc(let id) = FactoryLink(url: url) {
+                        state.destination = .doc(id)
                     }
                 }
                 .onChange(of: Notifier.shared.opening?.id) {
@@ -269,6 +272,8 @@ struct ContentView: View {
         case .machines: page = "machines"
         case .intake: page = "requests"
         case .allGoals: page = "goals"
+        case .docs: page = "docs"
+        case .doc: page = "doc"
         }
         return state.showInspector ? "\(page)+task.panel" : page
     }
@@ -537,6 +542,8 @@ extension ContentView {
         case .intake: IntakeView()
         case .allGoals: AllGoalsView()
         case .goal(let name): GoalView(name: name)
+        case .docs: DocsView()
+        case .doc(let id): DocPage(id: id)
         }
     }
 }

@@ -515,24 +515,29 @@ struct InboxItem: Identifiable {
 }
 
 enum Destination: Hashable {
-    case inbox, myTasks, dayReport, activity, scratchpad, usage, statistics, needsHand, machines, intake, allGoals
+    case inbox, myTasks, dayReport, activity, scratchpad, usage, statistics, needsHand, machines, intake, allGoals, docs
     case goal(String)
+    /// One shared planning doc, by id.
+    case doc(String)
 
     /// The pages that aren't goals, by the names `-destination` takes.
     private static let pages: [String: Destination] = [
         "inbox": .inbox, "mytasks": .myTasks, "report": .dayReport, "activity": .activity, "scratchpad": .scratchpad, "usage": .usage, "statistics": .statistics,
-        "hands": .needsHand, "machines": .machines, "requests": .intake, "goals": .allGoals,
+        "hands": .needsHand, "machines": .machines, "requests": .intake, "goals": .allGoals, "docs": .docs,
     ]
 
     /// Stored form: `goal:<name>` for a goal, so a goal named "inbox" isn't the Inbox; the page's name otherwise.
     var encoded: String {
         if case .goal(let name) = self { return "goal:\(name)" }
+        if case .doc(let id) = self { return "doc:\(id)" }
         return Self.pages.first { $0.value == self }!.key
     }
 
     init?(encoded: String) {
         if encoded.hasPrefix("goal:") {
             self = .goal(String(encoded.dropFirst(5)))
+        } else if encoded.hasPrefix("doc:") {
+            self = .doc(String(encoded.dropFirst(4)))
         } else if let page = Self.pages[encoded] {
             self = page
         } else {
@@ -542,7 +547,7 @@ enum Destination: Hashable {
 
     /// A `-destination` argument: a page's name, else a goal's.
     init(argument: String) {
-        self = Self.pages[argument] ?? .goal(argument)
+        self = Self.pages[argument] ?? Destination(encoded: argument) ?? .goal(argument)
     }
 }
 

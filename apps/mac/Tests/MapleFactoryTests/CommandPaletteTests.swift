@@ -30,6 +30,15 @@ struct CommandPaletteTests {
         results(query).first { $0.kind == kind }?.items ?? []
     }
 
+    @Test func docTitleQueryFindsTheDoc() {
+        let docs = [PaletteDoc(id: "d1", title: "Onboarding plan", goal: "Auth overhaul"), PaletteDoc(id: "d2", title: "Release notes")]
+        let sections = CommandPaletteModel.results(query: "onboarding", tasks: tasks, goals: goals, docs: docs, me: me.id)
+        #expect(sections.first { $0.kind == .docs }?.items == [.doc("d1")])
+        let byKeyword = CommandPaletteModel.results(query: "doc", tasks: tasks, goals: goals, docs: docs, me: me.id)
+        #expect(byKeyword.first { $0.kind == .docs }?.items.count == 2)
+        #expect(items("new doc", .actions).first == .action(.newDoc))
+    }
+
     @Test func idMatchBeatsTitleMatch() {
         #expect(items("mf-12", .tasks).first == .task("MF-12"))
         #expect(items("MF-12", .tasks).contains(.task("MF-11")))

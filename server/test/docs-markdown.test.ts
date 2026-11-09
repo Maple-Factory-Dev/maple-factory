@@ -80,3 +80,14 @@ test("plain prose pastes as plain text", () => {
   assert.equal(looksLikeMarkdown("Just a sentence, nothing more."), false);
   assert.equal(markdownPasteSlice(schema, "Just a sentence.", ctx), null);
 });
+
+// MF-362: the Mac app's offline demo doc seeds a Y.Doc from Markdown, with no socket.
+test("demo mode seeds a Y.Doc from Markdown", async () => {
+  const Y = await import("yjs");
+  const { yXmlFragmentToProseMirrorRootNode } = await import("@tiptap/y-tiptap");
+  const { seedFromMarkdown, SHARED_TYPE } = await import("../docs-editor/src/editor.js");
+  const md = "# Docs in Maple Factory\n\nPlan with @afomera, link MF-12.\n\n- [ ] try it\n";
+  const ydoc = seedFromMarkdown(new Y.Doc(), md, ctx);
+  const doc = yXmlFragmentToProseMirrorRootNode(ydoc.getXmlFragment(SHARED_TYPE), schema);
+  assert.equal(toMarkdown(doc), md);
+});

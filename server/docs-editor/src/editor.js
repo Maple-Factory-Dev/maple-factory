@@ -7,7 +7,9 @@ import BubbleMenu from "@tiptap/extension-bubble-menu";
 import { Plugin } from "@tiptap/pm/state";
 import * as Y from "yjs";
 import { WebsocketProvider } from "y-websocket";
-import { schemaExtensions, TASK_ID } from "./schema.js";
+import { prosemirrorToYXmlFragment } from "@tiptap/y-tiptap";
+import { Awareness } from "y-protocols/awareness";
+import { schema as docSchema, schemaExtensions, TASK_ID } from "./schema.js";
 import { markdownPasteSlice, toMarkdown, fromMarkdown, taskResolver } from "./markdown.js";
 import { SlashMenu, mentionSuggestions, bubbleMenuElement } from "./menus.js";
 
@@ -44,19 +46,38 @@ const TaskRefTyping = (tasks) =>
     },
   });
 
+/** Fills a fresh Y.Doc's shared type from Markdown: the offline demo doc's starting text (MF-362). */
+export function seedFromMarkdown(ydoc, markdown, ctx = {}) {
+  prosemirrorToYXmlFragment(fromMarkdown(docSchema, markdown, ctx), ydoc.getXmlFragment(SHARED_TYPE));
+  return ydoc;
+}
+
+/** A provider stand-in for demo mode: no socket, only the awareness the caret plugin reads. */
+function localProvider(ydoc) {
+  const awareness = new Awareness(ydoc);
+  return { awareness, on() {}, off() {}, destroy() { awareness.destroy(); } };
+}
+
 /**
  * Mounts the editor on `el` for doc `docId`.
  * me: { login, name, avatar }; members(): [{login, name, avatar}]; tasks(): [{id, title}];
  * token: an app token sent as the socket's `maple-token` subprotocol (cookie auth when absent);
  * onEvent(name, data): status {status}, peers [{login,name,color,avatar}], synced, error {message}, openTask {id}.
+ * demo: { markdown } opens a local-only doc seeded from Markdown, with no socket (the Mac app's signed-out mockup).
  */
-export function createDocEditor({ el, docId, me, members = () => [], tasks = () => [], theme, token, origin = location.origin, onEvent = () => {} }) {
+export function createDocEditor({ el, docId, me, members = () => [], tasks = () => [], theme, token, origin = location.origin, onEvent = () => {}, demo = null }) {
   const ydoc = new Y.Doc();
-  const ws = origin.replace(/^http/, "ws");
-  const provider = new WebsocketProvider(`${ws}/docs/${docId}`, "sync", ydoc, {
-    protocols: token ? ["maple-token", token] : [],
-    maxBackoffTime: 10_000,
-  });
+  let provider;
+  if (demo) {
+    seedFromMarkdown(ydoc, demo.markdown ?? "", { members: members(), tasks: taskResolver(tasks()) });
+    provider = localProvider(ydoc);
+  } else {
+    const ws = origin.replace(/^http/, "ws");
+    provider = new WebsocketProvider(`${ws}/docs/${docId}`, "sync", ydoc, {
+      protocols: token ? ["maple-token", token] : [],
+      maxBackoffTime: 10_000,
+    });
+  }
   const user = { login: me.login, name: me.name || me.login, color: colorFor(me.login), avatar: me.avatar ?? null };
   const resolver = () => taskResolver(tasks());
   const ctx = () => ({ members: members(), tasks: resolver() });
@@ -117,6 +138,7 @@ export function createDocEditor({ el, docId, me, members = () => [], tasks = () 
   provider.on("sync", (synced) => synced && onEvent("synced", {}));
   provider.on("connection-close", (e) => e && e.code !== 1000 && onEvent("error", { message: e.reason || `closed (${e.code})`, code: e.code }));
   provider.awareness.on("change", () => onEvent("peers", peers()));
+  if (demo) queueMicrotask(() => { onEvent("status", { status: "connected" }); onEvent("synced", {}); });
 
   const setTheme = (t) => { root.dataset.theme = t === "dark" ? "dark" : "light"; };
   if (theme) setTheme(theme);

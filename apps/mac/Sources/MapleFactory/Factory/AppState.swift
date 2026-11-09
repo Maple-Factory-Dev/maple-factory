@@ -1166,6 +1166,8 @@ final class AppState {
     }
     /// The highlighted row, an index into `paletteItems`.
     var paletteSelection = 0
+    /// ⌘K's "New doc": the Docs page opens its New doc sheet.
+    var creatingDoc = false
     /// Opens the Settings window; set by the view that can (AppState has no `openSettings`).
     @ObservationIgnored var openSettings: (() -> Void)? = nil
 
@@ -1175,7 +1177,11 @@ final class AppState {
         let pages = PalettePage.all.filter { $0.destination != .statistics || client?.canSeeStats ?? true }
         // The task panel can only be toggled with "Peek in the side panel" on.
         let actions = PaletteAction.allCases.filter { $0 != .toggleTaskPanel || taskPanelEnabled }
-        return CommandPaletteModel.results(query: paletteQuery, tasks: tasks, goals: goals, pages: pages, actions: actions, me: FactoryData.me.id)
+        let docs = client.map { client in
+            DocsIndex.docs(client).map { PaletteDoc(id: $0.id, title: $0.title, goal: DocsIndex.goalName($0.goal, client: client)) }
+        } ?? []
+        return CommandPaletteModel.results(query: paletteQuery, tasks: tasks, goals: goals, pages: pages, actions: actions, docs: docs,
+                                           me: FactoryData.me.id)
     }
     var paletteItems: [PaletteItem] { CommandPaletteModel.flatten(paletteSections) }
 
@@ -1206,6 +1212,8 @@ final class AppState {
         case .page(let page): destination = page.destination
         case .action(.newTask): startCompose()
         case .action(.newGoal): goalSheet = .new
+        case .action(.newDoc): destination = .docs; creatingDoc = true
+        case .doc(let id): destination = .doc(id)
         case .action(.toggleSidebar): toggleSidebar()
         case .action(.toggleTaskPanel): toggleTaskPanel()
         case .action(.settings): openSettings?()
@@ -2602,6 +2610,16 @@ final class AppState {
             // The About window's Check for Updates… button (`about:check`; with MAPLE_UPDATE_DEMO for an answer).
             case "about": AboutView.checkForUpdates()
             case "toast": showToast(parts.dropFirst().joined(separator: ":"), icon: "number")
+            case "doc" where parts.count > 2:
+                // doc:create:<title> · doc:rename:<title>:<new title> · doc:archive:<title> · doc:open:<title>: what Docs' buttons send.
+                let named = client?.docs.first { $0.title == parts[2] && $0.archived != true }
+                switch parts[1] {
+                case "create": client?.createDoc(title: parts[2], goal: nil)
+                case "rename": if let named, parts.count > 3 { client?.renameDoc(id: named.id, title: parts[3]) }
+                case "archive": if let named { client?.archiveDoc(id: named.id) }
+                case "open": if let named { destination = .doc(named.id) }
+                default: break
+                }
             case "wait": try? await Task.sleep(for: .seconds(Double(parts[1]) ?? 1))
             case "shot": await Headless.shot(parts[1])
             // A live session opened from Machines (`opensession:<machine>:<id>`), and its Share popover (`share:open`).

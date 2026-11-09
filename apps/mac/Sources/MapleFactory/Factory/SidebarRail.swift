@@ -39,6 +39,7 @@ struct SidebarRail: View {
             nav("Needs a hand", icon: "hand.raised", destination: .needsHand, badge: state.handRaises.count, badgeColor: Theme.State.cancelled)
             nav("Activity", icon: "waveform.path.ecg", destination: .activity)
             nav("Scratchpad", icon: "note.text", destination: .scratchpad, detail: "\(state.notes.count) notes")
+            nav("Docs", icon: "doc.richtext", destination: .docs, detail: "\(DocsIndex.docs(client).count) docs")
             nav("Usage", icon: "gauge.with.dots.needle.33percent", destination: .usage, detail: "34% session · 41% week")
             if client.canSeeStats {
                 nav("Statistics", icon: "chart.bar.xaxis", destination: .statistics)

@@ -41,6 +41,7 @@ struct GoalOverview: View {
                     }
                     recentlyLanded(sections.recentlyLanded)
                 }
+                GoalDocsSection(goalName: goal.name)
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 24)

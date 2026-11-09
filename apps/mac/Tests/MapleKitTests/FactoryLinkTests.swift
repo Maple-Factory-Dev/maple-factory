@@ -14,6 +14,13 @@ struct FactoryLinkTests {
         #expect(link("maplefactory://session/m-studio/s-42") == .session(machine: "m-studio", id: "s-42"))
     }
 
+    @Test func docLink() {
+        #expect(link("maplefactory://doc/d-8f2") == .doc("d-8f2"))
+        #expect(link("maplefactory://doc/d-8f2/") == .doc("d-8f2"))
+        #expect(link("maplefactory://doc") == nil)
+        #expect(link("maplefactory://doc/a/b") == nil)
+    }
+
     @Test func trailingSlashIsTheSameLink() {
         #expect(link("maplefactory://task/MF-174/") == .task("MF-174"))
         #expect(link("maplefactory://session/m-studio/s-42/") == .session(machine: "m-studio", id: "s-42"))

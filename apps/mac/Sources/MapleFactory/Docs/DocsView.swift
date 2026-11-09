@@ -1,0 +1,317 @@
+import SwiftUI
+import AppKit
+import MapleKit
+
+/// The docs the app lists (docs/planning-docs.md): the feed's index when signed in, the bundled demo doc otherwise.
+enum DocsIndex {
+    @MainActor static func docs(_ client: FactoryClient) -> [Wire.Doc] {
+        client.isSignedIn ? FeedState.activeDocs(client.docs) : [DemoDoc.doc]
+    }
+
+    /// A doc's goal by name; the demo's goal id is the mock goal's name.
+    @MainActor static func goalName(_ id: String?, client: FactoryClient) -> String? {
+        guard let id else { return nil }
+        return client.isSignedIn ? client.goals.first { $0.id == id }?.name : id
+    }
+
+    /// A goal page's goal id, from its name.
+    @MainActor static func goalId(name: String, client: FactoryClient) -> String? {
+        client.isSignedIn ? client.goals.first { $0.name == name }?.id : name
+    }
+
+    /// Grouped by goal, goals by name, "No goal" last.
+    @MainActor static func grouped(_ docs: [Wire.Doc], client: FactoryClient) -> [(goal: String?, title: String, docs: [Wire.Doc])] {
+        let byGoal = Dictionary(grouping: docs, by: \.goal)
+        let named = byGoal.keys.compactMap { $0 }.map { ($0, goalName($0, client: client) ?? "Unknown goal") }.sorted { $0.1 < $1.1 }
+        var out = named.map { (goal: Optional($0.0), title: $0.1, docs: byGoal[$0.0] ?? []) }
+        if let loose = byGoal[nil], !loose.isEmpty { out.append((goal: nil, title: "No goal", docs: loose)) }
+        return out
+    }
+
+    static func link(_ id: String) -> String { "maplefactory://doc/\(id)" }
+
+    static func edited(_ doc: Wire.Doc) -> String {
+        let date = Date(timeIntervalSince1970: Double(doc.updatedAt) / 1000)
+        return date.formatted(.relative(presentation: .named))
+    }
+}
+
+/// The signed-out mockup's one doc: opened from the bundled embed in demo mode, with no network.
+enum DemoDoc {
+    static let id = "demo"
+    static let doc = Wire.Doc(id: id, title: "Docs in Maple Factory", goal: "Auth overhaul", createdBy: "afomera",
+                              createdAt: 1_762_000_000_000, updatedAt: UInt64(Date().timeIntervalSince1970 * 1000) - 120_000)
+    static let markdown = """
+    # Docs in Maple Factory
+
+    Plans, specs and notes live next to the work. Everyone in the factory edits the same doc at once, with live cursors.
+
+    ## Try it
+
+    - [x] Open a doc from the sidebar or a goal
+    - [ ] Type `/` for blocks, `@` to mention someone, `#` to link a task
+    - [ ] Paste Markdown and it turns into rich text
+
+    > This demo runs offline. Sign in to edit your factory's docs with your team.
+    """
+}
+
+/// The Docs page: every active doc, by goal, with native create, rename and archive.
+struct DocsView: View {
+    @Environment(AppState.self) private var state
+    @Environment(FactoryClient.self) private var client
+    @State private var creating = false
+
+    var body: some View {
+        let docs = DocsIndex.docs(client)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Docs").font(.system(size: 20, weight: .semibold))
+                Text("\(docs.count)").font(.system(size: 13).monospacedDigit()).foregroundStyle(Theme.textMuted)
+                Spacer()
+                Button { creating = true } label: { Label("New doc", systemImage: "plus") }
+                    .disabled(!client.isSignedIn)
+                    .help(client.isSignedIn ? "New doc" : "Sign in to make docs")
+            }
+            .padding(.horizontal, 28).padding(.top, 52).padding(.bottom, 14)
+
+            if docs.isEmpty {
+                ContentUnavailableView("No docs yet", systemImage: "doc.richtext",
+                                       description: Text("Plans, specs and notes your team writes together."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 18) {
+                        ForEach(DocsIndex.grouped(docs, client: client), id: \.title) { group in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(group.title.uppercased())
+                                    .font(.system(size: 10.5, weight: .semibold)).foregroundStyle(Theme.textFaint)
+                                    .padding(.horizontal, 10).padding(.bottom, 4)
+                                ForEach(group.docs) { doc in DocRow(doc: doc, showGoal: false) }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 18).padding(.bottom, 24)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Theme.editorBG)
+        .sheet(isPresented: $creating) { NewDocSheet(goal: nil) }
+        .onChange(of: state.creatingDoc, initial: true) { _, on in
+            if on, client.isSignedIn { creating = true }
+            state.creatingDoc = false
+        }
+    }
+}
+
+/// One doc in a list: opens on click; a context menu renames it inline, archives it or copies its link.
+struct DocRow: View {
+    @Environment(AppState.self) private var state
+    @Environment(FactoryClient.self) private var client
+    let doc: Wire.Doc
+    var showGoal = true
+    @State private var renaming = false
+    @State private var title = ""
+    @State private var hovering = false
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "doc.richtext").font(.system(size: 13)).foregroundStyle(Theme.textMuted).frame(width: 18)
+            if renaming {
+                TextField("Title", text: $title)
+                    .textFieldStyle(.plain).focused($focused)
+                    .onSubmit(commitRename)
+                    .onExitCommand { renaming = false }
+                    .onAppear { focused = true }
+            } else {
+                Text(doc.title.isEmpty ? "Untitled" : doc.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
+            }
+            if showGoal, let goal = DocsIndex.goalName(doc.goal, client: client) {
+                Text(goal).font(.system(size: 11.5)).foregroundStyle(Theme.textMuted).lineLimit(1)
+            }
+            Spacer()
+            Text(DocsIndex.edited(doc)).font(.system(size: 11.5)).foregroundStyle(Theme.textFaint)
+        }
+        .padding(.horizontal, 10).frame(height: 32)
+        .background(RoundedRectangle(cornerRadius: 7).fill(hovering ? Theme.fill : .clear))
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onTapGesture { if !renaming { state.closeFocus(); state.destination = .doc(doc.id) } }
+        .contextMenu {
+            Button("Open") { state.destination = .doc(doc.id) }
+            if client.isSignedIn {
+                Button("Rename") { title = doc.title; renaming = true }
+                Button("Archive") { client.archiveDoc(id: doc.id) }
+            }
+            Divider()
+            Button("Copy link") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(DocsIndex.link(doc.id), forType: .string)
+            }
+        }
+    }
+
+    private func commitRename() {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty, trimmed != doc.title { client.renameDoc(id: doc.id, title: trimmed) }
+        renaming = false
+    }
+}
+
+/// A goal page's Docs section: that goal's docs and a "+ New doc" that files it there.
+struct GoalDocsSection: View {
+    @Environment(FactoryClient.self) private var client
+    let goalName: String
+    @State private var creating = false
+
+    var body: some View {
+        let goalId = DocsIndex.goalId(name: goalName, client: client)
+        let docs = DocsIndex.docs(client).filter { goalId != nil && $0.goal == goalId }
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("Docs").font(.system(size: 13, weight: .semibold))
+                Text("\(docs.count)").font(.system(size: 12).monospacedDigit()).foregroundStyle(Theme.textMuted)
+                Spacer()
+                if client.isSignedIn {
+                    Button { creating = true } label: { Label("New doc", systemImage: "plus").font(.system(size: 12)) }
+                        .buttonStyle(.borderless)
+                }
+            }
+            if docs.isEmpty {
+                Text("No docs for this goal yet.").font(.system(size: 12)).foregroundStyle(Theme.textFaint).padding(.vertical, 4)
+            }
+            ForEach(docs) { doc in DocRow(doc: doc, showGoal: false) }
+        }
+        .sheet(isPresented: $creating) { NewDocSheet(goal: goalId) }
+    }
+}
+
+/// Names a new doc and files it in a goal (or none).
+struct NewDocSheet: View {
+    @Environment(FactoryClient.self) private var client
+    @Environment(\.dismiss) private var dismiss
+    @State private var title = ""
+    @State var goal: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("New doc").font(.system(size: 15, weight: .semibold))
+            TextField("Title", text: $title).textFieldStyle(.roundedBorder).onSubmit(create)
+            Picker("Goal", selection: $goal) {
+                Text("No goal").tag(String?.none)
+                ForEach(client.goals.filter { $0.archived != true }, id: \.id) { goal in Text(goal.name).tag(Optional(goal.id)) }
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Create", action: create).keyboardShortcut(.defaultAction)
+                    .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(20).frame(width: 380)
+    }
+
+    private func create() {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        client.createDoc(title: trimmed, goal: goal)
+        dismiss()
+    }
+}
+
+/// One doc, open in the shared editor, under a native title bar: title, sync dot, who's editing.
+struct DocPage: View {
+    @Environment(AppState.self) private var state
+    @Environment(FactoryClient.self) private var client
+    @Environment(\.colorScheme) private var scheme
+    let id: String
+    @State private var status = DocEditorStatus()
+    @State private var reload = 0
+
+    var body: some View {
+        let doc = client.isSignedIn ? client.docs.first { $0.id == id } : (id == DemoDoc.id ? DemoDoc.doc : nil)
+        VStack(spacing: 0) {
+            titleBar(doc)
+            Divider()
+            if let error = status.error {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Theme.warning)
+                    Text(error).lineLimit(2)
+                    Spacer()
+                    Button("Retry") { reload += 1 }
+                }
+                .font(.system(size: 12)).padding(.horizontal, 16).padding(.vertical, 8).background(Theme.raised)
+            }
+            if let source {
+                DocEditorView(docId: id, source: source, me: me, members: members, tasks: tasks, dark: scheme == .dark,
+                              status: status, reloadToken: reload) { task in state.openFullView(task) }
+            } else {
+                ContentUnavailableView("Doc not found", systemImage: "doc.richtext", description: Text("It may have been removed."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .background(Theme.editorBG)
+    }
+
+    private var source: DocEditorView.Source? {
+        if client.isSignedIn {
+            guard let embed = client.docEmbed() else { return nil }
+            return .live(url: embed.url, token: embed.token)
+        }
+        return id == DemoDoc.id ? .demo(markdown: DemoDoc.markdown) : nil
+    }
+
+    private var me: [String: Any] {
+        guard let me = client.me else { return ["login": "you", "name": "You"] }
+        return ["login": me.login, "name": me.name ?? me.login, "avatar": me.avatarUrl as Any]
+    }
+
+    private var members: [[String: Any]] {
+        client.members.map { ["login": $0.login, "name": $0.name ?? $0.login, "avatar": $0.avatarUrl as Any] }
+    }
+
+    private var tasks: [[String: Any]] {
+        client.isSignedIn ? client.tasks.prefix(500).map { ["id": $0.id, "title": $0.title] } : state.tasks.prefix(200).map { ["id": $0.id, "title": $0.title] }
+    }
+
+    private func titleBar(_ doc: Wire.Doc?) -> some View {
+        HStack(spacing: 10) {
+            Button { state.destination = .docs } label: { Image(systemName: "chevron.left") }
+                .buttonStyle(.borderless).help("All docs")
+            Image(systemName: "doc.richtext").foregroundStyle(Theme.textMuted)
+            Text(doc?.title ?? "Doc").font(.system(size: 14, weight: .semibold)).lineLimit(1)
+            if let goal = DocsIndex.goalName(doc?.goal, client: client) {
+                Text(goal).font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+            }
+            Circle().fill(dotColor).frame(width: 7, height: 7)
+                .help(status.synced ? "Synced" : status.status.capitalized)
+            Spacer()
+            HStack(spacing: -6) {
+                ForEach(status.peers.prefix(5), id: \.login) { peer in
+                    Text(String(peer.name.prefix(1)).uppercased())
+                        .font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+                        .frame(width: 22, height: 22)
+                        .background(Circle().fill(Color(hex: peer.color)))
+                        .overlay(Circle().strokeBorder(Theme.editorBG, lineWidth: 2))
+                        .help("\(peer.name) is editing")
+                }
+            }
+        }
+        .padding(.horizontal, 16).padding(.top, 40).padding(.bottom, 10)
+    }
+
+    private var dotColor: Color {
+        if status.error != nil { return Theme.State.cancelled }
+        if status.synced && status.status == "connected" { return Theme.State.merged }
+        return Theme.State.awaitingApproval
+    }
+}
+
+private extension Color {
+    init(hex: String) {
+        let value = UInt32(hex.trimmingCharacters(in: CharacterSet(charactersIn: "#")), radix: 16) ?? 0x888888
+        self.init(red: Double((value >> 16) & 0xFF) / 255, green: Double((value >> 8) & 0xFF) / 255, blue: Double(value & 0xFF) / 255)
+    }
+}
