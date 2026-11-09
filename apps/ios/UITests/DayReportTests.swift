@@ -51,7 +51,12 @@ final class DayReportTests: XCTestCase {
         let sheet = app.otherElements["ActivityListView"]
         XCTAssertTrue(sheet.waitForExistence(timeout: 10) || app.buttons["Copy"].waitForExistence(timeout: 5), "the share sheet opens")
         snap(app, "day-report-share-sheet")
-        if app.buttons["Close"].exists { app.buttons["Close"].tap() } else { app.swipeDown(velocity: .fast) }
+        // On iOS 27 the share sheet is a popover: tap outside it to close.
+        let dismiss = app.otherElements["PopoverDismissRegion"]
+        if dismiss.exists { dismiss.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.9)).tap() }
+        else if app.buttons["Close"].exists { app.buttons["Close"].tap() }
+        else { app.swipeDown(velocity: .fast) }
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 5), "the share sheet closes")
 
         let prev = element(app, "dayReport.prev")
         XCTAssertTrue(prev.waitForExistence(timeout: 5))
