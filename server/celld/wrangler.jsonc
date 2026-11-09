@@ -1,0 +1,33 @@
+{
+  // THROWAWAY SPIKE CONFIG (MF-372): runs server/ under `celld dev` (celld 0.6.3). Not for deploys.
+  // A copy of ../wrangler.jsonc minus the keys celld rejects (keep_vars, dev) and plus
+  // delete_all_deletes_alarm. celld refuses `..` in migrations_dir and asset paths, so ./web and
+  // ./migrations are gitignored copies of ../web and ../migrations (copy them by hand; the run command
+  // is in docs/celld-spike.md's Setup section; celld refuses symlinked dirs too). main is entry.ts: it
+  // re-exports the real Worker unchanged and adds /__celld/* probe routes (D1 migrations via batch(),
+  // a JWT signing probe).
+  "name": "maple-factory",
+  "main": "entry.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_als", "delete_all_deletes_alarm"],
+  "assets": { "directory": "./web", "html_handling": "auto-trailing-slash" },
+  "durable_objects": {
+    "bindings": [
+      { "name": "ORG", "class_name": "OrgHub" },
+      { "name": "MACHINE", "class_name": "MachineHub" },
+      { "name": "DOC", "class_name": "DocHub" },
+      { "name": "ALARM_PROBE", "class_name": "AlarmProbe" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["OrgHub", "MachineHub"] },
+    { "tag": "v2", "new_sqlite_classes": ["DocHub"] },
+    { "tag": "v3", "new_sqlite_classes": ["AlarmProbe"] }
+  ],
+  "d1_databases": [
+    { "binding": "DB", "database_name": "maple", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }
+  ],
+  "r2_buckets": [{ "binding": "RELEASES", "bucket_name": "maple-releases" }],
+  "vars": { "GITHUB_ORG": "", "RELEASE_CHANNEL": "stable" },
+  "rules": [{ "type": "Text", "globs": ["**/*.sql"] }]
+}
