@@ -240,6 +240,9 @@ struct NewDocSheet: View {
 
 /// One doc, open in the shared editor, under a native title bar: title, sync dot, who's editing.
 struct DocPage: View {
+    /// A headless run's `docpeer:<login>:<rrggbb>[:avatar]` action: someone else joins the open doc, with
+    /// their GitHub avatar (github.com/<login>.png) when `avatar` is given.
+    static let demoPeer = Notification.Name("DocPage.demoPeer")
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
     @Environment(\.colorScheme) private var scheme
@@ -273,6 +276,9 @@ struct DocPage: View {
         }
         .background(Theme.editorBG)
         .task(id: "\(id)-\(client.isSignedIn)") { if client.isSignedIn { client.askDocThreads(id) } }
+        .onReceive(NotificationCenter.default.publisher(for: Self.demoPeer)) { note in
+            if let peer = (note.userInfo as? [String: Any]).flatMap(DocEditorStatus.Peer.parse) { status.peers.append(peer) }
+        }
     }
 
     /// The doc's threads as JSON for `mapleDocs.updateThreads` (MF-364).
@@ -318,11 +324,7 @@ struct DocPage: View {
             ThreadBadge(count: doc.flatMap(FeedState.threadBadge))
             HStack(spacing: -6) {
                 ForEach(status.peers.prefix(5), id: \.login) { peer in
-                    Text(String(peer.name.prefix(1)).uppercased())
-                        .font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
-                        .frame(width: 22, height: 22)
-                        .background(Circle().fill(Color(hex: peer.color)))
-                        .overlay(Circle().strokeBorder(Theme.editorBG, lineWidth: 2))
+                    PeerAvatar(peer: peer, avatar: peer.avatar ?? client.members.first { $0.login == peer.login }?.avatarUrl)
                         .help("\(peer.name) is editing")
                 }
             }
@@ -334,6 +336,33 @@ struct DocPage: View {
         if status.error != nil { return Theme.State.cancelled }
         if status.synced && status.status == "connected" { return Theme.State.merged }
         return Theme.State.awaitingApproval
+    }
+}
+
+/// Someone else in the doc: their GitHub avatar ringed in their cursor color, with their initial on that
+/// color until it loads (or when there isn't one).
+struct PeerAvatar: View {
+    let peer: DocEditorStatus.Peer
+    let avatar: String?
+    var size: CGFloat = 22
+
+    var body: some View {
+        let color = Color(hex: peer.color)
+        let shape = AgentAvatar.personShape(size: size)
+        let inner = size - 4
+        ZStack {
+            AgentAvatar.personShape(size: inner).fill(color)
+            Text(String(peer.name.prefix(1)).uppercased())
+                .font(.system(size: inner * 0.45, weight: .bold)).foregroundStyle(.white)
+            if let avatar, !avatar.isEmpty, let url = URL(string: avatar) {
+                AsyncImage(url: url) { image in image.resizable().scaledToFill() } placeholder: { Color.clear }
+            }
+        }
+        .frame(width: inner, height: inner)
+        .clipShape(AgentAvatar.personShape(size: inner))
+        .frame(width: size, height: size)
+        .background(shape.fill(color))
+        .overlay(shape.strokeBorder(Theme.editorBG, lineWidth: 1))
     }
 }
 
