@@ -4427,6 +4427,33 @@ public enum Wire {
         }
     }
 
+    /// A shared planning doc: org-visible, edited by many people at once. Its text is a Yjs document synced over /docs/<id>/sync; this is its index entry.
+    public struct Doc: Codable, Hashable, Sendable {
+        public var id: String
+        public var title: String
+        /// The goal it belongs to. None: it stands alone.
+        public var goal: String?
+        public var createdBy: String
+        public var createdAt: UInt64
+        /// Last edit, to its title or its text.
+        public var updatedAt: UInt64
+        /// Read-only and hidden from the list.
+        public var archived: Bool?
+        /// An emoji or SF Symbol name.
+        public var icon: String?
+
+        public init(id: String, title: String, goal: String? = nil, createdBy: String, createdAt: UInt64, updatedAt: UInt64, archived: Bool? = nil, icon: String? = nil) {
+            self.id = id
+            self.title = title
+            self.goal = goal
+            self.createdBy = createdBy
+            self.createdAt = createdAt
+            self.updatedAt = updatedAt
+            self.archived = archived
+            self.icon = icon
+        }
+    }
+
     /// Someone with the app open, and the task they're looking at.
     public struct Presence: Codable, Hashable, Sendable {
         public var login: String
@@ -6883,6 +6910,40 @@ public enum Wire {
         }
     }
 
+    /// Make a shared doc, in a goal or standing alone.
+    public struct ClientMessageDocCreate: Codable, Hashable, Sendable {
+        public var title: String
+        public var goal: String?
+        public var icon: String?
+
+        public init(title: String, goal: String? = nil, icon: String? = nil) {
+            self.title = title
+            self.goal = goal
+            self.icon = icon
+        }
+    }
+
+    public struct ClientMessageDocRename: Codable, Hashable, Sendable {
+        public var id: String
+        public var title: String
+
+        public init(id: String, title: String) {
+            self.id = id
+            self.title = title
+        }
+    }
+
+    /// Archive a doc (read-only, hidden), or bring it back.
+    public struct ClientMessageDocArchive: Codable, Hashable, Sendable {
+        public var id: String
+        public var archived: Bool
+
+        public init(id: String, archived: Bool) {
+            self.id = id
+            self.archived = archived
+        }
+    }
+
     /// The task this app is showing, if any, for teammates' presence.
     public struct ClientMessagePresence: Codable, Hashable, Sendable {
         public var viewing: String?
@@ -7943,6 +8004,9 @@ public enum Wire {
         case intakeAsk(ClientMessageIntakeAsk)
         case intakeDecline(ClientMessageIntakeDecline)
         case noteDelete(ClientMessageNoteDelete)
+        case docCreate(ClientMessageDocCreate)
+        case docRename(ClientMessageDocRename)
+        case docArchive(ClientMessageDocArchive)
         case presence(ClientMessagePresence)
         case sessionOpen(ClientMessageSessionOpen)
         case sessionAttach(ClientMessageSessionAttach)
@@ -8043,6 +8107,9 @@ public enum Wire {
             case "intake.ask": self = .intakeAsk(try ClientMessageIntakeAsk(from: decoder))
             case "intake.decline": self = .intakeDecline(try ClientMessageIntakeDecline(from: decoder))
             case "note.delete": self = .noteDelete(try ClientMessageNoteDelete(from: decoder))
+            case "doc.create": self = .docCreate(try ClientMessageDocCreate(from: decoder))
+            case "doc.rename": self = .docRename(try ClientMessageDocRename(from: decoder))
+            case "doc.archive": self = .docArchive(try ClientMessageDocArchive(from: decoder))
             case "presence": self = .presence(try ClientMessagePresence(from: decoder))
             case "session.open": self = .sessionOpen(try ClientMessageSessionOpen(from: decoder))
             case "session.attach": self = .sessionAttach(try ClientMessageSessionAttach(from: decoder))
@@ -8152,6 +8219,15 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .noteDelete(let body):
                 try c.encode("note.delete", forKey: .type)
+                try body.encode(to: encoder)
+            case .docCreate(let body):
+                try c.encode("doc.create", forKey: .type)
+                try body.encode(to: encoder)
+            case .docRename(let body):
+                try c.encode("doc.rename", forKey: .type)
+                try body.encode(to: encoder)
+            case .docArchive(let body):
+                try c.encode("doc.archive", forKey: .type)
                 try body.encode(to: encoder)
             case .presence(let body):
                 try c.encode("presence", forKey: .type)
@@ -8439,6 +8515,8 @@ public enum Wire {
         public var integrations: [Integration]?
         public var online: [Presence]
         public var notes: [Note]
+        /// Every shared doc, archived ones too. None: an older server.
+        public var docs: [Doc]?
         public var follows: [GoalFollow]
         /// Your quiet hours. None: none set, or an older server.
         public var quietHours: QuietHours?
@@ -8476,7 +8554,7 @@ public enum Wire {
         public var name: String?
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], tallies: [GoalTally]? = nil, olderTasks: UInt32? = nil, policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, connectors: [McpConnector]? = nil, integrations: [Integration]? = nil, online: [Presence] = [], notes: [Note] = [], follows: [GoalFollow] = [], quietHours: QuietHours? = nil, intake: [IntakeRequest] = [], repos: [OrgRepo] = [], repoOwners: [String]? = nil, mergeHolds: [MergeHold]? = nil, githubApp: GitHubAppInfo? = nil, secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, setupRuns: [RepoSetupRun]? = nil, scoutRuns: [ScoutRun]? = nil, recurring: [Recurring]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, githubStatus: GitHubStatus? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], tallies: [GoalTally]? = nil, olderTasks: UInt32? = nil, policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, connectors: [McpConnector]? = nil, integrations: [Integration]? = nil, online: [Presence] = [], notes: [Note] = [], docs: [Doc]? = nil, follows: [GoalFollow] = [], quietHours: QuietHours? = nil, intake: [IntakeRequest] = [], repos: [OrgRepo] = [], repoOwners: [String]? = nil, mergeHolds: [MergeHold]? = nil, githubApp: GitHubAppInfo? = nil, secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, setupRuns: [RepoSetupRun]? = nil, scoutRuns: [ScoutRun]? = nil, recurring: [Recurring]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, githubStatus: GitHubStatus? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
             self.org = org
             self.me = me
             self.members = members
@@ -8493,6 +8571,7 @@ public enum Wire {
             self.integrations = integrations
             self.online = online
             self.notes = notes
+            self.docs = docs
             self.follows = follows
             self.quietHours = quietHours
             self.intake = intake
@@ -8533,6 +8612,7 @@ public enum Wire {
             integrations = try c.decodeIfPresent([Integration].self, forKey: .integrations)
             online = try c.decodeIfPresent([Presence].self, forKey: .online) ?? []
             notes = try c.decodeIfPresent([Note].self, forKey: .notes) ?? []
+            docs = try c.decodeIfPresent([Doc].self, forKey: .docs)
             follows = try c.decodeIfPresent([GoalFollow].self, forKey: .follows) ?? []
             quietHours = try c.decodeIfPresent(QuietHours.self, forKey: .quietHours)
             intake = try c.decodeIfPresent([IntakeRequest].self, forKey: .intake) ?? []
@@ -8646,6 +8726,23 @@ public enum Wire {
     }
 
     public struct ServerToClientNoteRemoved: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
+        }
+    }
+
+    /// A shared doc was made or changed, to every member.
+    public struct ServerToClientDocUpdated: Codable, Hashable, Sendable {
+        public var doc: Doc
+
+        public init(doc: Doc) {
+            self.doc = doc
+        }
+    }
+
+    public struct ServerToClientDocRemoved: Codable, Hashable, Sendable {
         public var id: String
 
         public init(id: String) {
@@ -9029,6 +9126,8 @@ public enum Wire {
         case noteUpdated(ServerToClientNoteUpdated)
         case intakeUpdated(ServerToClientIntakeUpdated)
         case noteRemoved(ServerToClientNoteRemoved)
+        case docUpdated(ServerToClientDocUpdated)
+        case docRemoved(ServerToClientDocRemoved)
         case draftUpdated(ServerToClientDraftUpdated)
         case scoutUpdated(ServerToClientScoutUpdated)
         case recurringUpdated(ServerToClientRecurringUpdated)
@@ -9076,6 +9175,8 @@ public enum Wire {
             case "note.updated": self = .noteUpdated(try ServerToClientNoteUpdated(from: decoder))
             case "intake.updated": self = .intakeUpdated(try ServerToClientIntakeUpdated(from: decoder))
             case "note.removed": self = .noteRemoved(try ServerToClientNoteRemoved(from: decoder))
+            case "doc.updated": self = .docUpdated(try ServerToClientDocUpdated(from: decoder))
+            case "doc.removed": self = .docRemoved(try ServerToClientDocRemoved(from: decoder))
             case "draft.updated": self = .draftUpdated(try ServerToClientDraftUpdated(from: decoder))
             case "scout.updated": self = .scoutUpdated(try ServerToClientScoutUpdated(from: decoder))
             case "recurring.updated": self = .recurringUpdated(try ServerToClientRecurringUpdated(from: decoder))
@@ -9143,6 +9244,12 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .noteRemoved(let body):
                 try c.encode("note.removed", forKey: .type)
+                try body.encode(to: encoder)
+            case .docUpdated(let body):
+                try c.encode("doc.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .docRemoved(let body):
+                try c.encode("doc.removed", forKey: .type)
                 try body.encode(to: encoder)
             case .draftUpdated(let body):
                 try c.encode("draft.updated", forKey: .type)

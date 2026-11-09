@@ -2261,6 +2261,27 @@ pub struct Note {
     pub task_id: Option<String>,
 }
 
+/// A shared planning doc: org-visible, edited by many people at once. Its text is a Yjs document synced over /docs/<id>/sync; this is its index entry.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Doc {
+    pub id: Uuid,
+    pub title: String,
+    /// The goal it belongs to. None: it stands alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
+    pub created_by: String,
+    pub created_at: u64,
+    /// Last edit, to its title or its text.
+    pub updated_at: u64,
+    /// Read-only and hidden from the list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archived: Option<bool>,
+    /// An emoji or SF Symbol name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+}
+
 /// Someone with the app open, and the task they're looking at.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -3563,6 +3584,26 @@ pub enum ClientMessage {
     NoteDelete {
         id: Uuid,
     },
+    /// Make a shared doc, in a goal or standing alone.
+    #[serde(rename = "doc.create")]
+    DocCreate {
+        title: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        goal: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        icon: Option<String>,
+    },
+    #[serde(rename = "doc.rename")]
+    DocRename {
+        id: Uuid,
+        title: String,
+    },
+    /// Archive a doc (read-only, hidden), or bring it back.
+    #[serde(rename = "doc.archive")]
+    DocArchive {
+        id: Uuid,
+        archived: bool,
+    },
     /// The task this app is showing, if any, for teammates' presence.
     #[serde(rename = "presence")]
     Presence {
@@ -4222,6 +4263,9 @@ pub enum ServerToClient {
         online: Vec<Presence>,
         #[serde(default)]
         notes: Vec<Note>,
+        /// Every shared doc, archived ones too. None: an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        docs: Option<Vec<Doc>>,
         #[serde(default)]
         follows: Vec<GoalFollow>,
         /// Your quiet hours. None: none set, or an older server.
@@ -4325,6 +4369,15 @@ pub enum ServerToClient {
     },
     #[serde(rename = "note.removed")]
     NoteRemoved {
+        id: Uuid,
+    },
+    /// A shared doc was made or changed, to every member.
+    #[serde(rename = "doc.updated")]
+    DocUpdated {
+        doc: Doc,
+    },
+    #[serde(rename = "doc.removed")]
+    DocRemoved {
         id: Uuid,
     },
     /// Your draft, to your apps only.

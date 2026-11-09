@@ -656,6 +656,9 @@ import Foundation
         case .sessionEvents(let batch):
             guard eventSubscriptions[batch.id] != nil else { break }
             store(for: batch.id).apply(events: batch.events, epoch: batch.epoch)
+        case .docUpdated, .docRemoved:
+            // Shared planning docs (docs/planning-docs.md): no list in the app yet.
+            break
         case .pushDevices:
             // Phone push devices: only the iPhone and Android apps register or list them.
             break
