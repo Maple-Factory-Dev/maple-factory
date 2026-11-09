@@ -399,3 +399,9 @@ test("a table renders as thead/tbody with per-cell alignment and its text kept a
   assert.equal(td.tag, "td");
   assert.deepEqual(td.children, ["<script>alert(1)</script>"]);
 });
+
+// Both match GFM; pinned so the Swift and web parsers don't drift apart (mirrors MarkdownTests.tableRowRules).
+test("after the delimiter row any line with a pipe is a row, and a pipe inside inline code splits the cell", () => {
+  const [b] = parse("| a | b |\n|---|---|\nloose | row\n| `x | y` |");
+  assert.deepEqual(table(b).rows, [["loose", "row"], ["`x", "y`"]]);
+});

@@ -64,4 +64,11 @@ import Testing
             .paragraph("not a row"),
         ])
     }
+
+    // Both match GFM; pinned so the Swift and web parsers don't drift apart (mirrors markdown.test.ts).
+    @Test func tableRowRules() {
+        #expect(MarkdownBlock.parse("| a | b |\n|---|---|\nloose | row\n| `x | y` |") == [
+            .table(header: ["a", "b"], alignments: [.leading, .leading], rows: [["loose", "row"], ["`x", "y`"]]),
+        ])
+    }
 }
