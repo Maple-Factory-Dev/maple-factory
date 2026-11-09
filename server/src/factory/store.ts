@@ -2,7 +2,7 @@
 // the apps see them), the sessions working on them, and per-machine settings. One Durable Object
 // owns it all, so every change is serialized without locks.
 
-import type { Goal, GoalFollow, Recurring, GoalTally, IntakeRequest, MachineSettings, McpConnector, MergeHold, Note, OrgRepo, PromptAdditions, QuietHours, RepoWorktreeScripts, RiskAcceptance, RiskPolicy, Role, Task, WorktreeScripts } from "../wire.ts";
+import type { Doc, Goal, GoalFollow, Recurring, GoalTally, IntakeRequest, MachineSettings, McpConnector, MergeHold, Note, OrgRepo, PromptAdditions, QuietHours, RepoWorktreeScripts, RiskAcceptance, RiskPolicy, Role, Task, WorktreeScripts } from "../wire.ts";
 import { DEFAULT_POLICY } from "./policy.ts";
 import { validateQuietHours } from "../quiet-hours.ts";
 import { inferEvents, type StatEvent } from "./stats.ts";
@@ -145,6 +145,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS intake (id TEXT PRIMARY KEY, updated INTEGER NOT NULL, doc TEXT NOT NULL, reply_url TEXT);
       CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, owner TEXT NOT NULL, updated INTEGER NOT NULL, doc TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS notes_owner ON notes (owner, updated);
+      CREATE TABLE IF NOT EXISTS docs (id TEXT PRIMARY KEY, goal TEXT, created_by TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, archived INTEGER NOT NULL DEFAULT 0, json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS goal_follows (login TEXT NOT NULL, goal TEXT NOT NULL, following INTEGER NOT NULL, PRIMARY KEY (login, goal));
       CREATE TABLE IF NOT EXISTS quiet_hours (login TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS push_devices (
@@ -510,6 +511,34 @@ export class Store {
 
   deleteNote(id: string) {
     this.sql.exec("DELETE FROM notes WHERE id = ?", id);
+  }
+
+  // Shared docs (docs/planning-docs.md): the index only; each doc's text is in its DocHub. Org-wide, not per owner.
+
+  docs(): Doc[] {
+    return this.sql.exec<{ json: string }>("SELECT json FROM docs ORDER BY updated_at DESC").toArray().map((r) => JSON.parse(r.json));
+  }
+
+  doc(id: string): Doc | null {
+    const row = this.sql.exec<{ json: string }>("SELECT json FROM docs WHERE id = ?", id).toArray()[0];
+    return row ? JSON.parse(row.json) : null;
+  }
+
+  saveDoc(doc: Doc) {
+    this.sql.exec(
+      `INSERT INTO docs (id, goal, created_by, created_at, updated_at, archived, json) VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (id) DO UPDATE SET goal = excluded.goal, updated_at = excluded.updated_at, archived = excluded.archived, json = excluded.json`,
+      doc.id, doc.goal ?? null, doc.createdBy, doc.createdAt, doc.updatedAt, doc.archived ? 1 : 0, JSON.stringify(doc),
+    );
+  }
+
+  /** Bumps a doc's last edit; the doc, or null when there's no such doc. */
+  touchDoc(id: string, at: number): Doc | null {
+    const doc = this.doc(id);
+    if (!doc) return null;
+    const touched = { ...doc, updatedAt: Math.max(doc.updatedAt, at) };
+    this.saveDoc(touched);
+    return touched;
   }
 
   // Recurring tasks: a goal's saved prompts that start a new task every interval.
