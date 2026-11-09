@@ -7,7 +7,7 @@ publishes it, with the sections of earlier releases, to the feed's `maple-runner
 
 ## Unreleased
 
-Weekly dependency refresh: the runner moves to toml 1.2, along with patch updates to the crates under it; nothing changes in how tasks run.
+Weekly dependency refresh: the runner moves to toml 1.2 and uuid 1.29.2, along with patch updates to the crates under it; nothing changes in how tasks run.
 
 ## 0.106.0 — 2026-11-02
 
