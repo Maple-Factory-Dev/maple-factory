@@ -4,8 +4,8 @@ import SwiftUI
 
 /// Starts a task from the phone: a goal, a title and brief, photos and screenshots for it, how soon,
 /// which repo (when the goal spans several), the agent and the effort, and whether a planner picks it
-/// up now or it waits as a draft. Sends `task.create`. Tickets aren't offered: on the Mac they come only
-/// from intake requests, and there's no ticket search to pick one from.
+/// up now or it waits as a draft. Sends `task.create`. Tickets come only from a request (Start task
+/// on a request's detail), shown read-only; there's no ticket search to pick one from.
 struct NewTaskView: View {
     @Environment(FactoryStore.self) private var store
     @Environment(\.dismiss) private var dismiss
@@ -24,10 +24,21 @@ struct NewTaskView: View {
     @FocusState private var titleFocused: Bool
     @FocusState private var effortFocused: Bool
 
+    /// Started from a request (MF-278): its title, brief, goal and tickets, and its id rides along in `task.create`.
+    private let prefill: IntakePrefill?
+
     private static let newEffort = "\u{0}new"
 
     init(goal: String) {
         _goalID = State(initialValue: goal)
+        prefill = nil
+    }
+
+    init(prefill: IntakePrefill) {
+        _goalID = State(initialValue: prefill.goal)
+        _title = State(initialValue: prefill.title)
+        _brief = State(initialValue: prefill.brief)
+        self.prefill = prefill
     }
 
     private var goal: Wire.Goal? { store.feed.goal(goalID) }
@@ -65,6 +76,15 @@ struct NewTaskView: View {
                     MarkdownField(placeholder: "What should it do, and why?", text: $brief, identifier: "newTask.brief")
                 } footer: {
                     Text("Left empty, the title is the brief.")
+                }
+                if let prefill, !prefill.tickets.isEmpty {
+                    Section {
+                        ForEach(prefill.tickets, id: \.key) { TicketRow(ticket: $0) }
+                    } header: {
+                        Text("From request")
+                    } footer: {
+                        Text("The agent reads these tickets as context.")
+                    }
                 }
                 attachmentsSection
                 Section {
@@ -117,7 +137,8 @@ struct NewTaskView: View {
                     Button("Send") {
                         guard let goal else { return }
                         store.createTask(goal: goal, title: title, brief: brief, repo: goal.repos.count > 1 ? repo : nil, priority: priority, plan: plan,
-                                         agent: agent, effort: chosenEffort, attachments: uploads.attachments)
+                                         agent: agent, effort: chosenEffort, attachments: uploads.attachments,
+                                         intake: prefill?.id, tickets: prefill?.tickets ?? [])
                         dismiss()
                     }
                     .disabled(!canSend)
@@ -127,7 +148,7 @@ struct NewTaskView: View {
             .onAppear {
                 repo = goal?.repo ?? goal?.repos.first
                 // Opened by `-newTask YES` for a screenshot, the keyboard would hide the form.
-                titleFocused = !UserDefaults.standard.bool(forKey: "newTask")
+                titleFocused = !UserDefaults.standard.bool(forKey: "newTask") && prefill == nil
                 uploads.injectTestAttachments(flag: "newTaskAttachment", store: store)
                 // `-newTaskEffort <name>` opens with a new effort typed in, for a screenshot.
                 if let name = UserDefaults.standard.string(forKey: "newTaskEffort"), !name.isEmpty {

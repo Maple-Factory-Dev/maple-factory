@@ -1,4 +1,5 @@
 import SwiftUI
+import MapleKit
 
 // MARK: Tickets
 
@@ -84,32 +85,8 @@ struct ThreadMessage: Identifiable {
 }
 
 /// Work asked for from outside the app, waiting to be triaged into a task.
-struct IntakeRequest: Identifiable {
-    enum Status: Equatable {
-        case new
-        /// Forge asked a follow-up and is waiting on the requester.
-        case clarifying
-        case accepted(taskID: String)
-        case declined
-
-        var title: String {
-            switch self {
-            case .new: "New"
-            case .clarifying: "Waiting on requester"
-            case .accepted(let id): "Became \(id)"
-            case .declined: "Declined"
-            }
-        }
-
-        var color: Color {
-            switch self {
-            case .new: Theme.State.building
-            case .clarifying: Theme.State.awaitingApproval
-            case .accepted: Theme.State.merged
-            case .declined: Theme.textFaint
-            }
-        }
-    }
+struct IntakeRequest: Identifiable, IntakeTriageable {
+    typealias Status = IntakeStatus
 
     let id: String
     let source: IntakeSource
@@ -125,6 +102,19 @@ struct IntakeRequest: Identifiable {
     var relatedTask: String? = nil
     /// What's missing before an agent could plan it.
     var gaps: [String] = []
+
+    var intakeStatus: IntakeStatus { status }
+}
+
+extension IntakeStatus {
+    var color: Color {
+        switch self {
+        case .new: Theme.State.building
+        case .clarifying: Theme.State.awaitingApproval
+        case .accepted: Theme.State.merged
+        case .declined: Theme.textFaint
+        }
+    }
 }
 
 extension FactoryData {
@@ -239,18 +229,10 @@ extension AppState {
     /// Opens the composer with the request's conversation and tickets already in the brief.
     func composeFromIntake(_ id: String) {
         guard let request = intakeRequest(id) else { return }
-        let quoted = request.thread.filter { !$0.isBot }.map { "> \($0.text)\n> — \($0.author.firstName)" }.joined(separator: "\n>\n")
-        let tickets = request.tickets.map { "- \($0.key): \($0.title)" }.joined(separator: "\n")
-        let body = """
-        \(quoted)
-
-        ## Context
-        Requested by \(request.requester.name) in \(request.source.title).
-        \(tickets)
-
-        ## Done when
-        - [ ] 
-        """
+        let body = IntakeBrief.compose(
+            requester: request.requester.name, source: request.source.title,
+            thread: request.thread.map { IntakeBrief.Message(author: $0.author.name, text: $0.text, isBot: $0.isBot) },
+            tickets: request.tickets.map { ($0.key, $0.title) })
         startCompose(goal: request.suggestedGoal, title: request.title, body: body)
         draft.tickets = request.tickets
         draft.intakeID = id
@@ -388,74 +370,22 @@ struct LinkedCard: View {
 
 // MARK: Filter
 
-/// The Requests list's filter pills (MF-197): which requests still need an answer, which wait on the
-/// requester, which became tasks that are still running, and which are over.
-enum IntakeFilter: String, CaseIterable, Identifiable {
-    case all, unanswered, waiting, inFlight, done
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .all: "All"
-        case .unanswered: "Unanswered"
-        case .waiting: "Waiting"
-        case .inFlight: "In flight"
-        case .done: "Done"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .all: "tray"
-        case .unanswered: "bubble.left"
-        case .waiting: "hourglass"
-        case .inFlight: "hammer"
-        case .done: "checkmark.circle"
-        }
-    }
-
-    /// What the list says when nothing matches.
-    var emptyTitle: String {
-        switch self {
-        case .all: "No requests yet"
-        case .unanswered: "No unanswered requests"
-        case .waiting: "Nobody to wait on"
-        case .inFlight: "Nothing in flight"
-        case .done: "Nothing done yet"
-        }
-    }
-
-    /// The bucket a request lands in. An accepted request is in flight until its task finishes; a task
-    /// this app doesn't know counts as still running.
+/// The Mac's calls into MapleKit's IntakeFilter, by task state.
+extension IntakeFilter {
     static func bucket(for request: IntakeRequest, taskState: (String) -> TaskState?) -> IntakeFilter {
-        switch request.status {
-        case .new: .unanswered
-        case .clarifying: .waiting
-        case .declined: .done
-        case .accepted(let id): taskState(id)?.isFinished == true ? .done : .inFlight
-        }
+        bucket(for: request) { taskState($0)?.isFinished == true }
     }
 
-    /// The requests the filter shows, in the order given. `keeping` stays in the list even when it no longer
-    /// matches: the request just acted on, so answering one doesn't swap the detail pane for another.
     static func visible(_ requests: [IntakeRequest], filter: IntakeFilter, keeping: String? = nil,
                         taskState: (String) -> TaskState?) -> [IntakeRequest] {
-        guard filter != .all else { return requests }
-        return requests.filter { $0.id == keeping || bucket(for: $0, taskState: taskState) == filter }
+        visible(requests, filter: filter, keeping: keeping) { taskState($0)?.isFinished == true }
     }
 
-    /// The filter to show when `selected` is picked from outside the list (a task's linked request):
-    /// this one if it shows the request, otherwise All, so the request isn't dropped for another.
     func revealing(_ selected: String?, in requests: [IntakeRequest], taskState: (String) -> TaskState?) -> IntakeFilter {
-        guard let selected, let request = requests.first(where: { $0.id == selected }) else { return self }
-        return self == .all || Self.bucket(for: request, taskState: taskState) == self ? self : .all
+        revealing(selected, in: requests) { taskState($0)?.isFinished == true }
     }
 
-    /// How many requests each pill shows.
     static func counts(_ requests: [IntakeRequest], taskState: (String) -> TaskState?) -> [IntakeFilter: Int] {
-        var counts: [IntakeFilter: Int] = [.all: requests.count]
-        for request in requests { counts[bucket(for: request, taskState: taskState), default: 0] += 1 }
-        return counts
+        counts(requests) { taskState($0)?.isFinished == true }
     }
 }

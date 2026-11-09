@@ -612,16 +612,42 @@ final class FactoryStore {
     /// `attachments` go at the end of the brief as links (inline images for pictures), the way the Mac's
     /// composer puts a pasted file in; `agent` and `effort` ride along in `task.create`.
     func createTask(goal: Wire.Goal, title: String, brief: String, repo: String?, priority: Wire.Priority?, plan: Bool,
-                    agent: String? = nil, effort: String? = nil, attachments: [Attachment] = []) {
+                    agent: String? = nil, effort: String? = nil, attachments: [Attachment] = [],
+                    intake: String? = nil, tickets: [Wire.TicketLink] = []) {
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return }
         let brief = Self.brief(brief.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? title : brief, attachments: attachments)
         let effort = effort?.trimmingCharacters(in: .whitespacesAndNewlines)
-        send(.taskCreate(.init(goal: goal.id, title: title, brief: brief, shareable: false, plan: plan, agent: agent,
+        send(.taskCreate(.init(goal: goal.id, title: title, brief: brief, shareable: intake != nil, plan: plan, tickets: tickets, agent: agent, intake: intake,
                                repo: repo.flatMap { goal.repos.contains($0) ? $0 : nil },
                                effort: effort?.isEmpty == false ? effort : nil, priority: priority)))
         notice = .toast(plan ? "Sent to planning" : "Saved as a draft", taskId: nil)
     }
+
+    // MARK: Intake
+
+    /// Asks the requester something in their thread, as the factory's bot.
+    func askIntake(_ id: String, text: String) {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        send(.intakeAsk(.init(id: id, text: text)))
+        notice = .toast("Asked in the thread", taskId: nil)
+    }
+
+    /// Folds a request into an existing task: its tickets become that task's context.
+    func attachIntake(_ id: String, task: String) {
+        send(.intakeAttach(.init(id: id, task: task)))
+        notice = .toast("Added to \(task)", taskId: task)
+    }
+
+    func declineIntake(_ id: String, note: String? = nil) {
+        let note = note?.trimmingCharacters(in: .whitespacesAndNewlines)
+        send(.intakeDecline(.init(id: id, note: note?.isEmpty == false ? note : nil)))
+        notice = .toast("Declined", taskId: nil)
+    }
+
+    /// Requests nobody has answered yet: the Requests button's badge.
+    var unansweredIntake: Int { feed.intake.filter { $0.intakeStatus == .new }.count }
 
     /// The brief with each attachment linked on a line of its own at the end: `![name](path)` for an image.
     static func brief(_ text: String, attachments: [Attachment]) -> String {
@@ -885,6 +911,13 @@ final class FactoryStore {
         }
     }
 
+    /// Changes a demo request the way the factory would, then sends it back as `intake.updated`.
+    private func demoIntake(_ id: String, _ change: (inout Wire.IntakeRequest) -> Void) {
+        guard var request = feed.intake.first(where: { $0.id == id }) else { return }
+        change(&request)
+        feed.apply(.intakeUpdated(.init(request: request)))
+    }
+
     /// The demo answers actions itself, the way a factory would.
     private func demoSend(_ message: Wire.ClientMessage) {
         func update(_ id: String, _ change: (inout Wire.Task) -> Void) {
@@ -1083,6 +1116,35 @@ final class FactoryStore {
             }
             goal.archived = m.archived ? true : nil
             feed.apply(.goalUpdated(.init(goal: goal)))
+        case .intakeAsk(let m):
+            demoIntake(m.id) { request in
+                request.thread.append(.init(author: "maple", text: m.text, at: DemoData.now, bot: true))
+                request.status = "clarifying"
+            }
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(3))
+                self?.demoIntake(m.id) { request in
+                    request.thread.append(.init(author: request.requester, text: "Good question. 2.31 and up, iOS only so far. Android looks fine.", at: DemoData.now, bot: false))
+                    request.status = "new"
+                    request.gaps = []
+                }
+            }
+        case .intakeAttach(let m):
+            guard let request = feed.intake.first(where: { $0.id == m.id }) else { return }
+            update(m.task) { task in
+                for ticket in request.tickets where !task.tickets.contains(where: { $0.key == ticket.key }) { task.tickets.append(ticket) }
+                task.events.append(.init(who: me, text: "linked \(request.tickets.map(\.key).joined(separator: ", ")) from \(request.requester)'s request", at: DemoData.now))
+            }
+            demoIntake(m.id) { request in
+                request.status = "accepted"
+                request.taskId = m.task
+                request.thread.append(.init(author: "maple", text: "Added to \(m.task). Its agent will read \(request.tickets.map(\.key).joined(separator: " and ")) as context.", at: DemoData.now, bot: true))
+            }
+        case .intakeDecline(let m):
+            demoIntake(m.id) { request in
+                request.status = "declined"
+                request.thread.append(.init(author: "maple", text: m.note ?? "Passed on this for now. Reply here if it becomes urgent.", at: DemoData.now, bot: true))
+            }
         case .taskCreate(let m):
             guard let goal = feed.goal(m.goal) else { return }
             let next = (feed.tasks(in: goal.id).compactMap { Int($0.id.split(separator: "-").last ?? "") }.max() ?? 0) + 1
@@ -1091,7 +1153,16 @@ final class FactoryStore {
                                  events: [.init(who: me, text: "created the task", at: DemoData.now)],
                                  shareable: m.shareable, agent: m.agent ?? "claude", repo: m.repo, priority: m.priority)
             task.effort = m.effort
+            task.tickets = m.tickets
+            task.intake = m.intake
             feed.apply(.taskUpdated(.init(task: task)))
+            if let intake = m.intake {
+                demoIntake(intake) { request in
+                    request.status = "accepted"
+                    request.taskId = task.id
+                    request.thread.append(.init(author: "maple", text: "Tracking this as \(task.id). I'll post questions here, and the thread updates when it merges.", at: DemoData.now, bot: true))
+                }
+            }
         case .taskAssign(let m):
             update(m.id) { task in
                 if task.hand?.assignee == task.owner { task.hand?.assignee = m.owner }
