@@ -26,7 +26,9 @@ export function parse(source, tasks) {
     else blocks.push({ type: "list", ordered, start, items: [item] });
   };
 
-  for (const raw of String(source ?? "").replace(/\r\n?/g, "\n").split("\n")) {
+  const lines = String(source ?? "").replace(/\r\n?/g, "\n").split("\n");
+  for (let index = 0; index < lines.length; ) {
+    const raw = lines[index++];
     const line = raw.trim();
     const indent = raw.length - raw.trimStart().length;
 
@@ -50,6 +52,23 @@ export function parse(source, tasks) {
 
     if (!line) { flush(); continue; }
     if (line === "---") { flush(); blocks.push({ type: "rule" }); continue; }
+
+    // A pipe line followed by a delimiter row with as many cells starts a table, even straight after
+    // a paragraph; each pipe line after it is a row, until one isn't.
+    const header = tableCells(line);
+    const align = header && index < lines.length ? tableDelimiter(lines[index].trim()) : null;
+    if (align && align.length === header.length) {
+      flush();
+      index++;
+      const rows = [];
+      let cells;
+      while (index < lines.length && (cells = tableCells(lines[index].trim()))) {
+        rows.push(Array.from({ length: header.length }, (_, i) => inline(cells[i] ?? "", tasks)));
+        index++;
+      }
+      blocks.push({ type: "table", align, header: header.map((c) => inline(c, tasks)), rows });
+      continue;
+    }
 
     // A line that's just `![alt](src)` is an image; just `[name](/attachments/…)` is a file chip.
     // An empty src is the editor's `![Uploading x…]()` placeholder.
@@ -88,6 +107,33 @@ export function parse(source, tasks) {
   if (fence) blocks.push({ type: "code", lang: fence.lang, text: fence.lines.join("\n") });
   flush();
   return blocks;
+}
+
+/** A line's table cells, split on unescaped pipes with the outer pipes trimmed (`\|` is a literal
+ *  pipe), or null when it has no pipe to split on. */
+export function tableCells(line) {
+  const closed = line.endsWith("|") && !line.endsWith("\\|");
+  let body = line.startsWith("|") ? line.slice(1) : line;
+  if (closed && body.length) body = body.slice(0, -1);
+  const cells = [];
+  let cell = "";
+  let split = line.startsWith("|") || closed;
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if (c === "\\" && body[i + 1] === "|") { cell += "|"; i++; }
+    else if (c === "|") { cells.push(cell.trim()); cell = ""; split = true; }
+    else cell += c;
+  }
+  cells.push(cell.trim());
+  return split ? cells : null;
+}
+
+/** A delimiter row's column alignments ("left", "center", "right" or null), or null when it isn't one. */
+export function tableDelimiter(line) {
+  if (!line.includes("|")) return null;
+  const cells = tableCells(line);
+  if (!cells || !cells.every((c) => /^:?-+:?$/.test(c))) return null;
+  return cells.map((c) => c.startsWith(":") && c.endsWith(":") ? "center" : c.endsWith(":") ? "right" : c.startsWith(":") ? "left" : null);
 }
 
 // ---- inline ----
@@ -301,6 +347,12 @@ export function render(blocks, h) {
       case "rule": return h("hr", {});
       case "image": return b.src ? image(b.src, b.alt, "md-img") : h("p", { class: "md-uploading" }, b.alt);
       case "file": return chip(b.name, b.path);
+      case "table": {
+        const style = (i) => b.align[i] ? `text-align:${b.align[i]}` : null;
+        return h("div", { class: "md-table" }, h("table", {},
+          h("thead", {}, h("tr", {}, b.header.map((cell, i) => h("th", { style: style(i) }, spans(cell))))),
+          h("tbody", {}, b.rows.map((row) => h("tr", {}, row.map((cell, i) => h("td", { style: style(i) }, spans(cell))))))));
+      }
       default: return h("p", {}, spans(b.inline));
     }
   }));

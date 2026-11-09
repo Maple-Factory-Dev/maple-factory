@@ -2,6 +2,11 @@ import Foundation
 
 // MARK: - Parsing
 
+/// How a table column lines its cells up, from the delimiter row (`:--`, `:-:`, `--:`).
+public enum TableAlignment: Equatable, Sendable {
+    case leading, center, trailing
+}
+
 /// Just enough Markdown structure for briefs and notes: headings, lists, task lists, quotes, code.
 public enum MarkdownBlock: Equatable, Sendable {
     case heading(level: Int, text: String)
@@ -17,6 +22,9 @@ public enum MarkdownBlock: Equatable, Sendable {
     case image(alt: String, path: String)
     /// A line that's just `[name](/attachments/…)`: a file attached to the note.
     case file(name: String, path: String)
+    /// A GFM table: the header's cells, each column's alignment, and the body rows padded or cut to
+    /// the header's width. Cells are inline Markdown.
+    case table(header: [String], alignments: [TableAlignment], rows: [[String]])
 
     public static func parse(_ source: String) -> [MarkdownBlock] {
         var blocks: [MarkdownBlock] = []
@@ -30,7 +38,11 @@ public enum MarkdownBlock: Equatable, Sendable {
             }
         }
 
-        for raw in source.components(separatedBy: "\n") {
+        let lines = source.components(separatedBy: "\n")
+        var index = 0
+        while index < lines.count {
+            let raw = lines[index]
+            index += 1
             let line = raw.trimmingCharacters(in: .whitespaces)
 
             if let open = fence {
@@ -54,6 +66,23 @@ public enum MarkdownBlock: Equatable, Sendable {
 
             if line.isEmpty { flush(); continue }
             if line == "---" { flush(); blocks.append(.rule); continue }
+            // A pipe line followed by a delimiter row with as many cells starts a table, even
+            // straight after a paragraph; each pipe line after it is a row, until one isn't.
+            if let header = tableCells(line), index < lines.count,
+               let alignments = tableDelimiter(lines[index].trimmingCharacters(in: .whitespaces)),
+               alignments.count == header.count {
+                flush()
+                index += 1
+                var rows: [[String]] = []
+                while index < lines.count,
+                      let cells = tableCells(lines[index].trimmingCharacters(in: .whitespaces)) {
+                    let fitted = Array(cells.prefix(header.count))
+                    rows.append(fitted + Array(repeating: "", count: header.count - fitted.count))
+                    index += 1
+                }
+                blocks.append(.table(header: header, alignments: alignments, rows: rows))
+                continue
+            }
             if let link = line.wholeMatch(of: /(!?)\[([^\]]*)\]\((\S*)\)/) {
                 if !link.1.isEmpty {
                     flush()
@@ -93,5 +122,46 @@ public enum MarkdownBlock: Equatable, Sendable {
         flush()
         return blocks
     }
-}
 
+    /// A line's table cells, split on unescaped pipes with the outer pipes trimmed (`\|` is a
+    /// literal pipe), or nil when it has no pipe to split on.
+    static func tableCells(_ line: String) -> [String]? {
+        var body = Substring(line)
+        if body.hasPrefix("|") { body = body.dropFirst() }
+        if body.hasSuffix("|") && !body.hasSuffix("\\|") { body = body.dropLast() }
+        var cells: [String] = []
+        var cell = ""
+        var escaped = false
+        var split = line.hasPrefix("|") || (line.hasSuffix("|") && !line.hasSuffix("\\|"))
+        for character in body {
+            if escaped {
+                if character != "|" { cell.append("\\") }
+                cell.append(character)
+                escaped = false
+            } else if character == "\\" {
+                escaped = true
+            } else if character == "|" {
+                cells.append(cell.trimmingCharacters(in: .whitespaces))
+                cell = ""
+                split = true
+            } else {
+                cell.append(character)
+            }
+        }
+        if escaped { cell.append("\\") }
+        cells.append(cell.trimmingCharacters(in: .whitespaces))
+        return split ? cells : nil
+    }
+
+    /// A delimiter row's column alignments (`|---|:--:|--:|`), or nil when it isn't one.
+    static func tableDelimiter(_ line: String) -> [TableAlignment]? {
+        guard line.contains("|"), let cells = tableCells(line), !cells.isEmpty else { return nil }
+        var alignments: [TableAlignment] = []
+        for cell in cells {
+            guard cell.wholeMatch(of: /:?-+:?/) != nil else { return nil }
+            let left = cell.hasPrefix(":"), right = cell.hasSuffix(":")
+            alignments.append(left && right ? .center : right ? .trailing : .leading)
+        }
+        return alignments
+    }
+}

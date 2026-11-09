@@ -26,4 +26,42 @@ import Testing
                            .file(name: "log.txt", path: "/attachments/def"),
                            .paragraph("[site](https://x.dev)")])
     }
+
+    @Test func tables() {
+        let source = "| Name | Size | Done |\n|:-----|:----:|-----:|\n| `a` | **big** | yes |\n| b | small | no |\n\nafter"
+        #expect(MarkdownBlock.parse(source) == [
+            .table(header: ["Name", "Size", "Done"], alignments: [.leading, .center, .trailing],
+                   rows: [["`a`", "**big**", "yes"], ["b", "small", "no"]]),
+            .paragraph("after"),
+        ])
+    }
+
+    @Test func tableEscapedPipesAndRaggedRows() {
+        let blocks = MarkdownBlock.parse("| a | b |\n|---|---|\n| x \\| y | z | extra |\n| only |")
+        #expect(blocks == [.table(header: ["a", "b"], alignments: [.leading, .leading],
+                                  rows: [["x | y", "z"], ["only", ""]])])
+    }
+
+    @Test func tableWithoutOuterPipes() {
+        #expect(MarkdownBlock.parse("a | b\n--- | ---\n1 | 2") ==
+                [.table(header: ["a", "b"], alignments: [.leading, .leading], rows: [["1", "2"]])])
+    }
+
+    @Test func pipesWithoutDelimiterStayParagraph() {
+        #expect(MarkdownBlock.parse("| a | b |\n| c | d |") == [.paragraph("| a | b | | c | d |")])
+        // A delimiter row with the wrong number of cells isn't one.
+        #expect(MarkdownBlock.parse("| a | b |\n|---|") == [.paragraph("| a | b | |---|")])
+    }
+
+    @Test func tableInsideFenceStaysCode() {
+        #expect(MarkdownBlock.parse("```\n| a |\n|---|\n```") == [.code(language: nil, lines: ["| a |", "|---|"])])
+    }
+
+    @Test func tableRightAfterParagraph() {
+        #expect(MarkdownBlock.parse("Intro line\n| a |\n|---|\n| 1 |\nnot a row") == [
+            .paragraph("Intro line"),
+            .table(header: ["a"], alignments: [.leading], rows: [["1"]]),
+            .paragraph("not a row"),
+        ])
+    }
 }

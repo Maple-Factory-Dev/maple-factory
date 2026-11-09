@@ -109,7 +109,53 @@ struct MarkdownText: View {
             Divider()
         case .image, .file:
             EmptyView() // Drawn by AttachmentGallery, as its group.
+        case let .table(header, alignments, rows):
+            table(header: header, alignments: alignments, rows: rows)
         }
+    }
+
+    /// A bordered grid that scrolls sideways when it's wider than the screen: a semibold header on a
+    /// faint fill, dividers between rows, each column aligned as its delimiter row says.
+    private func table(header: [String], alignments: [TableAlignment], rows: [[String]]) -> some View {
+        func alignment(_ column: Int) -> HorizontalAlignment {
+            switch alignments.indices.contains(column) ? alignments[column] : .leading {
+            case .leading: .leading
+            case .center: .center
+            case .trailing: .trailing
+            }
+        }
+        func cell(_ text: String, column: Int, header: Bool) -> some View {
+            Text(Self.inline(text))
+                .font(font.weight(header ? .semibold : .regular))
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(minWidth: 36, maxWidth: 280, alignment: Alignment(horizontal: alignment(column), vertical: .center))
+                .gridColumnAlignment(alignment(column))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+        }
+        return ScrollView(.horizontal, showsIndicators: false) {
+            Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+                GridRow {
+                    ForEach(Array(header.enumerated()), id: \.offset) { column, text in
+                        cell(text, column: column, header: true)
+                    }
+                }
+                .background(.quaternary.opacity(0.6))
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                    Divider()
+                    GridRow {
+                        ForEach(Array(row.enumerated()), id: \.offset) { column, text in
+                            cell(text, column: column, header: false)
+                        }
+                    }
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary))
+            .padding(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("markdown.table")
     }
 
     /// Inline bold, italic, code and links. Only web and mail links stay links.
