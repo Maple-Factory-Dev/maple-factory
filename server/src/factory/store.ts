@@ -50,6 +50,8 @@ export interface TaskPrivate {
   mergeChecked?: string | null;
   /// Times the current role's session was restarted after an end that wasn't the agent's choice.
   restarts: number;
+  /** The session a restart after tmux or the machine died should resume (its agent's own conversation), on the same machine and worktree. */
+  resumeFrom?: { session: string; role: string; machine: string; reason: string } | null;
   /// The merge commit, once merged, and whether its worktree has been cleaned up since.
   mergedAs?: string | null;
   cleaned?: boolean;

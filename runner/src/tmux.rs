@@ -60,6 +60,8 @@ pub struct Existing {
     pub ports: Option<(u16, u16)>,
     /// The task it runs, from `@maple_task`.
     pub task: Option<crate::proof::TaskTag>,
+    /// It resumed an earlier session's conversation, from `@maple_resumed`.
+    pub resumed: bool,
 }
 
 pub struct PaneState {
@@ -123,7 +125,7 @@ impl Tmux {
 
     /// Sessions this runner created, found by their `maple-` prefix.
     pub async fn list(&self) -> Result<Vec<Existing>> {
-        let format = "#{session_name}\t#{@maple_agent}\t#{@maple_cwd}\t#{@maple_started}\t#{pane_pid}\t#{@maple_ports}\t#{@maple_task}";
+        let format = "#{session_name}\t#{@maple_agent}\t#{@maple_cwd}\t#{@maple_started}\t#{pane_pid}\t#{@maple_ports}\t#{@maple_task}\t#{@maple_resumed}";
         let out = match self.run(&["list-sessions", "-F", format]).await {
             Ok(out) => out,
             Err(e) if is_no_server(&e) => return Ok(vec![]),
@@ -133,7 +135,7 @@ impl Tmux {
             .lines()
             .filter_map(|line| {
                 let f: Vec<&str> = line.split('\t').collect();
-                (f.len() == 7 && f[0].starts_with("maple-")).then(|| Existing {
+                (f.len() == 8 && f[0].starts_with("maple-")).then(|| Existing {
                     name: f[0].to_string(),
                     agent: f[1].to_string(),
                     cwd: f[2].to_string(),
@@ -141,6 +143,7 @@ impl Tmux {
                     pid: f[4].parse().ok(),
                     ports: crate::sessions::parse_ports(f[5]),
                     task: crate::proof::TaskTag::parse(f[6]),
+                    resumed: f[7] == "1",
                 })
             })
             .collect())

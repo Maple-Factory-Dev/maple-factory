@@ -177,6 +177,14 @@ When a proof can't be produced here, ask with \`ask\` or \`raise_hand\` and offe
 When every step is done and every item is proven, call \`finish\` with a short summary of what changed. ${here.run.length ? "The factory runs the repo's checks, then commits anything left (its git hooks run too), pushes and opens the review." : "The factory commits anything left, pushes and opens the review."}`;
 }
 
+/** What a restarted session's resumed conversation is told (`session.open`'s `resumeFrom.prompt`): it
+ *  already has the whole brief, so just why it restarted and to carry on. The full prompt stays the fallback. */
+export function resumePrompt(task: Task, reason: string): string {
+  return `Maple here: your session for ${task.id} restarted (${reason}) and this is the same conversation, picked up again.
+Anything you were running in the terminal (dev servers, watchers, a test run) stopped. Check \`git status\` and \`git log\` to see where you were, then carry on with the task from there.
+Keep reporting with the same tools as before (\`progress\`, \`prove\`, \`raise_hand\`, \`finish\`).`;
+}
+
 /** Comment threads: people talking to the session mid-flight, answered with \`reply\`. */
 const THREADS =
   "People can talk to you in the task's comment threads while you work: it arrives as \"<who> in comment thread <id>: …\" (and \`get_task\` lists any threads still waiting on an answer). Answer briefly with \`reply\` in that thread, then carry on with the work. It's conversation, not a change request.";

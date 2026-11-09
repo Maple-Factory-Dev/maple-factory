@@ -102,12 +102,13 @@ pub const INHERITED_SESSION_MARKERS: &[&str] = &[
 /// `resume` (Reopen on an ended session) continues the agent's newest conversation in that folder:
 /// `claude --continue`, `codex resume --last`, right after the command since Codex's is a subcommand.
 /// Other agents ignore it and start afresh.
+/// `Resume::Id` picks up one conversation by its id (`resume_id_args`), for a restarted task session.
 // The hub's session.open, field by field; a struct would only repeat it.
 #[allow(clippy::too_many_arguments)]
 pub fn argv(
     shell: &str,
     agent: &Agent,
-    resume: bool,
+    resume: impl Into<Resume>,
     hook_args: Vec<String>,
     model: Option<&str>,
     unattended: Option<&Unattended>,
@@ -118,8 +119,10 @@ pub fn argv(
         return vec![shell.into(), "-l".into()];
     }
     let mut argv = vec![shell.into(), "-l".into(), "-i".into(), "-c".into(), r#"exec "$0" "$@""#.into(), agent.command.clone()];
-    if resume {
-        argv.extend(resume_args(&agent.id).iter().map(|a| a.to_string()));
+    match resume.into() {
+        Resume::None => {}
+        Resume::Last => argv.extend(resume_args(&agent.id).iter().map(|a| a.to_string())),
+        Resume::Id(id) => argv.extend(resume_id_args(&agent.id, &id)),
     }
     argv.extend(hook_args);
     match model.filter(|m| !m.trim().is_empty() && takes_model(&agent.id)) {
@@ -154,7 +157,7 @@ pub const PROMPT_FILE_ENV: &str = "MAPLE_PROMPT_FILE";
 pub fn argv_with_prompt_file(
     shell: &str,
     agent: &Agent,
-    resume: bool,
+    resume: impl Into<Resume>,
     hook_args: Vec<String>,
     model: Option<&str>,
     unattended: Option<&Unattended>,
@@ -171,6 +174,32 @@ pub fn argv_with_prompt_file(
     // prompt, then parameter expansion removes only that sentinel (without shell evaluation).
     argv[4] = format!(r#"p="$(cat -- "${PROMPT_FILE_ENV}"; printf .)"; p="${{p%.}}"; rm -f -- "${PROMPT_FILE_ENV}"; exec "$0" "$@" {flag}"$p""#);
     argv
+}
+
+/// Which conversation a session starts in: a new one, the folder's newest (`session.open`'s `resume`),
+/// or a saved one by id (`resumeFrom`, see agent_sessions.rs).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Resume {
+    None,
+    Last,
+    Id(String),
+}
+
+impl From<bool> for Resume {
+    fn from(last: bool) -> Self {
+        if last { Resume::Last } else { Resume::None }
+    }
+}
+
+/// The flags that pick up one conversation by id: `claude --resume <id>`, `codex resume <id>` (a
+/// subcommand, so right after the program). Only UUID-shaped ids get through; other agents start afresh.
+pub fn resume_id_args(agent: &str, id: &str) -> Vec<String> {
+    let Some(id) = crate::agent_sessions::valid_id(id) else { return vec![] };
+    match agent {
+        "claude" => vec!["--resume".into(), id],
+        "codex" => vec!["resume".into(), id],
+        _ => vec![],
+    }
 }
 
 /// What `session.open`'s `resume` adds: the flags that pick up an agent's last conversation in its folder.
@@ -870,6 +899,36 @@ mod tests {
         let aider =
             Agent { id: "aider".into(), label: "Aider".into(), command: "aider".into(), args: vec!["-x".into()], prompt: PromptMode::None, hooks: false };
         assert_eq!(argv("/bin/sh", &aider, true, vec![], None, None, &[], None)[5..], ["aider", "-x"]);
+    }
+
+    #[test]
+    fn resume_by_id_starts_that_conversation_with_either_prompt_transport() {
+        const ID: &str = "0b9d8c7e-1f2a-4b3c-9d4e-5f6a7b8c9d0e";
+        let id = || Resume::Id(ID.into());
+        let hooks = vec!["--settings".to_string(), "/x.json".to_string()];
+        let mut claude = get("claude");
+        claude.args = vec!["--verbose".into()];
+        assert_eq!(
+            argv("/bin/zsh", &claude, id(), hooks.clone(), Some("opus"), None, &[], Some("carry on"))[5..],
+            ["claude", "--resume", ID, "--settings", "/x.json", "--verbose", "--model", "opus", "carry on"]
+        );
+        let file = argv_with_prompt_file("/bin/sh", &claude, id(), hooks, None, None, &[]);
+        assert_eq!(file[5..], ["claude", "--resume", ID, "--settings", "/x.json", "--verbose"]);
+        assert!(file[4].contains(PROMPT_FILE_ENV) && file[4].ends_with(r#""$p""#));
+        // Codex's is a subcommand, straight after the program.
+        let codex_hooks = vec!["-c".to_string(), "notify=[]".to_string()];
+        assert_eq!(
+            argv("/bin/zsh", &get("codex"), id(), codex_hooks.clone(), None, None, &[], Some("carry on"))[5..],
+            ["codex", "resume", ID, "-c", "notify=[]", "carry on"]
+        );
+        let file = argv_with_prompt_file("/bin/sh", &get("codex"), id(), codex_hooks, None, None, &[]);
+        assert_eq!(file[5..], ["codex", "resume", ID, "-c", "notify=[]"]);
+        assert!(file[4].contains(PROMPT_FILE_ENV));
+        // A non-UUID never reaches argv, and other agents start afresh.
+        assert_eq!(argv("/bin/zsh", &get("claude"), Resume::Id("--dangerously-skip-permissions".into()), vec![], None, None, &[], None)[5..], ["claude"]);
+        let aider =
+            Agent { id: "aider".into(), label: "Aider".into(), command: "aider".into(), args: vec![], prompt: PromptMode::None, hooks: false };
+        assert_eq!(argv("/bin/sh", &aider, id(), vec![], None, None, &[], None)[5..], ["aider"]);
     }
 
     #[test]

@@ -423,6 +423,8 @@ pub enum UpdateState {
 }
 
 /// Messages the hub sends.
+// Each is read, handled and dropped: its size doesn't matter.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 pub enum Inbound {
@@ -456,6 +458,9 @@ pub enum Inbound {
         /// The factory's MCP connectors, secrets included (Settings → Connectors), beside `maple`.
         #[serde(default)]
         connectors: Option<Vec<crate::wire::McpConnector>>,
+        /// A restart on the same machine and worktree: resume that earlier session's own conversation.
+        #[serde(default)]
+        resume_from: Option<crate::wire::ResumeFrom>,
     },
     #[serde(rename = "session.resize")]
     SessionResize { id: Uuid, cols: u16, rows: u16 },

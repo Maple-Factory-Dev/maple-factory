@@ -1,4 +1,5 @@
 mod agent_config;
+mod agent_sessions;
 mod agent_login;
 mod agents;
 mod attachments;
@@ -707,6 +708,8 @@ async fn run(args: Args) -> Result<()> {
     tokio::spawn(repos::sweep(sessions.clone()));
     tokio::spawn(proof::sweep_daily());
     tokio::spawn(images::sweep_daily());
+    // Saved agent conversations older than two weeks: a restart that late starts afresh anyway.
+    tokio::task::spawn_blocking(|| agent_sessions::sweep(None));
     tokio::spawn(agent_config::watch(sessions.clone()));
     tokio::spawn(usage::report(sessions.clone()));
     tokio::spawn(costs::report(sessions.clone()));
@@ -936,7 +939,7 @@ fn handle(sessions: &Sessions, updater: &Arc<AutoUpdate>, recheck: &Arc<tokio::s
         Err(e) => return warn!("bad message from hub: {e}"),
     };
     match msg {
-        Inbound::SessionOpen { id, agent, cwd, prompt, cols, rows, worktree, task, model, unattended, images, resume, connectors } => {
+        Inbound::SessionOpen { id, agent, cwd, prompt, cols, rows, worktree, task, model, unattended, images, resume, connectors, resume_from } => {
             let connectors = connectors.unwrap_or_default();
             let unattended = unattended.map(|u| u.with_connectors(&connectors));
             let sessions = sessions.clone();
@@ -968,6 +971,7 @@ fn handle(sessions: &Sessions, updater: &Arc<AutoUpdate>, recheck: &Arc<tokio::s
                             &images,
                             prompt.as_deref(),
                             resume,
+                            resume_from.as_ref(),
                             cols,
                             rows,
                             tag,
@@ -977,7 +981,8 @@ fn handle(sessions: &Sessions, updater: &Arc<AutoUpdate>, recheck: &Arc<tokio::s
                 };
                 match opened.await {
                     Ok(session) => {
-                        info!("opened {agent} session {id} in {cwd}");
+                        let how = if sessions.wire_info(session.id).and_then(|s| s.resumed).unwrap_or(false) { "resumed" } else { "opened" };
+                        info!("{how} {agent} session {id} in {cwd}");
                         let session = sessions.wire_info(session.id).unwrap_or(wire::SessionInfo {
                             id: session.id,
                             agent: session.agent,
@@ -985,6 +990,7 @@ fn handle(sessions: &Sessions, updater: &Arc<AutoUpdate>, recheck: &Arc<tokio::s
                             pid: session.pid,
                             started_at: session.started_at,
                             task_id: None,
+                            resumed: None,
                         });
                         sessions.emit(Outbound::Wire(wire::RunnerMessage::SessionOpened { session }));
                         if task.is_some() && agent == "claude" {

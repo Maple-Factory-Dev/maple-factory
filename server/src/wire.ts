@@ -198,6 +198,8 @@ export interface SessionInfo {
   startedAt: number;
   /** The task this session works on, when it's a factory session. */
   taskId?: string | null;
+  /** It picked up the agent conversation of the session `session.open`'s `resumeFrom` named (true), rather than starting afresh. */
+  resumed?: boolean | null;
 }
 
 /** An agent's latest state. `at` is the runner's clock, strictly increasing per session. */
@@ -1199,6 +1201,14 @@ export interface ReviewThread {
   resolved: boolean;
   outdated: boolean;
   comments: ReviewThreadComment[];
+}
+
+/** Pick up an earlier Maple session's agent conversation (the id the runner saved for it), with a short prompt. Without a saved id, or if the agent rejects it, the session starts afresh with `session.open`'s full `prompt`. */
+export interface ResumeFrom {
+  /** The earlier Maple session's id. */
+  session: string;
+  /** What to tell the resumed conversation. */
+  prompt: string;
 }
 
 /** A factory session's worktree: made fresh from `origin/<base>` on branch `agent/<name>`, or reopened. */
@@ -2208,6 +2218,8 @@ export interface ServerToRunner_SessionOpen {
   model?: string | null;
   /** The factory's enabled MCP connectors, secrets included. */
   connectors?: McpConnector[] | null;
+  /** Restarting a task's session on the same machine and worktree: resume that session's own agent conversation. */
+  resumeFrom?: ResumeFrom | null;
 }
 
 export interface ServerToRunner_SessionResize {

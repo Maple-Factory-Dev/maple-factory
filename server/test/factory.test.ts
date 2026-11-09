@@ -7,6 +7,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { Engine } from "../src/factory/engine.ts";
 import { Store } from "../src/factory/store.ts";
+import type { ServerToRunner } from "../src/wire.ts";
 
 function sqlStorage() {
   const db = new DatabaseSync(":memory:");
@@ -611,6 +612,60 @@ test("a third loss raises the keeps-ending hand instead of starting it again", a
   assert.equal(task.worker, null);
   assert.match(task.hand?.text ?? JSON.stringify(task.hand), /keeps ending \(tmux went away\)/);
   assert.equal(opens().length, 0);
+});
+
+const ended = (session: string, cause: string) =>
+  ({ type: "session.ended", end: { id: session, cause, code: null, signal: null, detail: null, at: Date.now(), lastOutput: [] } }) as never;
+
+test("a tmuxLost restart on the same machine resumes the old session's conversation, the full prompt as fallback", async () => {
+  for (const cause of ["tmuxLost", "machineSlept"]) {
+    const f = building(60_000);
+    await f.engine.fromRunner("mac", ended(f.session, cause));
+    await f.settle();
+    const [open] = f.opens() as Extract<ServerToRunner, { type: "session.open" }>[];
+    assert.ok(open, `${cause}: reopened`);
+    assert.equal(open.worktree?.existing, true);
+    assert.equal(open.resumeFrom?.session, f.session, cause);
+    assert.match(open.resumeFrom!.prompt, /restarted \((tmux went away|the machine slept)\)/);
+    assert.match(open.resumeFrom!.prompt, /git status/);
+    assert.match(open.prompt ?? "", /## Approved plan/, "the full builder prompt stays the fallback");
+    assert.equal(f.store.private("MF-1").resumeFrom ?? null, null, "used once");
+  }
+});
+
+test("a restart after a move to another machine starts afresh, and an authExpired end doesn't restart", async () => {
+  const f = building(60_000);
+  await f.engine.fromRunner("mac", ended(f.session, "tmuxLost"));
+  await f.settle();
+  assert.equal(f.opens().length, 1);
+  // Its private state from that end, as if the task had then moved machine.
+  const g = building(60_000);
+  g.store.savePrivate("MF-1", { ...g.store.private("MF-1"), resumeFrom: { session: g.session, role: "builder", machine: "pc", reason: "tmux went away" } });
+  const task = g.store.task("MF-1")!;
+  task.worker = null;
+  g.store.saveTask(task);
+  await g.engine.pump();
+  await g.settle();
+  const [open] = g.opens() as Extract<ServerToRunner, { type: "session.open" }>[];
+  assert.ok(open);
+  assert.equal(open.resumeFrom, undefined, "another machine's session isn't resumed");
+
+  const h = building(60_000);
+  await h.engine.fromRunner("mac", ended(h.session, "authExpired"));
+  await h.settle();
+  assert.equal(h.opens().length, 0);
+  assert.equal(h.store.private("MF-1").resumeFrom ?? null, null);
+  assert.match(JSON.stringify(h.store.task("MF-1")!.hand), /login on Mac expired/);
+});
+
+test("session.opened with resumed=true logs the resumed event", async () => {
+  const f = building(60_000);
+  await f.engine.fromRunner("mac", ended(f.session, "tmuxLost"));
+  await f.settle();
+  const fresh = f.store.task("MF-1")!.worker!.session;
+  await f.engine.fromRunner("mac", { type: "session.opened", session: { id: fresh, agent: "claude", cwd: "~/.worktrees/app/mf-1", startedAt: Date.now(), taskId: "MF-1", resumed: true } });
+  await f.settle();
+  assert.ok(f.events().includes("its builder resumed its claude conversation"), f.events().join("\n"));
 });
 
 test("a pasted answer shows in the live status without Claude Code's <pasted_content> wrapper", async () => {
