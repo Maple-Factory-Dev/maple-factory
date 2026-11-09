@@ -114,3 +114,32 @@
 .doc-embed-owner { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
 .doc-embed-owner img, .doc-avatar { width: 20px; height: 20px; border-radius: 10px; }
 .doc-avatar { display: inline-grid; place-items: center; background: var(--fill); font-size: 11px; font-weight: 700; }
+/* Comments (MF-364): highlights, the margin rail and its thread cards. */
+.doc-editor-shell.with-rail { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 24px; align-items: start; }
+@media (max-width: 760px) { .doc-editor-shell.with-rail { grid-template-columns: 1fr; } }
+.doc-comment-mark { background: color-mix(in srgb, #f5b400 28%, transparent); border-bottom: 2px solid color-mix(in srgb, #f5b400 70%, transparent); cursor: pointer; }
+.doc-comment-mark.active { background: color-mix(in srgb, #f5b400 50%, transparent); }
+.doc-rail { font: 13px/1.45 system-ui, sans-serif; color: var(--text); position: sticky; top: 0; }
+.doc-rail-head { display: flex; gap: 4px; margin-bottom: 8px; }
+.doc-rail-tab { border: 1px solid var(--stroke); background: none; color: var(--muted); border-radius: 999px; padding: 3px 10px; font: 600 12px/1.4 system-ui, sans-serif; cursor: pointer; }
+.doc-rail-tab.on { background: var(--fill); color: var(--text); }
+.doc-rail-body { position: relative; }
+.doc-rail-heading { margin: 12px 0 6px; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.doc-rail-empty { color: var(--faint); padding: 8px 0; }
+.doc-thread { border: 1px solid var(--stroke); background: var(--card); border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; cursor: pointer; }
+.doc-thread.active, .doc-thread.draft { border-color: #f5b400; box-shadow: 0 2px 10px rgba(0,0,0,.08); }
+.doc-thread.resolved { opacity: .8; }
+.doc-thread-quote { border-left: 3px solid #f5b400; padding-left: 6px; color: var(--muted); font-size: 12px; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.doc-comment + .doc-comment { margin-top: 6px; }
+.doc-comment-meta { font-size: 12px; color: var(--muted); }
+.doc-comment-meta strong { color: var(--text); }
+.doc-comment-text { white-space: pre-wrap; word-break: break-word; }
+.doc-comment-mention { color: var(--accent); font-weight: 600; }
+.doc-thread-actions { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.doc-thread-by { color: var(--faint); font-size: 11px; }
+.doc-btn { border: 1px solid var(--stroke); background: var(--card); color: var(--text); border-radius: 6px; padding: 2px 8px; font: 600 12px/1.5 system-ui, sans-serif; cursor: pointer; }
+.doc-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.doc-composer { margin-top: 6px; position: relative; }
+.doc-composer textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--stroke); border-radius: 6px; background: var(--bg, transparent); color: var(--text); font: inherit; padding: 6px; resize: vertical; }
+.doc-composer-actions { display: flex; gap: 6px; margin-top: 4px; }
+.doc-composer-mentions { position: absolute; z-index: 5; left: 0; right: 0; background: var(--card); border: 1px solid var(--stroke); border-radius: 8px; padding: 4px; box-shadow: 0 6px 20px rgba(0,0,0,.15); }
