@@ -52,7 +52,7 @@ test("the redacted list never carries a secret", async () => {
   const { integrations } = store();
   await integrations.save("linear", true, { webhookSecret: "whsec-very-secret", apiKey: "lin_api_secret", label: "maple" }, "ada");
   const list = await integrations.list();
-  assert.deepEqual(list.map((i) => i.kind), ["slack", "linear", "jira"]);
+  assert.deepEqual(list.map((i) => i.kind), ["slack", "linear", "jira", "langfuse"]);
   const linear = list.find((i) => i.kind === "linear")!;
   assert.deepEqual(linear.values, { webhookSecret: "", apiKey: "", label: "maple" });
   assert.equal(linear.enabled, true);

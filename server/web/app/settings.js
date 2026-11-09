@@ -167,6 +167,9 @@ export function serverVersionInfo(version, update) {
   return { version: `maple-server ${version}`, status: "Up to date", update: null };
 }
 
+/** An integration the factory sends to, with nothing coming back (Langfuse): it has no webhook URL. */
+export const isOutbound = (i) => !i.webhookUrl;
+
 /** The URL to paste into Slack, Linear or Jira: on this server when it only gives a path, and for Jira
  *  with the webhook secret it has to carry. */
 export function webhookUrl(i, origin) {
@@ -227,6 +230,7 @@ export function createSettings({ state, h, send, toast, render, ago }) {
   let slack; // GET /api/me's slack: the link, null when not linked; undefined until loaded
   let slackBusy = false;
   let iconBusy = false;
+  const testing = new Set(); // integrations with a test on its way: kinds
 
   /** The form's draft, synced to the server's value for it. */
   const draft = (key, server) => {
@@ -547,7 +551,7 @@ export function createSettings({ state, h, send, toast, render, ago }) {
     }
     const copyUrl = (url) => navigator.clipboard.writeText(url).then(() => toast("Copied the webhook URL."), () => toast("Couldn't copy the webhook URL."));
     return [
-      h("p", { class: "muted" }, "Where requests come into the factory from: Slack's @Maple and /maple, and Linear or Jira issues with the factory's label. The bot answers back where they came from."),
+      h("p", { class: "muted" }, "Where requests come into the factory from: Slack's @Maple and /maple, and Linear or Jira issues with the factory's label. The bot answers back where they came from. And where the factory reports to: Langfuse gets each task as a trace, with its sessions' cost and its review outcomes as scores."),
       state.integrations.map((i) => {
         const key = `integration:${i.kind}`;
         const d = draft(key, integrationForm(i));
@@ -555,9 +559,10 @@ export function createSettings({ state, h, send, toast, render, ago }) {
         const url = webhookUrl(i, location.origin);
         const fromEnv = i.fields.filter((f) => i.fromEnv?.includes(f.name));
         const save = (msg, text) => go(msg, { key, text });
+        const outbound = isOutbound(i);
         return h("div", { class: "card set-card" },
           h("div", { class: "set-row" },
-            h("span", { class: "set-label" }, h("span", {}, i.label), h("span", { class: `set-status ${status.tone}` }, status.text)),
+            h("span", { class: "set-label" }, h("span", {}, i.label, outbound && h("span", { class: "pill set-env", title: "The factory sends to it; nothing comes back" }, "Outbound")), h("span", { class: `set-status ${status.tone}` }, status.text)),
             h("input", { type: "checkbox", class: "switch", role: "switch", "aria-label": `${i.label} enabled`, checked: i.enabled, disabled: saving.has(key),
               onchange: (e) => save(integrationSave(i, keptValues(i), e.target.checked), `${i.label} is ${e.target.checked ? "on" : "off"}.`) })),
           i.kind === "slack" && slackSteps(i),
@@ -572,7 +577,12 @@ export function createSettings({ state, h, send, toast, render, ago }) {
                 autocomplete: f.secret ? "new-password" : "off", autocapitalize: "off", spellcheck: "false",
                 oninput: (e) => { d.value[f.name] = e.target.value; render(); } })));
           }),
-          i.kind === "slack" ? slackUrls(i, location.origin).map(([label, u]) => h("div", { class: "set-row set-webhook" },
+          outbound ? h("div", { class: "set-row set-webhook" },
+            h("span", { class: "set-label" }, h("span", {}, "Test"), h("span", { class: "set-detail" }, "Sends one trace with the saved settings, “Maple Factory test trace”.")),
+            h("button", { type: "button", class: "btn small", disabled: testing.has(i.kind) || !i.enabled || isDirty(d),
+              title: !i.enabled ? "Turn it on first" : isDirty(d) ? "Save first" : null,
+              onclick: () => { if (send({ type: "integrations.test", kind: i.kind })) { testing.add(i.kind); render(); } } }, testing.has(i.kind) ? "Sending…" : "Send a test trace"))
+          : i.kind === "slack" ? slackUrls(i, location.origin).map(([label, u]) => h("div", { class: "set-row set-webhook" },
             h("span", { class: "set-label" }, h("span", {}, label), h("span", { class: "set-detail mono", title: u }, u)),
             h("button", { type: "button", class: "btn small", onclick: () => copyUrl(u) }, "Copy"))) : h("div", { class: "set-row set-webhook" },
             h("span", { class: "set-label" }, h("span", {}, "Webhook URL"), h("span", { class: "set-detail mono", title: url }, url)),
@@ -739,6 +749,10 @@ export function createSettings({ state, h, send, toast, render, ago }) {
   function receive(m) {
     const answered = { "policy.updated": ["policy"], "prompts.updated": ["prompts"], "members.updated": ["members"], "repos.updated": ["repos", "owners"], "secrets.updated": ["secrets"],
       "integrations.updated": (m.integrations ?? []).map((i) => `integration:${i.kind}`) }[m.type];
+    if ((m.type === "error" || m.type === "toast") && testing.size) {
+      testing.clear();
+      render();
+    }
     if (m.type === "error") {
       saving.clear();
       return;
