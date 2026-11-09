@@ -33,7 +33,7 @@ final class IntakeTests: XCTestCase {
         field.typeText("Which app versions see it?")
         app.buttons["intake.askSend"].tap()
         XCTAssertTrue(status(app, "Waiting on requester").waitForExistence(timeout: 3), "the request isn't waiting on the requester")
-        XCTAssertTrue(status(app, "New").waitForExistence(timeout: 6), "the requester didn't reply")
+        XCTAssertTrue(status(app, "New").waitForExistence(timeout: 8), "the requester didn't reply")
         app.collectionViews.firstMatch.swipeUp()
         XCTAssertTrue(app.staticTexts["Which app versions see it?"].waitForExistence(timeout: 3), "the question isn't in the thread")
         XCTAssertTrue(app.staticTexts["Good question. 2.31 and up, iOS only so far. Android looks fine."].exists, "the reply isn't in the thread")

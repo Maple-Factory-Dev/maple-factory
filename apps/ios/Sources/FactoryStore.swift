@@ -1122,7 +1122,7 @@ final class FactoryStore {
                 request.status = "clarifying"
             }
             Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(1.5))
+                try? await Task.sleep(for: .seconds(3))
                 self?.demoIntake(m.id) { request in
                     request.thread.append(.init(author: request.requester, text: "Good question. 2.31 and up, iOS only so far. Android looks fine.", at: DemoData.now, bot: false))
                     request.status = "new"
