@@ -101,16 +101,36 @@ extension View {
     }
 }
 
-/// The connection's state, under the title while it isn't live.
+/// The connection's state, under the title while it isn't live: a small pill while connecting or
+/// reconnecting (tap it for the raw reason), a line of text for the rest.
 struct ConnectionBar: View {
     @Environment(FactoryStore.self) private var store
+    @State private var showsDetail = false
 
     var body: some View {
         switch store.status {
         case .connecting:
-            Label("Connecting…", systemImage: "antenna.radiowaves.left.and.right").bar(.secondary)
+            ConnectionPill(icon: "antenna.radiowaves.left.and.right", headline: "Connecting…", tint: .secondary)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("connection.bar")
+                .frame(maxWidth: .infinity, alignment: .leading)
         case .reconnecting(let attempt, let reason):
-            Label("\(reason) Reconnecting (\(attempt))…", systemImage: "wifi.exclamationmark").bar(Theme.warning)
+            Button { showsDetail = true } label: {
+                ConnectionPill(icon: "wifi.slash", headline: store.troubleHeadline, detail: "Reconnecting…", tint: Theme.warning)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(store.troubleHeadline), reconnecting")
+            .accessibilityValue(reason)
+            .accessibilityHint("Shows the details")
+            .accessibilityIdentifier("connection.bar")
+            .popover(isPresented: $showsDetail) {
+                ConnectionDetail(reason: reason, attempt: attempt) {
+                    showsDetail = false
+                    store.reconnectNow()
+                }
+                .presentationCompactAdaptation(.popover)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         case .tooNew:
             Label(FactoryAPI.tooNewMessage, systemImage: "arrow.down.app").bar(Theme.danger)
         case .demo:
@@ -118,6 +138,57 @@ struct ConnectionBar: View {
         case .live, .signedOut:
             EmptyView()
         }
+    }
+}
+
+/// One line in a capsule: icon, bold headline, then an optional secondary "Reconnecting…" with a spinner.
+private struct ConnectionPill<Tint: ShapeStyle>: View {
+    let icon: String
+    let headline: String
+    var detail: String?
+    let tint: Tint
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon).foregroundStyle(tint)
+            Text(headline).fontWeight(.semibold).foregroundStyle(tint)
+            if let detail {
+                Text("·").foregroundStyle(.secondary)
+                Text(detail).foregroundStyle(.secondary)
+            }
+            ProgressView().controlSize(.mini)
+        }
+        .font(.footnote)
+        .lineLimit(1)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(Capsule().fill(tint).opacity(0.14))
+    }
+}
+
+/// The pill's popover: the raw reason and attempt, for debugging, and Try now.
+private struct ConnectionDetail: View {
+    let reason: String
+    let attempt: Int
+    let tryNow: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(reason)
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("connection.reason")
+            Text("Attempt \(attempt)")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("connection.attempt")
+            Button("Try now", systemImage: "arrow.clockwise", action: tryNow)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .accessibilityIdentifier("connection.tryNow")
+        }
+        .padding()
+        .frame(idealWidth: 280, maxWidth: 320, alignment: .leading)
     }
 }
 
