@@ -11,6 +11,8 @@ import { toMarkdown, fromMarkdown } from "./markdown.js";
 import { anchorFromRange, resolveAnchor } from "./comments.js";
 
 export const SHARED_TYPE = "prosemirror";
+/** The most text an anchor holds (comments.js anchorFromRange cuts its quote here). */
+export const MAX_QUOTE = 2000;
 /** `b-<clientID base36>-<clock>`: the id of the Y.XmlElement item that holds a top-level block. */
 export const BLOCK_ID = /^b-[0-9a-z]+-\d+$/;
 
@@ -101,6 +103,9 @@ export function anchorFor(ydoc, { block = null, quote = null } = {}) {
     if (first == null || first >= last) fail(`Block ${block} has no text to anchor to; quote text near it instead.`);
     [from, to] = [first, last];
   } else fail("Give a block id or a quote.");
+  // Anchors keep at most MAX_QUOTE characters of their text (anchorFromRange), and Accept checks the text
+  // still reads as the quote, so a longer span could never be applied.
+  if (v.doc.textBetween(from, to, " ", " ").length > MAX_QUOTE) fail(`That span is over ${MAX_QUOTE} characters; quote a shorter part of it (one sentence or paragraph).`);
   return anchorFromRange(ydoc, v.mapping, v.doc, from, to);
 }
 

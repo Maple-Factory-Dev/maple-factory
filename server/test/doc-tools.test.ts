@@ -242,3 +242,21 @@ test("guardrails: unknown, archived and other-doc ids, bad anchors, and sessions
   assert.equal(mine.error, undefined, mine.error);
   assert.equal((await call("read_doc", { doc: DOC }, PERSONAL, "nowhere")).error, "This session isn't working on a factory task.");
 });
+
+test("anchors over 2,000 characters are refused up front; one just under applies", async () => {
+  const { addComment } = await import("../src/factory/doc-threads.ts");
+  const long = "a".repeat(2250);
+  const ydoc = seedDoc(new Y.Doc(), `${long}\n\n${"b".repeat(1990)}\n`);
+  const [big, ok] = readDoc(ydoc).blocks.map((b) => b.id!);
+  assert.throws(() => anchorFor(ydoc, { block: big }), /over 2000 characters/);
+  assert.throws(() => anchorFor(ydoc, { quote: long }), /over 2000 characters/);
+  const anchor = anchorFor(ydoc, { block: ok });
+  assert.equal(anchor.quote.length, 1990);
+  applySuggestion(ydoc, anchor, "short");
+  assert.equal(readDoc(ydoc).blocks[1].markdown, "short");
+
+  // A reply on a decided suggestion keeps it resolved (the rail offers no Resolve for it); on others it reopens.
+  const decided = { id: "t", doc: DOC, anchor: null, comments: [], resolved: true, resolvedBy: "sam", resolvedAt: 1, createdBy: "x", createdAt: 1, suggestion: { replacement: "y", status: "accepted", decidedBy: "sam", decidedAt: 1 } } as unknown as DocThread;
+  assert.equal(addComment(decided, "owner", "thanks", []).resolved, true);
+  assert.equal(addComment({ ...decided, suggestion: undefined } as DocThread, "owner", "hm", []).resolved, null);
+});

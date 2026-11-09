@@ -802,8 +802,8 @@ pub fn validate(tool: &str, args: &Value) -> Result<Value, String> {
                 match obj.get("quote") {
                     None | Some(Value::Null) => {}
                     Some(Value::String(q)) if q.is_empty() => return Err("quote can't be empty: give the exact text, or leave it out.".into()),
-                    Some(Value::String(q)) if q.chars().count() > MAX_DOC_TEXT => {
-                        return Err(format!("quote is too long (at most {MAX_DOC_TEXT} characters)."));
+                    Some(Value::String(q)) if q.chars().count() > MAX_DOC_QUOTE => {
+                        return Err(format!("quote is too long (at most {MAX_DOC_QUOTE} characters): quote a shorter part."));
                     }
                     Some(Value::String(q)) => out["quote"] = json!(q),
                     Some(_) => return Err("quote must be a string.".into()),
@@ -1115,6 +1115,8 @@ fn list_tools(backend: &dyn Backend) -> Value {
 const DOC_TOOLS: &[&str] = &["list_docs", "read_doc", "comment_on_doc", "reply_to_doc_thread", "resolve_doc_thread", "suggest_doc_edit"];
 /// A doc comment's or suggestion's longest text, as the server's MAX_COMMENT / MAX_REPLACEMENT.
 const MAX_DOC_TEXT: usize = 10_000;
+/** The most text a doc anchor holds (the server's anchors keep 2,000 characters of their quote). */
+const MAX_DOC_QUOTE: usize = 2_000;
 
 /// Built-in names the factory also serves, with its own arguments: never checked against ours.
 const FACTORY_OWNED: &[&str] = &["prove", "share_artifact"];
@@ -1412,6 +1414,7 @@ mod tests {
         assert_eq!(ok("comment_on_doc", json!({"doc": doc, "text": "x", "block": " b-19ztglx-7 "}))["block"], "b-19ztglx-7");
         assert!(err("comment_on_doc", json!({"doc": doc, "text": "x", "block": "para-3"})).contains("block must be a block id"));
         assert!(err("comment_on_doc", json!({"doc": doc, "text": "x", "quote": ""})).contains("quote can't be empty"));
+        assert!(err("comment_on_doc", json!({"doc": doc, "text": "x", "quote": "q".repeat(MAX_DOC_QUOTE + 1)})).contains("quote is too long"));
         assert!(err("comment_on_doc", json!({"doc": doc, "text": "  "})).contains("text can't be empty"));
         assert!(err("comment_on_doc", json!({"doc": doc, "text": "x".repeat(MAX_DOC_TEXT + 1)})).contains("too long"));
         assert_eq!(ok("reply_to_doc_thread", json!({"doc": doc, "thread": thread, "text": "Done"})), json!({"doc": doc, "thread": thread, "text": "Done"}));

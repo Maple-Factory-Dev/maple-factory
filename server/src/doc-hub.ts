@@ -111,9 +111,15 @@ export class DocHub extends DurableObject<Env> {
     try {
       if (path === "/read") return Response.json(readDoc(this.doc, Array.isArray(body.threads) ? body.threads : []));
       if (path === "/anchor") return Response.json(anchorFor(this.doc, { block: body.block ?? null, quote: body.quote ?? null }));
-      if (this.bytes >= MAX_DOC_BYTES) return new Response("This doc is full.", { status: 422 });
+      // Applied on a copy first, so the update's own size counts against the cap the way a socket's does.
+      const copy = new Y.Doc();
+      Y.applyUpdate(copy, Y.encodeStateAsUpdate(this.doc));
+      const { before } = applySuggestion(copy, body.anchor, String(body.markdown ?? ""), null);
+      const update = Y.encodeStateAsUpdate(copy, Y.encodeStateVector(this.doc));
+      copy.destroy();
+      if (this.bytes + update.byteLength > MAX_DOC_BYTES) return new Response("This doc is full.", { status: 422 });
       // origin null: onUpdate keeps it, sends it to every open socket as a sync update, and touches OrgHub.
-      const { before } = applySuggestion(this.doc, body.anchor, String(body.markdown ?? ""), null);
+      Y.applyUpdate(this.doc, update, null);
       return Response.json({ before });
     } catch (e) {
       if (e instanceof DocToolError) return new Response(e.message, { status: 422 });

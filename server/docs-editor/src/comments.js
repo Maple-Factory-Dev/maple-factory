@@ -5,6 +5,8 @@
 import * as Y from "yjs";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import { DOMSerializer } from "@tiptap/pm/model";
+import { fromMarkdown } from "./markdown.js";
 import { absolutePositionToRelativePosition, relativePositionToAbsolutePosition, ySyncPluginKey } from "@tiptap/y-tiptap";
 
 const SHARED_TYPE = "prosemirror";
@@ -165,6 +167,17 @@ export function createCommentRail({ editor, ydoc, docId, threads, members, send,
     rail.querySelector(".doc-composer textarea")?.focus();
   }
 
+  /** The replacement's Markdown rendered with the editor's own schema, in green. */
+  function rendered(markdown) {
+    const ins = el("ins", "doc-suggest-new");
+    try {
+      ins.append(DOMSerializer.fromSchema(editor.schema).serializeFragment(fromMarkdown(editor.schema, markdown).content));
+    } catch {
+      ins.textContent = markdown;
+    }
+    return ins;
+  }
+
   function card(t) {
     const c = el("div", "doc-thread" + (t.id === active ? " active" : "") + (t.resolved ? " resolved" : ""));
     c.dataset.thread = t.id;
@@ -176,7 +189,7 @@ export function createCommentRail({ editor, ydoc, docId, threads, members, send,
       c.append(el("div", "doc-suggest-label", `Suggested edit by ${by}`));
       const diff = el("div", "doc-suggest-diff");
       if (t.anchor?.quote) diff.append(el("del", "doc-suggest-old", t.anchor.quote));
-      diff.append(sug.replacement ? el("ins", "doc-suggest-new", sug.replacement) : el("span", "doc-suggest-delete", "(delete it)"));
+      diff.append(sug.replacement ? rendered(sug.replacement) : el("span", "doc-suggest-delete", "(delete it)"));
       c.append(diff);
     } else if (t.anchor?.quote) c.append(el("div", "doc-thread-quote", t.anchor.quote));
     for (const m of t.comments) {
