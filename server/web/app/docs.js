@@ -27,6 +27,14 @@ export function createDocs({ state, h, send, render, toast, icon, ago, allTasks 
   const memberOf = (login) => state.members.find((m) => m.login === login);
   const goalName = (id) => state.goals.find((g) => g.id === id)?.name;
 
+  /** The editor's view of a task: what task embeds draw (MF-363). */
+  const taskView = (t) => ({ id: t.id, title: t.title, state: t.state, pr: t.pr ? { number: t.pr.number, url: t.pr.url ?? null, state: t.pr.state } : null, assignee: t.owner ?? null, goal: t.goal });
+
+  /** Called (by app.js) after a task.updated or snapshot is applied: open task embeds redraw. */
+  function tasksChanged() {
+    open?.handle?.tasksChanged();
+  }
+
   function receive(m) {
     if (!receiveDocs(state, m)) return false;
     if (m.type === "doc.updated" && pendingCreate && m.doc.createdBy === state.me?.login && m.doc.title === pendingCreate) {
@@ -81,7 +89,7 @@ export function createDocs({ state, h, send, render, toast, icon, ago, allTasks 
         docId: id,
         me: { login: me.login, name: me.name, avatar: me.avatarUrl },
         members: () => state.members.map((m) => ({ login: m.login, name: m.name, avatar: m.avatarUrl })),
-        tasks: () => allTasks().map((t) => ({ id: t.id, title: t.title })),
+        tasks: () => allTasks().map(taskView),
         onEvent: (name, data) => {
           if (open?.id !== id) return;
           if (name === "status") open.status = data.status;
@@ -186,5 +194,5 @@ export function createDocs({ state, h, send, render, toast, icon, ago, allTasks 
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
-  return { receive, listView, docView, close, patch, goalLink, isOpen: () => !!open };
+  return { receive, tasksChanged, listView, docView, close, patch, goalLink, isOpen: () => !!open };
 }

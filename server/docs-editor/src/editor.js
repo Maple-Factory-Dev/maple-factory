@@ -12,8 +12,9 @@ import { Awareness } from "y-protocols/awareness";
 import { schema as docSchema, schemaExtensions, TASK_ID } from "./schema.js";
 import { markdownPasteSlice, toMarkdown, fromMarkdown, taskResolver } from "./markdown.js";
 import { SlashMenu, mentionSuggestions, bubbleMenuElement } from "./menus.js";
+import { nodeForUpload } from "./nodes.js";
 
-export { toMarkdown, fromMarkdown, taskResolver };
+export { toMarkdown, fromMarkdown, taskResolver, nodeForUpload };
 
 export const SHARED_TYPE = "prosemirror";
 
@@ -64,8 +65,10 @@ function localProvider(ydoc) {
  * token: an app token sent as the socket's `maple-token` subprotocol (cookie auth when absent);
  * onEvent(name, data): status {status}, peers [{login,name,color,avatar}], synced, error {message}, openTask {id}.
  * demo: { markdown } opens a local-only doc seeded from Markdown, with no socket (the Mac app's signed-out mockup).
+ * Planning visuals (MF-363): tasks() returns full tasks {id, title, state, pr, assignee, goal} for live
+ * embeds; upload(file) → {path, name, mime, size} (default: POST /api/attachments); mermaidPage: the diagram page.
  */
-export function createDocEditor({ el, docId, me, members = () => [], tasks = () => [], theme, token, origin = location.origin, onEvent = () => {}, demo = null }) {
+export function createDocEditor({ el, docId, me, members = () => [], tasks = () => [], upload = null, mermaidPage = "/app/mermaid/diagram.html", theme, token, origin = location.origin, onEvent = () => {}, demo = null }) {
   const ydoc = new Y.Doc();
   let provider;
   if (demo) {
@@ -87,28 +90,70 @@ export function createDocEditor({ el, docId, me, members = () => [], tasks = () 
   el.append(root);
   const bubble = document.createElement("div");
 
+  const send = upload ?? (async (file) => {
+    const res = await fetch(`${origin}/api/attachments?name=${encodeURIComponent(file.name || "pasted")}`, {
+      method: "POST",
+      body: file,
+      credentials: "same-origin",
+      headers: { "content-type": file.type || "application/octet-stream", ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    });
+    if (!res.ok) throw new Error((await res.text()) || `upload failed (${res.status})`);
+    return res.json();
+  });
+  // The node views' callbacks (nodes.js).
+  const host = { tasks, members, docId, onEvent, mermaidPage, origin, listeners: new Set() };
+  /** Uploads files and inserts each as an image or file chip at `pos` (the selection when absent). */
+  async function insertFiles(files, pos = null) {
+    for (const file of files) {
+      try {
+        const node = nodeForUpload(await send(file));
+        const at = pos ?? editor.state.selection.to;
+        editor.chain().focus().insertContentAt(at, node).run();
+      } catch (e) {
+        onEvent("error", { message: `Couldn't upload ${file.name}: ${e.message}` });
+      }
+    }
+  }
+  const pick = (accept) => {
+    const input = Object.assign(document.createElement("input"), { type: "file", accept, multiple: true });
+    input.addEventListener("change", () => insertFiles([...input.files]));
+    input.click();
+  };
+
   const editor = new Editor({
     element: root,
     extensions: [
       ...schemaExtensions({
         mention: { suggestions: mentionSuggestions({ members, tasks }) },
+        host,
       }),
+      Extension.create({ name: "docVisuals", addStorage: () => ({ pick, embedNext: false }) }),
       Collaboration.configure({ document: ydoc, field: SHARED_TYPE }),
       CollaborationCaret.configure({ provider, user }),
       SlashMenu,
       TaskRefTyping(resolver),
-      BubbleMenu.configure({ element: bubble, shouldShow: ({ editor, from, to }) => from !== to && !editor.isActive("codeBlock") }),
+      BubbleMenu.configure({ element: bubble, shouldShow: ({ editor, from, to }) => (from !== to || editor.isActive("table")) && !editor.isActive("codeBlock") }),
       Extension.create({
         name: "markdownPaste",
         addProseMirrorPlugins: () => [
           new Plugin({
             props: {
               handlePaste(view, event) {
+                const files = [...(event.clipboardData?.files ?? [])];
+                if (files.length) { event.preventDefault(); insertFiles(files); return true; }
                 const text = event.clipboardData?.getData("text/plain");
                 if (!text || event.clipboardData.getData("text/html") && !looksPlain(event)) return false;
                 const slice = markdownPasteSlice(view.state.schema, text, ctx());
                 if (!slice) return false;
                 view.dispatch(view.state.tr.replaceSelection(slice).scrollIntoView());
+                return true;
+              },
+              handleDrop(view, event, _slice, moved) {
+                const files = [...(event.dataTransfer?.files ?? [])];
+                if (moved || !files.length) return false;
+                event.preventDefault();
+                const at = view.posAtCoords({ left: event.clientX, top: event.clientY });
+                insertFiles(files, at ? at.pos : null);
                 return true;
               },
               handleClickOn(_view, _pos, node, _np, event) {
@@ -147,7 +192,10 @@ export function createDocEditor({ el, docId, me, members = () => [], tasks = () 
     editor,
     provider,
     ydoc,
-    exportMarkdown: () => toMarkdown(editor.state.doc),
+    exportMarkdown: () => toMarkdown(editor.state.doc, { tasks: resolver() }),
+    /** The host's tasks changed (a feed update): task embeds redraw, the selection stays. */
+    tasksChanged: () => host.listeners.forEach((f) => f()),
+    insertFiles,
     setTheme,
     setEditable: (on) => editor.setEditable(on),
     focus: () => editor.commands.focus(),

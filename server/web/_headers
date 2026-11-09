@@ -5,3 +5,10 @@
   X-Frame-Options: DENY
   X-Content-Type-Options: nosniff
   Referrer-Policy: same-origin
+
+# The offline Mermaid page is framed (sandboxed) by /app's plans and docs (MF-358, MF-363): same-origin only.
+/app/mermaid/*
+  ! Content-Security-Policy
+  ! X-Frame-Options
+  Content-Security-Policy: frame-ancestors 'self'
+  X-Frame-Options: SAMEORIGIN

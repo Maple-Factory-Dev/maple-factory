@@ -63,6 +63,15 @@ export const SLASH_ITEMS = [
   { title: "Quote", icon: "❝", run: (c) => c.toggleBlockquote() },
   { title: "Code block", icon: "</>", run: (c) => c.toggleCodeBlock() },
   { title: "Divider", icon: "—", run: (c) => c.setHorizontalRule() },
+  // Planning visuals (MF-363)
+  { title: "Diagram", icon: "◇", hint: "Mermaid", run: (c) => c.insertContent({ type: "mermaid", attrs: { source: "flowchart LR\n  A[Idea] --> B[Plan] --> C[Build]" } }) },
+  { title: "Table", icon: "▦", run: (c) => c.insertTable({ rows: 3, cols: 3, withHeaderRow: true }) },
+  { title: "Chart", icon: "▂▅", hint: "of the table above", run: (c) => c.insertContent({ type: "chart", attrs: { kind: "bar" } }) },
+  { title: "Image", icon: "▣", run: (c, editor) => { setTimeout(() => editor.storage.docVisuals?.pick("image/png,image/jpeg,image/gif,image/webp")); return c; } },
+  { title: "File", icon: "📎", run: (c, editor) => { setTimeout(() => editor.storage.docVisuals?.pick("")); return c; } },
+  { title: "Callout", icon: "!", run: (c) => c.wrapIn("callout", { tone: "note" }) },
+  { title: "Toggle", icon: "▸", run: (c) => c.wrapIn("toggle", { summary: "", open: true }) },
+  { title: "Task embed", icon: "#", hint: "live card", run: (c, editor) => { if (editor.storage.docVisuals) editor.storage.docVisuals.embedNext = true; return c.insertContent("#"); } },
 ];
 
 /** `/` at the start of a word opens the block menu. */
@@ -77,7 +86,7 @@ export const SlashMenu = Extension.create({
         startOfLine: false,
         allow: ({ state, range }) => !state.doc.resolve(range.from).parent.type.spec.code,
         items: ({ query }) => SLASH_ITEMS.filter((i) => i.title.toLowerCase().includes(query.toLowerCase())),
-        command: ({ editor, range, props }) => props.run(editor.chain().focus().deleteRange(range)).run(),
+        command: ({ editor, range, props }) => props.run(editor.chain().focus().deleteRange(range), editor).run(),
         render: listRenderer((i) => i.title),
       }),
     ];
@@ -105,9 +114,12 @@ export function mentionSuggestions({ members, tasks }) {
         return tasks().filter((t) => t.id.toLowerCase().startsWith(q) || (t.title ?? "").toLowerCase().includes(q)).slice(0, 8)
           .map((t) => ({ id: t.id, title: t.title, hint: t.id }));
       },
-      // A task inserts a taskRef node, not a mention.
-      command: ({ editor, range, props }) =>
-        editor.chain().focus().insertContentAt(range, [{ type: "taskRef", attrs: { id: props.id, title: props.title } }, { type: "text", text: " " }]).run(),
+      // A task inserts a taskRef node, not a mention; after the slash menu's "Task embed", a live card.
+      command: ({ editor, range, props }) => {
+        const v = editor.storage.docVisuals;
+        if (v?.embedNext) { v.embedNext = false; return editor.chain().focus().insertContentAt(range, { type: "taskEmbed", attrs: { id: props.id } }).run(); }
+        return editor.chain().focus().insertContentAt(range, [{ type: "taskRef", attrs: { id: props.id, title: props.title } }, { type: "text", text: " " }]).run();
+      },
       render: listRenderer((i) => i.title || i.id),
     },
   ];
@@ -129,17 +141,28 @@ export function bubbleMenuElement(editor) {
       } },
     { label: "H2", title: "Heading", active: ["heading", { level: 2 }], run: (c) => c.toggleHeading({ level: 2 }) },
     { label: "❝", title: "Quote", active: "blockquote", run: (c) => c.toggleBlockquote() },
+    // In a table: add and delete rows and columns.
+    { label: "+Row", title: "Add row", table: true, run: (c) => c.addRowAfter() },
+    { label: "+Col", title: "Add column", table: true, run: (c) => c.addColumnAfter() },
+    { label: "−Row", title: "Delete row", table: true, run: (c) => c.deleteRow() },
+    { label: "−Col", title: "Delete column", table: true, run: (c) => c.deleteColumn() },
   ].map((b) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.textContent = b.label;
     btn.title = b.title;
-    btn.className = `doc-bubble-${b.title.toLowerCase()}`;
+    btn.className = `doc-bubble-${b.title.toLowerCase().replace(/\s+/g, "-")}`;
     btn.addEventListener("mousedown", (e) => { e.preventDefault(); b.run(editor.chain().focus()).run(); });
     el.append(btn);
     return { btn, b };
   });
-  const sync = () => buttons.forEach(({ btn, b }) => btn.classList.toggle("on", editor.isActive(...[].concat(b.active))));
+  const sync = () => {
+    const inTable = editor.isActive("table");
+    buttons.forEach(({ btn, b }) => {
+      if (b.table) btn.hidden = !inTable;
+      else btn.classList.toggle("on", editor.isActive(...[].concat(b.active)));
+    });
+  };
   editor.on("selectionUpdate", sync);
   editor.on("transaction", sync);
   return el;

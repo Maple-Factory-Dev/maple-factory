@@ -91,3 +91,95 @@ test("demo mode seeds a Y.Doc from Markdown", async () => {
   const doc = yXmlFragmentToProseMirrorRootNode(ydoc.getXmlFragment(SHARED_TYPE), schema);
   assert.equal(toMarkdown(doc), md);
 });
+
+// MF-363: planning visuals. One export test per node, each valid in the schema and round-tripping.
+const vtasks = [
+  { id: "MF-12", title: "Twelve", state: "reviewing", pr: { number: 204, url: "https://github.com/o/r/pull/204" }, assignee: "afomera" },
+];
+const vctx = { ...ctx, tasks: taskResolver(vtasks) };
+const VISUALS: Record<string, [string, string]> = {
+  mermaid: ["mermaid", "```mermaid\nflowchart LR\n  A[\"/app/docs\"] --> B\n```\n"],
+  table: ["table", "| Week | Built | Merged |\n| --- | --- | --- |\n| W1 | 4 | 3 |\n| W2 | 7 | 5 \\| ok |\n"],
+  chart: ["chart", "```chart\ntype: line\ntitle: Throughput\n```\n"],
+  image: ["image", "![A screenshot](/attachments/2f1c/shot.png \"width=320\")\n"],
+  "file attachment": ["fileAttachment", "[spec.pdf](/attachments/9a0b/spec.pdf \"application/pdf · 48213 bytes\")\n"],
+  "callout note": ["callout", "> [!NOTE]\n> Plans render offline.\n"],
+  "callout tip": ["callout", "> [!TIP]\n> Use `/chart`.\n"],
+  "callout warning": ["callout", "> [!WARNING]\n> No SVG uploads.\n"],
+  "callout important": ["callout", "> [!IMPORTANT]\n> Ship it.\n>\n> - one\n> - two\n"],
+  toggle: ["toggle", "> [!TOGGLE] Details\n> Hidden **text**.\n"],
+  "task embed": ["taskEmbed", "> [!TASK] MF-12 · Twelve · reviewing · PR #204 · @afomera\n"],
+};
+for (const [name, [type, md]] of Object.entries(VISUALS)) {
+  test(`exports ${name}`, () => {
+    const doc = fromMarkdown(schema, md, vctx);
+    doc.check();
+    assert.ok(types(doc).includes(type), `${type} in ${types(doc)}`);
+    assert.equal(toMarkdown(doc, vctx), md);
+  });
+}
+
+test("visual node attributes come back from Markdown", () => {
+  const first = (md: string) => fromMarkdown(schema, md, vctx).firstChild!;
+  assert.equal(first(VISUALS.mermaid[1]).attrs.source, "flowchart LR\n  A[\"/app/docs\"] --> B");
+  assert.deepEqual({ ...first(VISUALS.chart[1]).attrs }, { kind: "line", title: "Throughput" });
+  assert.deepEqual({ ...first(VISUALS.image[1]).attrs }, { src: "/attachments/2f1c/shot.png", alt: "A screenshot", width: 320 });
+  assert.deepEqual({ ...first(VISUALS["file attachment"][1]).attrs }, { href: "/attachments/9a0b/spec.pdf", name: "spec.pdf", size: 48213, mime: "application/pdf" });
+  assert.equal(first(VISUALS["callout warning"][1]).attrs.tone, "warning");
+  assert.equal(first(VISUALS.toggle[1]).attrs.summary, "Details");
+  const table = first(VISUALS.table[1]);
+  assert.equal(table.firstChild!.firstChild!.type.name, "tableHeader");
+  assert.equal(table.child(2).child(2).textContent, "5 | ok");
+});
+
+test("task embeds export a snapshot but import only the id", () => {
+  const doc = fromMarkdown(schema, "> [!TASK] MF-12 · Stale title · building\n", vctx);
+  assert.deepEqual({ ...doc.firstChild!.attrs }, { id: "MF-12" });
+  // Export snapshots the task's current state, PR and owner from the lookup, not the stale text.
+  assert.equal(toMarkdown(doc, vctx), VISUALS["task embed"][1]);
+  // With no lookup (or a task the feed doesn't have) only the id is written.
+  assert.equal(toMarkdown(doc), "> [!TASK] MF-12\n");
+});
+
+test("a chart turns the table above it into series, skipping non-numeric cells", async () => {
+  const { chartSeries, tableAbove } = await import("../docs-editor/src/nodes.js");
+  const md = "| Week | Built | Notes | Merged |\n| --- | --- | --- | --- |\n| W1 | 4 | slow | 3 |\n| W2 | 1,200 | fast | n/a |\n\n```chart\ntype: bar\n```\n";
+  const doc = fromMarkdown(schema, md, vctx);
+  let chartPos = -1;
+  doc.forEach((n: any, off: number) => { if (n.type.name === "chart") chartPos = off; });
+  const data = chartSeries(tableAbove(doc, chartPos));
+  assert.deepEqual(data, { labels: ["W1", "W2"], series: [{ name: "Built", values: [4, 1200] }, { name: "Merged", values: [3, null] }] });
+  assert.deepEqual(chartSeries(tableAbove(doc, 0)), { labels: [], series: [] });
+});
+
+test("uploads: png/jpeg/gif/webp become images; SVG and everything else a file", async () => {
+  const { nodeForUpload } = await import("../docs-editor/src/nodes.js");
+  const up = (name: string, mime: string) => nodeForUpload({ path: `/attachments/x/${name}`, name, mime, size: 10 }).type;
+  for (const [n, m] of [["a.png", "image/png"], ["a.jpg", "image/jpeg"], ["a.gif", "image/gif"], ["a.webp", "image/webp"]]) assert.equal(up(n, m), "image", n);
+  for (const [n, m] of [["a.svg", "image/svg+xml"], ["b.svg", "image/png"], ["a.pdf", "application/pdf"], ["a.bmp", "image/bmp"], ["a.txt", "text/plain"], ["a", ""]]) assert.equal(up(n, m), "fileAttachment", n);
+});
+
+test("a doc with every block exports readable Markdown and reads back", () => {
+  const md = [VISUALS.mermaid[1], VISUALS.table[1], VISUALS.chart[1], VISUALS.image[1], VISUALS["file attachment"][1], VISUALS["callout note"][1], VISUALS.toggle[1], "---\n", VISUALS["task embed"][1]].join("\n");
+  const doc = fromMarkdown(schema, md, vctx);
+  doc.check();
+  assert.equal(toMarkdown(doc, vctx), md);
+});
+
+test("images load only from /attachments/; any other image stays a link", () => {
+  const md = (text: string) => toMarkdown(fromMarkdown(schema, text, vctx));
+  const doc = fromMarkdown(schema, "![pixel](https://evil.example/p.gif)\n", vctx);
+  doc.check();
+  assert.ok(!types(doc).includes("image"), types(doc).join());
+  assert.equal(md("![pixel](https://evil.example/p.gif)\n"), "[pixel](https://evil.example/p.gif)\n");
+  assert.equal(md("see ![x](//evil.example/x.png) here\n"), "see [x](//evil.example/x.png) here\n");
+  // An attachment image inside other text is a link too; alone in its paragraph it's an image node.
+  assert.equal(md("see ![a](/attachments/1/a.png) here\n"), "see [a](/attachments/1/a.png) here\n");
+  assert.equal(md(VISUALS.image[1]), VISUALS.image[1]);
+});
+
+test("a [!RESEARCH] quote (not a block here; MF-366) stays a plain quote", () => {
+  const doc = fromMarkdown(schema, "> [!RESEARCH] MF-40 · Which chart lib?\n", vctx);
+  doc.check();
+  assert.equal(doc.firstChild!.type.name, "blockquote");
+});

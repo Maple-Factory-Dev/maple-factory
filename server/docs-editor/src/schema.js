@@ -4,6 +4,7 @@ import { getSchema, Node, mergeAttributes } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { TaskList, TaskItem } from "@tiptap/extension-list";
 import Mention from "@tiptap/extension-mention";
+import { visualExtensions } from "./nodes.js";
 
 /** `MF-12`, the shape of a task id. */
 export const TASK_ID = /[A-Z][A-Z0-9]{0,9}-\d{1,6}/;
@@ -41,8 +42,10 @@ export const TaskRef = Node.create({
   },
 });
 
-/** The extensions that make up the schema. `extra` configures the browser-only parts (suggestion menus). */
-export function schemaExtensions({ mention = {}, taskRef = {} } = {}) {
+/** The extensions that make up the schema. `mention`/`taskRef` configure the browser-only parts (suggestion
+ *  menus); `host` carries the planning-visual node views' callbacks (MF-363, see nodes.js). The divider is
+ *  StarterKit's horizontalRule. */
+export function schemaExtensions({ mention = {}, taskRef = {}, host = null } = {}) {
   return [
     // Undo/redo comes from the Collaboration extension (y-prosemirror's), not ProseMirror history.
     StarterKit.configure({ undoRedo: false, link: { openOnClick: false, autolink: true } }),
@@ -55,6 +58,7 @@ export function schemaExtensions({ mention = {}, taskRef = {} } = {}) {
       ...mention,
     }),
     TaskRef.extend(taskRef),
+    ...visualExtensions(host),
   ];
 }
 
