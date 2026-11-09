@@ -2,6 +2,8 @@ export interface Env {
   DB: D1Database;
   ORG: DurableObjectNamespace;
   MACHINE: DurableObjectNamespace;
+  /** One DocHub per shared planning doc, holding its Yjs document (src/doc-hub.ts). */
+  DOC: DurableObjectNamespace;
   /** The factory's files; runner releases here (an org's own builds) win over maplefactory.dev's feed. */
   RELEASES: R2Bucket;
   /** "stable" (default) or "beta": which of the feed's releases runners get. */
