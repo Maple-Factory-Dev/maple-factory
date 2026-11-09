@@ -11,6 +11,7 @@ import { audit, machineHub } from "./util.ts";
 import { docHub } from "./doc-routes.ts";
 import { maySignIn, recheckEvery, revoked, revokeMember, stillMember, toMember, userToken, type MemberRow } from "./auth.ts";
 import { Store } from "./factory/store.ts";
+import * as threads from "./factory/doc-threads.ts";
 import { Secrets } from "./secrets.ts";
 import { Push, deviceId } from "./push.ts";
 import { Integrations } from "./integrations/store.ts";
@@ -1057,6 +1058,38 @@ export class OrgHub extends DurableObject<Env> {
         this.broadcast({ type: "doc.updated", doc });
         // Archived docs are read-only: whoever has it open is cut off (the route refuses new sockets).
         if (doc.archived) this.ctx.waitUntil(this.closeDocSockets(doc.id).catch(() => {}));
+        return;
+      }
+      case "doc.threads": {
+        if (!this.store.doc(msg.doc)) return this.send(ws, { type: "error", message: "That doc isn't there any more.", requestId: msg.type });
+        return this.send(ws, { type: "doc.threads", doc: msg.doc, threads: this.store.threads(msg.doc) });
+      }
+      case "doc.comment":
+      case "doc.resolve":
+      case "doc.reopen": {
+        const fail = (message: string) => this.send(ws, { type: "error", message, requestId: msg.type });
+        const doc = this.store.doc(msg.doc);
+        if (!doc) return fail("That doc isn't there any more.");
+        if (doc.archived) return fail("That doc is archived; bring it back to comment on it.");
+        const me = client.member.login;
+        let thread = msg.thread ? this.store.thread(msg.thread) : null;
+        if (msg.thread && (!thread || thread.doc !== doc.id)) return fail("That thread isn't there any more.");
+        if (msg.type === "doc.comment") {
+          const why = threads.invalid(msg.text, msg.anchor);
+          if (why) return fail(why);
+          const members = await this.members();
+          if (thread) thread = threads.addComment(thread, me, msg.text, members);
+          else {
+            if (!msg.anchor) return fail("Select some text to comment on.");
+            if (this.store.threadCount(doc.id) >= threads.MAX_THREADS) return fail(`A doc holds at most ${threads.MAX_THREADS} threads.`);
+            thread = threads.newThread(doc.id, me, msg.text, msg.anchor, members);
+          }
+          this.ctx.waitUntil(threads.notifyMentions(this.push, thread).catch((e) => console.error("push:", e)));
+        } else if (!thread) return fail("Which thread?");
+        else thread = msg.type === "doc.resolve" ? threads.resolve(thread, me) : threads.reopen(thread);
+        this.store.saveThread(thread);
+        this.broadcast({ type: "doc.thread.updated", thread });
+        this.broadcast({ type: "doc.updated", doc: this.store.doc(doc.id)! });
         return;
       }
       case "note.delete": {
