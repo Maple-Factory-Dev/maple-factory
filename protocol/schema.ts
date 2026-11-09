@@ -595,6 +595,11 @@ export const structs: Record<string, Struct> = {
     },
     fieldDocs: { kind: "\"screen\" (html, shown in a browser frame at url) or \"terminal\" (lines)." },
   },
+  Diagram: {
+    doc: "A Mermaid diagram the planner drew to explain the change: a flow, an architecture or a state machine.",
+    fields: { id: "string", title: "string", source: "string", notes: "string[]" },
+    fieldDocs: { id: "D1, D2… in the order the plan gave them.", source: "Mermaid source. Rendered offline with securityLevel 'strict'." },
+  },
   Artifact: {
     doc: "A file an agent shared on a task: a chart, an image, a repro page. Sharing again under the same title replaces it with the next version.",
     fields: {
@@ -770,6 +775,7 @@ export const structs: Record<string, Struct> = {
       risk: "Risk?",
       autoReview: "AutoReview?",
       mockups: "Mockup[]",
+      diagrams: "Diagram[]",
       artifacts: "Artifact[]",
       tickets: "TicketLink[]",
       shareable: "bool",

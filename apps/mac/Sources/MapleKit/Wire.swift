@@ -3131,6 +3131,31 @@ public enum Wire {
         }
     }
 
+    /// A Mermaid diagram the planner drew to explain the change: a flow, an architecture or a state machine.
+    public struct Diagram: Codable, Hashable, Sendable {
+        /// D1, D2… in the order the plan gave them.
+        public var id: String
+        public var title: String
+        /// Mermaid source. Rendered offline with securityLevel 'strict'.
+        public var source: String
+        public var notes: [String]
+
+        public init(id: String, title: String, source: String, notes: [String] = []) {
+            self.id = id
+            self.title = title
+            self.source = source
+            self.notes = notes
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            title = try c.decode(String.self, forKey: .title)
+            source = try c.decode(String.self, forKey: .source)
+            notes = try c.decodeIfPresent([String].self, forKey: .notes) ?? []
+        }
+    }
+
     /// A file an agent shared on a task: a chart, an image, a repro page. Sharing again under the same title replaces it with the next version.
     public struct Artifact: Codable, Hashable, Sendable {
         public var id: String
@@ -3592,6 +3617,7 @@ public enum Wire {
         public var risk: Risk?
         public var autoReview: AutoReview?
         public var mockups: [Mockup]
+        public var diagrams: [Diagram]
         /// Files its agents shared: charts, images, pages. Empty on older tasks.
         public var artifacts: [Artifact]
         public var tickets: [TicketLink]
@@ -3641,7 +3667,7 @@ public enum Wire {
         /// Checks its last finish couldn't run on that machine (`needs macos`), open until a person waives them. None: none (or an older server).
         public var checksNotRun: [TaskNotRun]?
 
-        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, suggestedTitle: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, requested: [String] = [], comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], stages: [StageSpan] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], artifacts: [Artifact] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, scoutedFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, priority: Priority? = nil, followUpOf: String? = nil, mergeAt: UInt64? = nil, mergeForecast: MergeForecast? = nil, classification: Classification? = nil, findings: Findings? = nil, requires: [String]? = nil, appleChecks: AppleChecks? = nil, checksNotRun: [TaskNotRun]? = nil) {
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, suggestedTitle: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, requested: [String] = [], comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], stages: [StageSpan] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], diagrams: [Diagram] = [], artifacts: [Artifact] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, scoutedFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, priority: Priority? = nil, followUpOf: String? = nil, mergeAt: UInt64? = nil, mergeForecast: MergeForecast? = nil, classification: Classification? = nil, findings: Findings? = nil, requires: [String]? = nil, appleChecks: AppleChecks? = nil, checksNotRun: [TaskNotRun]? = nil) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -3676,6 +3702,7 @@ public enum Wire {
             self.risk = risk
             self.autoReview = autoReview
             self.mockups = mockups
+            self.diagrams = diagrams
             self.artifacts = artifacts
             self.tickets = tickets
             self.shareable = shareable
@@ -3740,6 +3767,7 @@ public enum Wire {
             risk = try c.decodeIfPresent(Risk.self, forKey: .risk)
             autoReview = try c.decodeIfPresent(AutoReview.self, forKey: .autoReview)
             mockups = try c.decodeIfPresent([Mockup].self, forKey: .mockups) ?? []
+            diagrams = try c.decodeIfPresent([Diagram].self, forKey: .diagrams) ?? []
             artifacts = try c.decodeIfPresent([Artifact].self, forKey: .artifacts) ?? []
             tickets = try c.decodeIfPresent([TicketLink].self, forKey: .tickets) ?? []
             shareable = try c.decode(Bool.self, forKey: .shareable)

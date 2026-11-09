@@ -1413,6 +1413,19 @@ pub struct Mockup {
     pub differences: Vec<String>,
 }
 
+/// A Mermaid diagram the planner drew to explain the change: a flow, an architecture or a state machine.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Diagram {
+    /// D1, D2… in the order the plan gave them.
+    pub id: String,
+    pub title: String,
+    /// Mermaid source. Rendered offline with securityLevel 'strict'.
+    pub source: String,
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
 /// A file an agent shared on a task: a chart, an image, a repro page. Sharing again under the same title replaces it with the next version.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1770,6 +1783,8 @@ pub struct Task {
     pub auto_review: Option<AutoReview>,
     #[serde(default)]
     pub mockups: Vec<Mockup>,
+    #[serde(default)]
+    pub diagrams: Vec<Diagram>,
     /// Files its agents shared: charts, images, pages. Empty on older tasks.
     #[serde(default)]
     pub artifacts: Vec<Artifact>,
