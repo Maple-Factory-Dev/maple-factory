@@ -22,10 +22,36 @@ export function listDocs(docs, { goal = null, archived = false } = {}) {
 
 export function createDocs({ state, h, send, render, toast, icon, ago, allTasks }) {
   let pendingCreate = null; // the title of a doc.create we sent, to open it when its doc.updated lands
+  let pendingResearch = []; // [{ title, pos, docId }]: research task.creates we sent, matched like pendingCreate (MF-363)
   let open = null; // { id, host, handle, status, peers, error }
 
   const memberOf = (login) => state.members.find((m) => m.login === login);
   const goalName = (id) => state.goals.find((g) => g.id === id)?.name;
+
+  /** The editor's view of a task: what task embeds and research blocks draw (MF-363). */
+  const taskView = (t) => ({ id: t.id, title: t.title, state: t.state, pr: t.pr ? { number: t.pr.number, url: t.pr.url ?? null, state: t.pr.state } : null, assignee: t.owner ?? null, goal: t.goal, findings: t.findings ?? null });
+
+  /** Called (by app.js) after a task.updated or snapshot is applied: match research creates, redraw embeds. */
+  function tasksChanged(m) {
+    if (m?.type === "task.updated" && pendingResearch.length) {
+      const t = m.task;
+      const i = pendingResearch.findIndex((p) => p.title === t.title && t.owner === state.me?.login);
+      if (i >= 0) {
+        const [p] = pendingResearch.splice(i, 1);
+        if (open?.id === p.docId) open.handle?.setResearchTask(p.pos, t.id);
+      }
+    }
+    open?.handle?.tasksChanged();
+  }
+
+  function createResearch({ question, goal, pos }, doc) {
+    const title = `Research: ${question.replace(/\s+/g, " ").slice(0, 120)}`;
+    const brief = `${question}\n\nAnswer as a research task; your answer is embedded in doc ${doc?.title || "Untitled doc"} (#/docs/${doc?.id}).`;
+    pendingResearch.push({ title, pos, docId: doc?.id });
+    if (!send({ type: "task.create", goal: goal || doc?.goal || state.goals[0]?.id, title, brief, plan: true, shareable: false, tickets: [] })) {
+      pendingResearch = pendingResearch.filter((p) => p.title !== title);
+    }
+  }
 
   function receive(m) {
     if (!receiveDocs(state, m)) return false;
@@ -81,9 +107,12 @@ export function createDocs({ state, h, send, render, toast, icon, ago, allTasks 
         docId: id,
         me: { login: me.login, name: me.name, avatar: me.avatarUrl },
         members: () => state.members.map((m) => ({ login: m.login, name: m.name, avatar: m.avatarUrl })),
-        tasks: () => allTasks().map((t) => ({ id: t.id, title: t.title })),
+        tasks: () => allTasks().map(taskView),
+        goals: () => state.goals.map((g) => ({ id: g.id, name: g.name })),
+        docGoal: (state.docs ?? []).find((d) => d.id === id)?.goal ?? null,
         onEvent: (name, data) => {
           if (open?.id !== id) return;
+          if (name === "createResearch") return createResearch(data, (state.docs ?? []).find((d) => d.id === id));
           if (name === "status") open.status = data.status;
           if (name === "peers") open.peers = data;
           if (name === "error") open.error = data.message;
@@ -186,5 +215,5 @@ export function createDocs({ state, h, send, render, toast, icon, ago, allTasks 
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
-  return { receive, listView, docView, close, patch, goalLink, isOpen: () => !!open };
+  return { receive, tasksChanged, listView, docView, close, patch, goalLink, isOpen: () => !!open };
 }

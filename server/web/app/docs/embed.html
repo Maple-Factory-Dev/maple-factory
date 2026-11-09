@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Maple doc</title>
 <!-- The docs editor with no feed chrome, for the Mac and iOS apps to host in a WKWebView (MF-361).
-     Bridge: window.mapleDocs.load({ docId, token, me, members, tasks, demo? }), setTheme('light'|'dark'), exportMarkdown(),
+     Bridge: window.mapleDocs.load({ docId, token, me, members, tasks, goals?, docGoal?, demo? }), updateTasks(tasks), setTheme('light'|'dark'), exportMarkdown(),
      destroy(). Events (ready, status, peers, synced, theme, error, openTask) go to
      window.webkit.messageHandlers.maple when it exists, else to window.parent via postMessage. See docs/planning-docs.md. -->
 <link rel="stylesheet" href="editor.css">
@@ -35,11 +35,13 @@
   const applyTheme = (t) => { theme = t === "dark" ? "dark" : "light"; document.documentElement.dataset.theme = theme; handle?.setTheme(theme); };
   applyTheme(theme);
 
+  let tasks = [];
   window.mapleDocs = {
     /** Opens a doc. `token` is the app's `mft_…` token, sent as the socket's `maple-token` subprotocol (no cookie
      *  needed); `me` {login, name, avatar}; `members` [{login, name, avatar}] and `tasks` [{id, title}] feed the
      *  @ and # menus and MF-12 links. `demo` {markdown}: a local-only doc with no socket (the Mac app's signed-out mockup). */
-    async load({ docId, token, me, members = [], tasks = [], demo = null }) {
+    async load({ docId, token, me, members = [], tasks: list = [], goals = [], docGoal = null, demo = null }) {
+      tasks = list;
       handle?.destroy();
       const { createDocEditor } = await import("./editor.bundle.js");
       handle = createDocEditor({
@@ -48,12 +50,16 @@
         me: me ?? { login: "me" },
         members: () => members,
         tasks: () => tasks,
+        goals: () => goals,
+        docGoal,
         onEvent: (type, data) => post(type, Array.isArray(data) ? { peers: data } : data),
       });
       return true;
     },
     setTheme: (t) => { applyTheme(t); post("theme", { theme }); },
     exportMarkdown: () => handle?.exportMarkdown() ?? null,
+    /** New task objects from the app's feed (MF-363): task embeds and research blocks redraw in place. */
+    updateTasks: (list) => { tasks = list ?? []; handle?.tasksChanged(); },
     destroy: () => { handle?.destroy(); handle = null; },
   };
   post("ready");
