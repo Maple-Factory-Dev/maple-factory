@@ -14,10 +14,15 @@
   "durable_objects": {
     "bindings": [
       { "name": "ORG", "class_name": "OrgHub" },
-      { "name": "MACHINE", "class_name": "MachineHub" }
+      { "name": "MACHINE", "class_name": "MachineHub" },
+      // One per shared planning doc: its Yjs document (src/doc-hub.ts).
+      { "name": "DOC", "class_name": "DocHub" }
     ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["OrgHub", "MachineHub"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["OrgHub", "MachineHub"] },
+    { "tag": "v2", "new_sqlite_classes": ["DocHub"] }
+  ],
   "d1_databases": [
     {
       "binding": "DB",

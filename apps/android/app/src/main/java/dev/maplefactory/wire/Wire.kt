@@ -2004,6 +2004,23 @@ data class Note(
     val taskId: String? = null,
 )
 
+/** A shared planning doc: org-visible, edited by many people at once. Its text is a Yjs document synced over /docs/<id>/sync; this is its index entry. */
+@Serializable
+data class Doc(
+    val id: String,
+    val title: String,
+    /** The goal it belongs to. None: it stands alone. */
+    val goal: String? = null,
+    val createdBy: String,
+    val createdAt: Long,
+    /** Last edit, to its title or its text. */
+    val updatedAt: Long,
+    /** Read-only and hidden from the list. */
+    val archived: Boolean? = null,
+    /** An emoji or SF Symbol name. */
+    val icon: String? = null,
+)
+
 /** Someone with the app open, and the task they're looking at. */
 @Serializable
 data class Presence(
@@ -3263,6 +3280,24 @@ sealed class ClientMessage {
     data class NoteDelete(
         val id: String,
     ) : ClientMessage()
+    /** Make a shared doc, in a goal or standing alone. */
+    @Serializable
+    data class DocCreate(
+        val title: String,
+        val goal: String? = null,
+        val icon: String? = null,
+    ) : ClientMessage()
+    @Serializable
+    data class DocRename(
+        val id: String,
+        val title: String,
+    ) : ClientMessage()
+    /** Archive a doc (read-only, hidden), or bring it back. */
+    @Serializable
+    data class DocArchive(
+        val id: String,
+        val archived: Boolean,
+    ) : ClientMessage()
     /** The task this app is showing, if any, for teammates' presence. */
     @Serializable
     data class Presence(
@@ -3826,6 +3861,9 @@ sealed class ClientMessage {
             "intake.ask" -> json.decodeFromJsonElement(IntakeAsk.serializer(), body)
             "intake.decline" -> json.decodeFromJsonElement(IntakeDecline.serializer(), body)
             "note.delete" -> json.decodeFromJsonElement(NoteDelete.serializer(), body)
+            "doc.create" -> json.decodeFromJsonElement(DocCreate.serializer(), body)
+            "doc.rename" -> json.decodeFromJsonElement(DocRename.serializer(), body)
+            "doc.archive" -> json.decodeFromJsonElement(DocArchive.serializer(), body)
             "presence" -> json.decodeFromJsonElement(Presence.serializer(), body)
             "session.open" -> json.decodeFromJsonElement(SessionOpen.serializer(), body)
             "session.attach" -> json.decodeFromJsonElement(SessionAttach.serializer(), body)
@@ -3922,6 +3960,9 @@ sealed class ClientMessage {
             is IntakeAsk -> "intake.ask" to json.encodeToJsonElement(IntakeAsk.serializer(), value)
             is IntakeDecline -> "intake.decline" to json.encodeToJsonElement(IntakeDecline.serializer(), value)
             is NoteDelete -> "note.delete" to json.encodeToJsonElement(NoteDelete.serializer(), value)
+            is DocCreate -> "doc.create" to json.encodeToJsonElement(DocCreate.serializer(), value)
+            is DocRename -> "doc.rename" to json.encodeToJsonElement(DocRename.serializer(), value)
+            is DocArchive -> "doc.archive" to json.encodeToJsonElement(DocArchive.serializer(), value)
             is Presence -> "presence" to json.encodeToJsonElement(Presence.serializer(), value)
             is SessionOpen -> "session.open" to json.encodeToJsonElement(SessionOpen.serializer(), value)
             is SessionAttach -> "session.attach" to json.encodeToJsonElement(SessionAttach.serializer(), value)
@@ -4041,6 +4082,8 @@ sealed class ServerToClient {
         val integrations: List<dev.maplefactory.wire.Integration>? = null,
         val online: List<dev.maplefactory.wire.Presence> = emptyList(),
         val notes: List<dev.maplefactory.wire.Note> = emptyList(),
+        /** Every shared doc, archived ones too. None: an older server. */
+        val docs: List<dev.maplefactory.wire.Doc>? = null,
         val follows: List<dev.maplefactory.wire.GoalFollow> = emptyList(),
         /** Your quiet hours. None: none set, or an older server. */
         val quietHours: dev.maplefactory.wire.QuietHours? = null,
@@ -4123,6 +4166,15 @@ sealed class ServerToClient {
     ) : ServerToClient()
     @Serializable
     data class NoteRemoved(
+        val id: String,
+    ) : ServerToClient()
+    /** A shared doc was made or changed, to every member. */
+    @Serializable
+    data class DocUpdated(
+        val doc: dev.maplefactory.wire.Doc,
+    ) : ServerToClient()
+    @Serializable
+    data class DocRemoved(
         val id: String,
     ) : ServerToClient()
     /** Your draft, to your apps only. */
@@ -4306,6 +4358,8 @@ sealed class ServerToClient {
             "note.updated" -> json.decodeFromJsonElement(NoteUpdated.serializer(), body)
             "intake.updated" -> json.decodeFromJsonElement(IntakeUpdated.serializer(), body)
             "note.removed" -> json.decodeFromJsonElement(NoteRemoved.serializer(), body)
+            "doc.updated" -> json.decodeFromJsonElement(DocUpdated.serializer(), body)
+            "doc.removed" -> json.decodeFromJsonElement(DocRemoved.serializer(), body)
             "draft.updated" -> json.decodeFromJsonElement(DraftUpdated.serializer(), body)
             "scout.updated" -> json.decodeFromJsonElement(ScoutUpdated.serializer(), body)
             "recurring.updated" -> json.decodeFromJsonElement(RecurringUpdated.serializer(), body)
@@ -4349,6 +4403,8 @@ sealed class ServerToClient {
             is NoteUpdated -> "note.updated" to json.encodeToJsonElement(NoteUpdated.serializer(), value)
             is IntakeUpdated -> "intake.updated" to json.encodeToJsonElement(IntakeUpdated.serializer(), value)
             is NoteRemoved -> "note.removed" to json.encodeToJsonElement(NoteRemoved.serializer(), value)
+            is DocUpdated -> "doc.updated" to json.encodeToJsonElement(DocUpdated.serializer(), value)
+            is DocRemoved -> "doc.removed" to json.encodeToJsonElement(DocRemoved.serializer(), value)
             is DraftUpdated -> "draft.updated" to json.encodeToJsonElement(DraftUpdated.serializer(), value)
             is ScoutUpdated -> "scout.updated" to json.encodeToJsonElement(ScoutUpdated.serializer(), value)
             is RecurringUpdated -> "recurring.updated" to json.encodeToJsonElement(RecurringUpdated.serializer(), value)

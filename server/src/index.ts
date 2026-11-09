@@ -27,12 +27,15 @@ import { SERVER_VERSION, serverUpdate } from "./version.ts";
 
 import { MachineHub as MachineHubBase } from "./machine-hub.ts";
 import { OrgHub as OrgHubBase } from "./org-hub.ts";
+import { DocHub as DocHubBase } from "./doc-hub.ts";
+import { DOC_SYNC, docSync } from "./doc-routes.ts";
 
 const sentryOptions = (env: Env) => options(env, sentry.projects.server.dsn, SERVER_VERSION);
 
 // The hubs report their errors too; with reports off they get no DSN and the SDK stays idle.
 export const OrgHub = Sentry.instrumentDurableObjectWithSentry((env: Env) => sentryOptions(env) ?? {}, OrgHubBase);
 export const MachineHub = Sentry.instrumentDurableObjectWithSentry((env: Env) => sentryOptions(env) ?? {}, MachineHubBase);
+export const DocHub = Sentry.instrumentDurableObjectWithSentry((env: Env) => sentryOptions(env) ?? {}, DocHubBase);
 
 /** Pages people open in a browser. Once the factory has a PUBLIC_URL, these move there from its other
  *  addresses (its workers.dev one), since GitHub sign-in only comes back to that one. */
@@ -112,6 +115,9 @@ export default Sentry.withSentry((env: Env) => sentryOptions(env), {
     const me = await currentMember(request, env);
     if (path === "/") return home(request, env, me, me?.role === "admin" ? await serverUpdate(env) : null);
     if (path === "/link/slack" && request.method === "GET") return linkPage(env, url, me);
+    // A shared doc's Yjs sync socket: the same sign-in and origin checks as /client/connect (src/doc-routes.ts).
+    const docPath = DOC_SYNC.exec(path);
+    if (docPath && request.method === "GET") return docSync(request, env, docPath[1], me);
     if (!me) return text("Sign in first.", 401);
     if (!sameOrigin(request)) return text("Bad origin.", 403);
 

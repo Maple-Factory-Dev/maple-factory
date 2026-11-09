@@ -8,6 +8,7 @@ import type { Env } from "./env.ts";
 import { PROTOCOL_VERSION, IntegrationKindValues, type ClientMessage, type IntegrationKind, type Presence, type Machine, type MachineUpdate, type AgentLoginStatus, type Member, type RunnerRelease, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type SessionShare, type EndedSession, type GitHubStatus, type PushDevice, type Task, type RunnerMessage_SessionEvents } from "./wire.ts";
 import { effectiveTags, machineRows, offlineMachine, parseCapabilities } from "./machines.ts";
 import { audit, machineHub } from "./util.ts";
+import { docHub } from "./doc-routes.ts";
 import { maySignIn, recheckEvery, revoked, revokeMember, stillMember, toMember, userToken, type MemberRow } from "./auth.ts";
 import { Store } from "./factory/store.ts";
 import { Secrets } from "./secrets.ts";
@@ -217,6 +218,17 @@ export class OrgHub extends DurableObject<Env> {
       const { error } = (await request.json()) as { error?: string | null };
       await this.integrationEvent(kind, error ?? undefined);
       return new Response(null, { status: 204 });
+    }
+    // Shared docs: the Worker checks one exists before routing to its DocHub, which says when it was edited.
+    const doc = /^\/docs\/([0-9a-f-]{36})(\/touched)?$/.exec(url.pathname);
+    if (doc) {
+      if (doc[2] && request.method === "POST") {
+        const touched = this.store.touchDoc(doc[1], Date.now());
+        if (touched) this.broadcast({ type: "doc.updated", doc: touched });
+        return new Response(null, { status: touched ? 204 : 404 });
+      }
+      const found = this.store.doc(doc[1]);
+      return found ? Response.json(found) : new Response("No such doc.", { status: 404 });
     }
     switch (url.pathname) {
       case "/connect": {
@@ -636,7 +648,14 @@ export class OrgHub extends DurableObject<Env> {
       if ((ws.deserializeAttachment() as Client).member.login === login) ws.close(4003, "access revoked");
     }
     await this.dropViewers(login);
+    await Promise.all(this.store.docs().filter((d) => !d.archived).map((d) => this.closeDocSockets(d.id, login).catch(() => {})));
     this.broadcast({ type: "members.updated", members: await this.members() });
+  }
+
+  /** Closes the sync sockets open on a doc's DocHub: all of them, or only `login`'s. */
+  private async closeDocSockets(id: string, login?: string) {
+    const query = login ? `?${new URLSearchParams({ login })}` : "";
+    await docHub(this.env, id).fetch(`https://doc/close${query}`, { method: "POST" });
   }
 
   /** Asks every machine to close `login`'s terminals (with `role`, only those they opened with that role). */
@@ -773,6 +792,7 @@ export class OrgHub extends DurableObject<Env> {
           integrations: await this.integrationList(),
           online: this.online(),
           notes: this.store.notes(client.member.login),
+          docs: this.store.docs(),
           follows: this.store.follows(client.member.login),
           quietHours: this.store.quietHours(client.member.login),
           intake: this.intake.list(),
@@ -1006,6 +1026,37 @@ export class OrgHub extends DurableObject<Env> {
           return this.send(ws, { type: "error", message: (e as Error).message, requestId: "quietHours.set" });
         }
         this.sendTo(client.member.login, { type: "quietHours.updated", quietHours });
+        return;
+      }
+      case "doc.create":
+      case "doc.rename":
+      case "doc.archive": {
+        const fail = (message: string) => this.send(ws, { type: "error", message, requestId: msg.type });
+        const now = Date.now();
+        let doc;
+        if (msg.type === "doc.archive") {
+          const existing = this.store.doc(msg.id);
+          if (!existing) return fail("That doc isn't there any more.");
+          doc = { ...existing, archived: msg.archived || null, updatedAt: now };
+        } else {
+          const title = msg.title.trim();
+          if (!title || title.length > 200) return fail("A doc's title is 1 to 200 characters.");
+          if (msg.type === "doc.rename") {
+            const existing = this.store.doc(msg.id);
+            if (!existing) return fail("That doc isn't there any more.");
+            if (existing.archived) return fail("That doc is archived; bring it back to rename it.");
+            doc = { ...existing, title, updatedAt: now };
+          } else {
+            if (msg.goal && !this.store.goal(msg.goal)) return fail("That goal isn't there any more.");
+            if (msg.icon && msg.icon.length > 64) return fail("That icon is too long.");
+            doc = { id: crypto.randomUUID(), title, goal: msg.goal || null, createdBy: client.member.login, createdAt: now, updatedAt: now, archived: null, icon: msg.icon || null };
+          }
+        }
+        this.store.saveDoc(doc);
+        // Org-visible, unlike notes: every member's apps hear about it.
+        this.broadcast({ type: "doc.updated", doc });
+        // Archived docs are read-only: whoever has it open is cut off (the route refuses new sockets).
+        if (doc.archived) this.ctx.waitUntil(this.closeDocSockets(doc.id).catch(() => {}));
         return;
       }
       case "note.delete": {
