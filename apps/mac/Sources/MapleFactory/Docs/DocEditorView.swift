@@ -9,7 +9,19 @@ import MapleKit
     var peers: [Peer] = []
     var error: String?
 
-    struct Peer: Hashable { let login: String; let name: String; let color: String }
+    struct Peer: Hashable {
+        let login: String; let name: String; let color: String
+        /// Their GitHub avatar URL, when the peer's awareness carries one.
+        var avatar: String? = nil
+
+        /// One peer from the bridge's `peers` event: login required; name, color and avatar optional
+        /// (an empty avatar counts as none).
+        static func parse(_ p: [String: Any]) -> Peer? {
+            guard let login = p["login"] as? String, !login.isEmpty else { return nil }
+            let avatar = (p["avatar"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            return Peer(login: login, name: p["name"] as? String ?? login, color: p["color"] as? String ?? "#888888", avatar: avatar)
+        }
+    }
 }
 
 /// Hosts the shared docs editor (`/app/docs/embed.html`, MF-361) in a WKWebView and drives it through its JS
@@ -163,10 +175,7 @@ struct DocEditorView: NSViewRepresentable {
                 if view.focusOnSync { focusEditor(); view.onFocused() }
             case "peers":
                 let peers = (body["peers"] as? [[String: Any]]) ?? []
-                view.status.peers = peers.compactMap { p in
-                    guard let login = p["login"] as? String else { return nil }
-                    return .init(login: login, name: p["name"] as? String ?? login, color: p["color"] as? String ?? "#888888")
-                }
+                view.status.peers = peers.compactMap(DocEditorStatus.Peer.parse)
             case "error": view.status.error = body["message"] as? String ?? "The doc couldn't be opened."
             case "openTask": if let id = body["id"] as? String { view.openTask(id) }
             case "command": if let command = body["command"] as? [String: Any] { view.onCommand(command) }
