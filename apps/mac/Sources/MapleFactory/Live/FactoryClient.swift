@@ -60,6 +60,8 @@ import Foundation
     private(set) var intake: [IntakeRequest] = []
     /// Your Scratchpad, as the views' notes, newest first.
     private(set) var notes: [Note] = []
+    /// Shared planning docs' index (docs/planning-docs.md), archived ones included; see `FeedState.activeDocs`.
+    private(set) var docs: [Wire.Doc] = []
     /// Your Draft with AI runs, by id.
     private(set) var drafts: [String: Wire.Draft] = [:]
     /// Goals you chose to follow (true) or stop following (false), by id.
@@ -323,6 +325,7 @@ import Foundation
         online = []
         intakeRequests = []
         notes = []
+        docs = []
         drafts = [:]
         follows = [:]
         quietHours = nil
@@ -474,6 +477,7 @@ import Foundation
             integrations = snapshot.integrations
             online = snapshot.online
             notes = snapshot.notes.map(LiveAdapter.note)
+            docs = snapshot.docs ?? []
             follows = Dictionary(snapshot.follows.map { ($0.goal, $0.following) }, uniquingKeysWith: { _, last in last })
             quietHours = snapshot.quietHours
             intakeRequests = snapshot.intake
@@ -657,8 +661,7 @@ import Foundation
             guard eventSubscriptions[batch.id] != nil else { break }
             store(for: batch.id).apply(events: batch.events, epoch: batch.epoch)
         case .docUpdated, .docRemoved:
-            // Shared planning docs (docs/planning-docs.md): no list in the app yet.
-            break
+            FeedState.applyDoc(message, to: &docs)
         case .pushDevices:
             // Phone push devices: only the iPhone and Android apps register or list them.
             break
@@ -1064,6 +1067,22 @@ import Foundation
     }
 
     // MARK: Commands
+
+    /// Shared docs (docs/planning-docs.md): the server answers each with doc.updated.
+    func createDoc(title: String, goal: String?) { send(.docCreate(.init(title: title, goal: goal))) }
+    func renameDoc(id: String, title: String) { send(.docRename(.init(id: id, title: title))) }
+    func archiveDoc(id: String, archived: Bool = true) { send(.docArchive(.init(id: id, archived: archived))) }
+
+    /// What the docs editor host needs: the embed page (no token in it) and the token it hands over through
+    /// the JS bridge. Nothing else gets the token.
+    func docEmbed(theme: String) -> (url: URL, token: String)? {
+        guard let server, let token,
+              var parts = URLComponents(url: server.appendingPathComponent("app/docs/embed.html"), resolvingAgainstBaseURL: false)
+        else { return nil }
+        parts.queryItems = [URLQueryItem(name: "theme", value: theme)]
+        guard let url = parts.url else { return nil }
+        return (url, token)
+    }
 
     func openSession(machine: String, agent: String, cwd: String) {
         send(.sessionOpen(.init(machine: machine, agent: agent, cwd: cwd, cols: 120, rows: 36)))

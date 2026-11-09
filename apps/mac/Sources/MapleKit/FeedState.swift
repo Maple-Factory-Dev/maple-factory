@@ -32,6 +32,8 @@ public struct FeedState: Sendable {
     public var acceptances: [Wire.RiskAcceptance] = []
     /// Every goal's recurring tasks, by id. Empty from an older server.
     public var recurring: [String: Wire.Recurring] = [:]
+    /// Shared planning docs' index entries, archived ones included (see `activeDocs`).
+    public var docs: [Wire.Doc] = []
     public var hasSnapshot = false
     /// The finished tasks the snapshot left out (older than its 14 days) and not loaded since, by goal id.
     /// Empty from an older server, which sends every task.
@@ -79,6 +81,7 @@ public struct FeedState: Sendable {
             policy = snapshot.policy
             acceptances = snapshot.acceptances
             recurring = Dictionary((snapshot.recurring ?? []).map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+            docs = snapshot.docs ?? []
             hasSnapshot = true
         case .taskUpdated(let update) where fetching.contains(update.task.id):
             // A task asked for by ID (`task.get`), maybe one the snapshot left out.
@@ -124,6 +127,10 @@ public struct FeedState: Sendable {
             recurring[update.recurring.id] = update.recurring
         case .recurringDeleted(let deleted):
             recurring[deleted.id] = nil
+        case .docUpdated(let update):
+            Self.upsert(update.doc, into: &docs, front: true)
+        case .docRemoved(let removed):
+            docs.removeAll { $0.id == removed.id }
         case .toast(let toast):
             return .toast(toast.text, taskId: toast.taskId)
         case .error(let error):
@@ -387,6 +394,29 @@ public struct ActivityEntry: Identifiable, Equatable, Sendable {
 }
 
 extension Wire.Task: Identifiable {}
+extension Wire.Doc: Identifiable {}
+
+/// The doc index's views: what the Docs page, a goal's Docs section and ⌘K list.
+public extension FeedState {
+    var activeDocs: [Wire.Doc] { Self.activeDocs(docs) }
+    func docs(goal: String) -> [Wire.Doc] { Self.activeDocs(docs).filter { $0.goal == goal } }
+    var docsWithoutGoal: [Wire.Doc] { Self.activeDocs(docs).filter { $0.goal == nil } }
+
+    /// Not archived, last edited first.
+    static func activeDocs(_ docs: [Wire.Doc]) -> [Wire.Doc] {
+        docs.filter { $0.archived != true }.sorted { $0.updatedAt > $1.updatedAt }
+    }
+    /// One doc change applied to a list (doc.updated upserts, doc.removed drops).
+    static func applyDoc(_ message: Wire.ServerToClient, to docs: inout [Wire.Doc]) {
+        switch message {
+        case .docUpdated(let update):
+            if let i = docs.firstIndex(where: { $0.id == update.doc.id }) { docs[i] = update.doc } else { docs.insert(update.doc, at: 0) }
+        case .docRemoved(let removed):
+            docs.removeAll { $0.id == removed.id }
+        default: break
+        }
+    }
+}
 extension Wire.Goal: Identifiable {}
 extension Wire.Machine: Identifiable {}
 extension Wire.IntakeRequest: Identifiable {}
