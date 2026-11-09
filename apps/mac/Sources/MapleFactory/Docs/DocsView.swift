@@ -98,6 +98,10 @@ struct DocsView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Theme.editorBG)
         .sheet(isPresented: $creating) { NewDocSheet(goal: nil) }
+        .onChange(of: state.creatingDoc, initial: true) { _, on in
+            if on, client.isSignedIn { creating = true }
+            state.creatingDoc = false
+        }
     }
 }
 

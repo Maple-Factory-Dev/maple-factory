@@ -3,7 +3,7 @@ import MapleKit
 
 /// Something the ⌘K palette can run that isn't a place: the menu's common commands.
 enum PaletteAction: String, CaseIterable, Hashable {
-    case newTask, newGoal, toggleSidebar, toggleTaskPanel, settings, themeSystem, themeLight, themeDark, sendFeedback
+    case newTask, newGoal, newDoc, toggleSidebar, toggleTaskPanel, settings, themeSystem, themeLight, themeDark, sendFeedback
 
     /// The theme a "Theme: …" action switches to; nil for the rest.
     var appearance: Appearance? {
@@ -19,6 +19,7 @@ enum PaletteAction: String, CaseIterable, Hashable {
         switch self {
         case .newTask: "New task"
         case .newGoal: "New goal…"
+        case .newDoc: "New doc"
         case .toggleSidebar: "Toggle sidebar"
         case .toggleTaskPanel: "Toggle task panel"
         case .settings: "Settings…"
@@ -33,6 +34,7 @@ enum PaletteAction: String, CaseIterable, Hashable {
         switch self {
         case .newTask: "plus"
         case .newGoal: "scope"
+        case .newDoc: "doc.badge.plus"
         case .toggleSidebar: "sidebar.left"
         case .toggleTaskPanel: "sidebar.right"
         case .settings: "gearshape"
@@ -48,7 +50,7 @@ enum PaletteAction: String, CaseIterable, Hashable {
         case .toggleSidebar: "⌃⌘S"
         case .toggleTaskPanel: "⌥⌘I"
         case .settings: "⌘,"
-        case .themeSystem, .themeLight, .themeDark, .sendFeedback: ""
+        case .newDoc, .themeSystem, .themeLight, .themeDark, .sendFeedback: ""
                 }
     }
 
@@ -57,6 +59,7 @@ enum PaletteAction: String, CaseIterable, Hashable {
         switch self {
         case .newTask: ["create", "add", "compose", "brief"]
         case .newGoal: ["create", "add", "project"]
+        case .newDoc: ["create", "add", "doc", "plan", "spec", "write", "page"]
         case .toggleSidebar: ["hide", "show", "collapse", "expand"]
         case .toggleTaskPanel: ["hide", "show", "inspector", "peek"]
         case .settings: ["preferences", "options", "config"]
@@ -87,7 +90,15 @@ struct PalettePage: Hashable {
         PalettePage(destination: .statistics, title: "Statistics", icon: "chart.bar.xaxis", keywords: ["stats", "findings"]),
         PalettePage(destination: .machines, title: "Machines", icon: "cpu", keywords: ["runners"]),
         PalettePage(destination: .allGoals, title: "All goals", icon: "scope", keywords: ["goals"]),
+        PalettePage(destination: .docs, title: "Docs", icon: "doc.richtext", keywords: ["open docs", "plans", "specs", "notes"]),
     ]
+}
+
+/// A shared doc as ⌘K searches it: title, then its goal and words like "doc" and "plan".
+struct PaletteDoc: Hashable {
+    let id: String
+    let title: String
+    var goal: String? = nil
 }
 
 /// One row in the palette.
@@ -96,6 +107,7 @@ enum PaletteItem: Hashable, Identifiable {
     case goal(String)
     case page(PalettePage)
     case action(PaletteAction)
+    case doc(String)
 
     var id: String {
         switch self {
@@ -103,17 +115,19 @@ enum PaletteItem: Hashable, Identifiable {
         case .goal(let name): "goal:\(name)"
         case .page(let page): "page:\(page.destination.encoded)"
         case .action(let action): "action:\(action.rawValue)"
+        case .doc(let id): "doc:\(id)"
         }
     }
 }
 
 struct PaletteSection: Equatable {
     enum Kind: CaseIterable {
-        case tasks, goals, pages, actions
+        case tasks, docs, goals, pages, actions
 
         var title: String {
             switch self {
             case .tasks: "Tasks"
+            case .docs: "Docs"
             case .goals: "Goals"
             case .pages: "Go to"
             case .actions: "Actions"
@@ -123,7 +137,7 @@ struct PaletteSection: Equatable {
         var limit: Int {
             switch self {
             case .tasks: 8
-            case .goals, .pages, .actions: 5
+            case .docs, .goals, .pages, .actions: 5
             }
         }
     }
@@ -156,7 +170,7 @@ enum CommandPaletteModel {
 
     /// The sections to show, best match first; empty sections are left out. Filter tokens narrow to tasks only.
     static func results(query text: String, tasks: [FactoryTask], goals: [String], pages: [PalettePage] = PalettePage.all,
-                        actions: [PaletteAction] = PaletteAction.allCases, me: String) -> [PaletteSection] {
+                        actions: [PaletteAction] = PaletteAction.allCases, docs: [PaletteDoc] = [], me: String) -> [PaletteSection] {
         let query = Query(text)
         if query.isEmpty { return defaults(tasks: tasks, actions: actions) }
 
@@ -167,6 +181,9 @@ enum CommandPaletteModel {
         }
         var scored: [(PaletteSection.Kind, [(PaletteItem, Int)])] = [(.tasks, rankedTasks)]
         if !query.filters {
+            scored.append((.docs, docs.compactMap { doc in
+                score(query.words, [doc.title], also: [doc.goal ?? "", "doc", "plan"]).map { (.doc(doc.id), $0) }
+            }))
             scored.append((.goals, goals.compactMap { name in score(query.words, [name]).map { (.goal(name), $0) } }))
             scored.append((.pages, pages.compactMap { page in score(query.words, [page.title], also: page.keywords).map { (.page(page), $0) } }))
             scored.append((.actions, actions.compactMap { action in score(query.words, [action.title], also: action.keywords).map { (.action(action), $0) } }))

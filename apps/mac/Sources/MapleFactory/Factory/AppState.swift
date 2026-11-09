@@ -1166,6 +1166,8 @@ final class AppState {
     }
     /// The highlighted row, an index into `paletteItems`.
     var paletteSelection = 0
+    /// ⌘K's "New doc": the Docs page opens its New doc sheet.
+    var creatingDoc = false
     /// Opens the Settings window; set by the view that can (AppState has no `openSettings`).
     @ObservationIgnored var openSettings: (() -> Void)? = nil
 
@@ -1175,7 +1177,11 @@ final class AppState {
         let pages = PalettePage.all.filter { $0.destination != .statistics || client?.canSeeStats ?? true }
         // The task panel can only be toggled with "Peek in the side panel" on.
         let actions = PaletteAction.allCases.filter { $0 != .toggleTaskPanel || taskPanelEnabled }
-        return CommandPaletteModel.results(query: paletteQuery, tasks: tasks, goals: goals, pages: pages, actions: actions, me: FactoryData.me.id)
+        let docs = client.map { client in
+            DocsIndex.docs(client).map { PaletteDoc(id: $0.id, title: $0.title, goal: DocsIndex.goalName($0.goal, client: client)) }
+        } ?? []
+        return CommandPaletteModel.results(query: paletteQuery, tasks: tasks, goals: goals, pages: pages, actions: actions, docs: docs,
+                                           me: FactoryData.me.id)
     }
     var paletteItems: [PaletteItem] { CommandPaletteModel.flatten(paletteSections) }
 
@@ -1206,6 +1212,8 @@ final class AppState {
         case .page(let page): destination = page.destination
         case .action(.newTask): startCompose()
         case .action(.newGoal): goalSheet = .new
+        case .action(.newDoc): destination = .docs; creatingDoc = true
+        case .doc(let id): destination = .doc(id)
         case .action(.toggleSidebar): toggleSidebar()
         case .action(.toggleTaskPanel): toggleTaskPanel()
         case .action(.settings): openSettings?()
