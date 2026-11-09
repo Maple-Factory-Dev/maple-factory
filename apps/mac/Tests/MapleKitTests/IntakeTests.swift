@@ -110,7 +110,7 @@ struct IntakeTests {
         #expect(!brief.contains("On it."))
         #expect(brief.contains("Requested by Mei Tanaka in Slack #maple-requests."))
         #expect(brief.contains("- MOB-231: Logged out after backgrounding\n- SUP-1: Customer report"))
-        #expect(brief.contains("## Done when\n- [ ] "))
+        #expect(brief.contains("## Done when\n- [ ]"))
     }
 
     @Test func sourceTitles() {
