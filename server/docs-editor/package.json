@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "The web docs editor (TipTap + Yjs). Bundled into server/web/app/docs/editor.bundle.js by scripts/build-docs-editor.mjs.",
+  "scripts": {
+    "test": "node --test ../test/docs-markdown.test.ts"
+  },
   "dependencies": {
     "@tiptap/core": "^3",
     "@tiptap/pm": "^3",
