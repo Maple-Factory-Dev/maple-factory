@@ -152,6 +152,22 @@ enum class Role(val raw: String) {
     object Serializer : WireEnumSerializer<Role>("Role", entries, { it.raw }, Unknown)
 }
 
+/** Where a suggested doc edit stands. */
+@Serializable(with = DocSuggestionStatus.Serializer::class)
+enum class DocSuggestionStatus(val raw: String) {
+    /** Waiting for a person. */
+    Open("open"),
+    /** Accepted: the doc's text was replaced. */
+    Accepted("accepted"),
+    /** Rejected: the doc is unchanged. */
+    Rejected("rejected"),
+    /** A value this build doesn't know yet; newer servers may send them. */
+    Unknown("unknown"),
+    ;
+
+    object Serializer : WireEnumSerializer<DocSuggestionStatus>("DocSuggestionStatus", entries, { it.raw }, Unknown)
+}
+
 /** githubstatus.com's overall indicator. */
 @Serializable(with = GitHubIndicator.Serializer::class)
 enum class GitHubIndicator(val raw: String) {
@@ -2054,6 +2070,19 @@ data class DocComment(
     val at: Long,
     /** Members it @mentions (never the author). */
     val mentions: List<String>? = null,
+    /** Set when an agent wrote it, e.g. "MF-365 builder": shown as an agent badge. */
+    val agent: String? = null,
+)
+
+/** A proposed replacement for a thread's anchored text (MF-365): a person accepts or rejects it in the editor; agents never edit doc text directly. */
+@Serializable
+data class DocSuggestion(
+    /** Markdown that replaces the anchored text (empty: a deletion). */
+    val replacement: String,
+    val status: DocSuggestionStatus,
+    /** Who accepted or rejected it. */
+    val decidedBy: String? = null,
+    val decidedAt: Long? = null,
 )
 
 /** A comment thread anchored to text in a shared doc. */
@@ -2069,6 +2098,8 @@ data class DocThread(
     val resolvedAt: Long? = null,
     val createdBy: String,
     val createdAt: Long,
+    /** Set when the thread is a suggested edit (a tracked change) rather than a plain comment. */
+    val suggestion: DocSuggestion? = null,
 )
 
 /** Someone with the app open, and the task they're looking at. */
@@ -3369,6 +3400,13 @@ sealed class ClientMessage {
         val doc: String,
         val thread: String,
     ) : ClientMessage()
+    /** Accept or reject a suggested edit; accepting replaces the anchored text in the doc. */
+    @Serializable
+    data class DocSuggestion(
+        val doc: String,
+        val thread: String,
+        val accept: Boolean,
+    ) : ClientMessage()
     /** Ask for a doc's comment threads; answered with `doc.threads` to this connection. */
     @Serializable
     data class DocThreads(
@@ -3943,6 +3981,7 @@ sealed class ClientMessage {
             "doc.comment" -> json.decodeFromJsonElement(DocComment.serializer(), body)
             "doc.resolve" -> json.decodeFromJsonElement(DocResolve.serializer(), body)
             "doc.reopen" -> json.decodeFromJsonElement(DocReopen.serializer(), body)
+            "doc.suggestion" -> json.decodeFromJsonElement(DocSuggestion.serializer(), body)
             "doc.threads" -> json.decodeFromJsonElement(DocThreads.serializer(), body)
             "presence" -> json.decodeFromJsonElement(Presence.serializer(), body)
             "session.open" -> json.decodeFromJsonElement(SessionOpen.serializer(), body)
@@ -4046,6 +4085,7 @@ sealed class ClientMessage {
             is DocComment -> "doc.comment" to json.encodeToJsonElement(DocComment.serializer(), value)
             is DocResolve -> "doc.resolve" to json.encodeToJsonElement(DocResolve.serializer(), value)
             is DocReopen -> "doc.reopen" to json.encodeToJsonElement(DocReopen.serializer(), value)
+            is DocSuggestion -> "doc.suggestion" to json.encodeToJsonElement(DocSuggestion.serializer(), value)
             is DocThreads -> "doc.threads" to json.encodeToJsonElement(DocThreads.serializer(), value)
             is Presence -> "presence" to json.encodeToJsonElement(Presence.serializer(), value)
             is SessionOpen -> "session.open" to json.encodeToJsonElement(SessionOpen.serializer(), value)

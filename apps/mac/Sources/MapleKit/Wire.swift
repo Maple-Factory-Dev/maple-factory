@@ -264,6 +264,51 @@ public enum Wire {
         public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
+    /// Where a suggested doc edit stands.
+    public enum DocSuggestionStatus: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// Waiting for a person.
+        case open
+        /// Accepted: the doc's text was replaced.
+        case accepted
+        /// Rejected: the doc is unchanged.
+        case rejected
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [DocSuggestionStatus] = [.open, .accepted, .rejected]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "open": self = .open
+            case "accepted": self = .accepted
+            case "rejected": self = .rejected
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .open: "open"
+            case .accepted: "accepted"
+            case .rejected: "rejected"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: DocSuggestionStatus, b: DocSuggestionStatus) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
     /// githubstatus.com's overall indicator.
     public enum GitHubIndicator: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// All systems operational.
@@ -4497,13 +4542,33 @@ public enum Wire {
         public var at: UInt64
         /// Members it @mentions (never the author).
         public var mentions: [String]?
+        /// Set when an agent wrote it, e.g. "MF-365 builder": shown as an agent badge.
+        public var agent: String?
 
-        public init(id: String, author: String, text: String, at: UInt64, mentions: [String]? = nil) {
+        public init(id: String, author: String, text: String, at: UInt64, mentions: [String]? = nil, agent: String? = nil) {
             self.id = id
             self.author = author
             self.text = text
             self.at = at
             self.mentions = mentions
+            self.agent = agent
+        }
+    }
+
+    /// A proposed replacement for a thread's anchored text (MF-365): a person accepts or rejects it in the editor; agents never edit doc text directly.
+    public struct DocSuggestion: Codable, Hashable, Sendable {
+        /// Markdown that replaces the anchored text (empty: a deletion).
+        public var replacement: String
+        public var status: DocSuggestionStatus
+        /// Who accepted or rejected it.
+        public var decidedBy: String?
+        public var decidedAt: UInt64?
+
+        public init(replacement: String, status: DocSuggestionStatus, decidedBy: String? = nil, decidedAt: UInt64? = nil) {
+            self.replacement = replacement
+            self.status = status
+            self.decidedBy = decidedBy
+            self.decidedAt = decidedAt
         }
     }
 
@@ -4519,8 +4584,10 @@ public enum Wire {
         public var resolvedAt: UInt64?
         public var createdBy: String
         public var createdAt: UInt64
+        /// Set when the thread is a suggested edit (a tracked change) rather than a plain comment.
+        public var suggestion: DocSuggestion?
 
-        public init(id: String, doc: String, anchor: DocAnchor? = nil, comments: [DocComment] = [], resolved: Bool? = nil, resolvedBy: String? = nil, resolvedAt: UInt64? = nil, createdBy: String, createdAt: UInt64) {
+        public init(id: String, doc: String, anchor: DocAnchor? = nil, comments: [DocComment] = [], resolved: Bool? = nil, resolvedBy: String? = nil, resolvedAt: UInt64? = nil, createdBy: String, createdAt: UInt64, suggestion: DocSuggestion? = nil) {
             self.id = id
             self.doc = doc
             self.anchor = anchor
@@ -4530,6 +4597,7 @@ public enum Wire {
             self.resolvedAt = resolvedAt
             self.createdBy = createdBy
             self.createdAt = createdAt
+            self.suggestion = suggestion
         }
 
         public init(from decoder: Decoder) throws {
@@ -4543,6 +4611,7 @@ public enum Wire {
             resolvedAt = try c.decodeIfPresent(UInt64.self, forKey: .resolvedAt)
             createdBy = try c.decode(String.self, forKey: .createdBy)
             createdAt = try c.decode(UInt64.self, forKey: .createdAt)
+            suggestion = try c.decodeIfPresent(DocSuggestion.self, forKey: .suggestion)
         }
     }
 
@@ -7075,6 +7144,19 @@ public enum Wire {
         }
     }
 
+    /// Accept or reject a suggested edit; accepting replaces the anchored text in the doc.
+    public struct ClientMessageDocSuggestion: Codable, Hashable, Sendable {
+        public var doc: String
+        public var thread: String
+        public var accept: Bool
+
+        public init(doc: String, thread: String, accept: Bool) {
+            self.doc = doc
+            self.thread = thread
+            self.accept = accept
+        }
+    }
+
     /// Ask for a doc's comment threads; answered with `doc.threads` to this connection.
     public struct ClientMessageDocThreads: Codable, Hashable, Sendable {
         public var doc: String
@@ -8150,6 +8232,7 @@ public enum Wire {
         case docComment(ClientMessageDocComment)
         case docResolve(ClientMessageDocResolve)
         case docReopen(ClientMessageDocReopen)
+        case docSuggestion(ClientMessageDocSuggestion)
         case docThreads(ClientMessageDocThreads)
         case presence(ClientMessagePresence)
         case sessionOpen(ClientMessageSessionOpen)
@@ -8257,6 +8340,7 @@ public enum Wire {
             case "doc.comment": self = .docComment(try ClientMessageDocComment(from: decoder))
             case "doc.resolve": self = .docResolve(try ClientMessageDocResolve(from: decoder))
             case "doc.reopen": self = .docReopen(try ClientMessageDocReopen(from: decoder))
+            case "doc.suggestion": self = .docSuggestion(try ClientMessageDocSuggestion(from: decoder))
             case "doc.threads": self = .docThreads(try ClientMessageDocThreads(from: decoder))
             case "presence": self = .presence(try ClientMessagePresence(from: decoder))
             case "session.open": self = .sessionOpen(try ClientMessageSessionOpen(from: decoder))
@@ -8385,6 +8469,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .docReopen(let body):
                 try c.encode("doc.reopen", forKey: .type)
+                try body.encode(to: encoder)
+            case .docSuggestion(let body):
+                try c.encode("doc.suggestion", forKey: .type)
                 try body.encode(to: encoder)
             case .docThreads(let body):
                 try c.encode("doc.threads", forKey: .type)
