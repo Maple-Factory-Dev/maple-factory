@@ -101,7 +101,7 @@ export class Integrations {
         enabled: this.enabled(def, row, { ...env, ...stored }),
         values,
         fromEnv: def.fields.filter((f) => !stored?.[f.name] && env[f.name]).map((f) => f.name),
-        webhookUrl: base + def.webhookPath,
+        webhookUrl: def.webhookPath ? base + def.webhookPath : "",
         setupUrl: base && def.setupUrl ? def.setupUrl(base) : null,
         status: status(def.kind, values),
         lastEventAt: row?.last_event_at ?? null,
