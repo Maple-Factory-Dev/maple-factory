@@ -16,6 +16,8 @@ final class FactoryStore {
     }
 
     private(set) var status: Status = .signedOut
+    /// While reconnecting, a short label for why (ConnectionTrouble.headline): "Offline" or "Can't reach factory".
+    private(set) var troubleHeadline = ConnectionTrouble.unreachable
     private(set) var feed = FeedState()
     private(set) var server: URL?
     private(set) var token: String?
@@ -77,6 +79,8 @@ final class FactoryStore {
     @ObservationIgnored private var socket: URLSessionWebSocketTask?
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var attempt = 0
+    /// The backoff wait before the next connect(), cancelled by reconnectNow().
+    @ObservationIgnored private var backoff: Task<Void, Never>?
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let keychain: Keychain
 
@@ -221,7 +225,7 @@ final class FactoryStore {
                     notice = .error("Your sign-in expired.")
                     return
                 }
-                retry(reason: FactoryAPI.describe(error, response: socket.response))
+                retry(reason: FactoryAPI.describe(error, response: socket.response), headline: ConnectionTrouble.headline(for: error))
                 return
             }
         }
@@ -237,15 +241,30 @@ final class FactoryStore {
     }
 
     /// Tries again after 2, 4, 8… seconds, at most 30.
-    private func retry(reason: String) {
+    private func retry(reason: String, headline: String) {
         attempt += 1
+        troubleHeadline = headline
         status = .reconnecting(attempt: attempt, reason: reason)
         let delay = min(pow(2, Double(min(attempt, 5))), 30)
         let gen = generation
-        Task {
+        backoff?.cancel()
+        backoff = Task {
             try? await Task.sleep(for: .seconds(delay))
-            if gen == generation { connect() }
+            if !Task.isCancelled, gen == generation { connect() }
         }
+    }
+
+    /// The connection pill's Try now: skips the rest of the backoff wait and connects straight away.
+    func reconnectNow() {
+        backoff?.cancel()
+        backoff = nil
+        if case .reconnecting(let attempt, let reason) = status, server == nil {
+            // The demo (`-demoConnection`) has nothing to connect to: count the attempt so the pill moves.
+            self.attempt = attempt + 1
+            status = .reconnecting(attempt: self.attempt, reason: reason)
+            return
+        }
+        connect()
     }
 
     /// One message from the feed.
@@ -854,6 +873,16 @@ final class FactoryStore {
         pushDeviceID = DemoData.thisPhone.id
         pushEnvironment = DemoData.thisPhone.environment
         pushDevices = DemoData.pushDevices
+        // `-demoConnection offline|unreachable`: the connection pill as if the socket had dropped (ConnectionBarTests).
+        switch UserDefaults.standard.string(forKey: "demoConnection") {
+        case "offline":
+            troubleHeadline = ConnectionTrouble.offline
+            status = .reconnecting(attempt: 1, reason: "The operation couldn’t be completed. Socket is not connected")
+        case "unreachable":
+            troubleHeadline = ConnectionTrouble.unreachable
+            status = .reconnecting(attempt: 3, reason: "Can't reach the factory.")
+        default: break
+        }
     }
 
     /// The demo answers actions itself, the way a factory would.
@@ -1359,5 +1388,28 @@ extension Wire.Task {
     /// A goal's drafts, first first.
     static func draftOrder(_ a: Wire.Task, _ b: Wire.Task) -> Bool {
         (a.draftOrderRank, a.id) < (b.draftOrderRank, b.id)
+    }
+}
+
+/// Short labels for why the feed's socket is down, for the connection pill (ConnectionBar). The raw
+/// reason stays on `.reconnecting` for the pill's popover.
+enum ConnectionTrouble {
+    static let offline = "Offline"
+    static let unreachable = "Can't reach factory"
+
+    /// "Offline" when the device itself has no network, "Can't reach factory" for anything else.
+    static func headline(for error: Error) -> String {
+        let ns = error as NSError
+        switch (ns.domain, ns.code) {
+        case (NSURLErrorDomain, NSURLErrorNotConnectedToInternet),
+             (NSURLErrorDomain, NSURLErrorNetworkConnectionLost),
+             (NSURLErrorDomain, NSURLErrorDataNotAllowed),
+             (NSPOSIXErrorDomain, Int(ENOTCONN)),
+             (NSPOSIXErrorDomain, Int(ENETDOWN)):
+            return offline
+        default:
+            if let underlying = ns.userInfo[NSUnderlyingErrorKey] as? Error { return headline(for: underlying) }
+            return unreachable
+        }
     }
 }
