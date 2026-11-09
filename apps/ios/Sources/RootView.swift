@@ -79,6 +79,8 @@ struct RootView: View {
             case .session(let machine, let id):
                 tab = .machines
                 machinesPath = NavigationPath([SessionRoute(machine: machine, session: id)])
+            case .doc:
+                break // Planning docs (MF-362) have no iPhone view yet; the link just opens the app.
             }
         }
         // Live, who you are arrives with the snapshot, after the first appearance.
