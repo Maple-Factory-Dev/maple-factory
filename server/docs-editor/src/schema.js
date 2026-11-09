@@ -5,6 +5,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { TaskList, TaskItem } from "@tiptap/extension-list";
 import Mention from "@tiptap/extension-mention";
 import { visualExtensions } from "./nodes.js";
+import { DocCodeBlock } from "./codeblock.js";
 
 /** `MF-12`, the shape of a task id. */
 export const TASK_ID = /[A-Z][A-Z0-9]{0,9}-\d{1,6}/;
@@ -48,7 +49,9 @@ export const TaskRef = Node.create({
 export function schemaExtensions({ mention = {}, taskRef = {}, host = null } = {}) {
   return [
     // Undo/redo comes from the Collaboration extension (y-prosemirror's), not ProseMirror history.
-    StarterKit.configure({ undoRedo: false, link: { openOnClick: false, autolink: true } }),
+    StarterKit.configure({ undoRedo: false, codeBlock: false, link: { openOnClick: false, autolink: true } }),
+    // Fenced code with highlighting and a language picker (MF-384); still the `codeBlock` node.
+    DocCodeBlock,
     TaskList,
     TaskItem.configure({ nested: true }),
     Mention.configure({
