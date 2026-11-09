@@ -43,6 +43,7 @@ enum DemoData {
             Wire.Goal(id: "g-onb", name: "Onboarding", prefix: "ONB", color: "#8E5BD8", summary: "A first run that gets a new teammate to their first merged task.", lead: me, repo: "acme/app", repos: ["acme/app", "acme/web"], team: "mobile"),
         ]
         feed.tasks = tasks()
+        feed.intake = intake()
         // Low-risk work merges on its own; Kit let the Public API auto-merge up to low.
         feed.policy = Wire.RiskPolicy(maxFiles: 20, maxLines: 400, planApprovals: ["low": 1, "medium": 1, "high": 2], finalReviews: ["low": 0, "medium": 1, "high": 2],
                                       autoMerge: ["low": true, "medium": false, "high": false], autoMerges: UserDefaults.standard.string(forKey: "demoAutoMerges") != "off")
@@ -53,6 +54,48 @@ enum DemoData {
         feed.serverVersion = "0.51.0"
         feed.hasSnapshot = true
         return feed
+    }
+
+    /// Requests from Slack, Linear and Jira waiting to be triaged, and one that already became a task.
+    static func intake() -> [Wire.IntakeRequest] {
+        func ticket(_ system: String, _ key: String, _ title: String, _ status: String) -> Wire.TicketLink {
+            Wire.TicketLink(system: system, key: key, title: title, status: status, asContext: true)
+        }
+        return [
+            Wire.IntakeRequest(
+                id: "req-mobile-logout", source: "slack", channel: "#maple-requests", requester: "Mei Tanaka",
+                title: "iOS app logs people out after about an hour in the background", at: ago(6),
+                thread: [
+                    .init(author: "Mei Tanaka", text: "@maple the iOS app logs people out after ~1h in the background. Repro and logs are in MOB-231. Can someone take a look?", at: ago(6), bot: false),
+                    .init(author: "maple", text: "On it. This looks related to APP-12. I can add MOB-231 to that task, or open a new one.", at: ago(6), bot: true),
+                ],
+                tickets: [ticket("linear", "MOB-231", "Users logged out after backgrounding the app", "Triage"),
+                          ticket("linear", "MOB-198", "Silent refresh fails on flaky networks", "Backlog")],
+                status: "new", suggestedGoal: "g-app", relatedTask: "APP-12",
+                gaps: ["Which app versions are affected", "Whether Android sees it too"]),
+            Wire.IntakeRequest(
+                id: "req-rate-limits", source: "linear", requester: "Sam Rivera", title: "Rate limits for the public API", at: ago(40),
+                thread: [
+                    .init(author: "Sam Rivera", text: "Two customers hammered /v2/projects last week and slowed everyone down. We need rate limits before the launch.", at: ago(60), bot: false),
+                    .init(author: "maple", text: "Should limits apply per API key or per org?", at: ago(40), bot: true),
+                ],
+                tickets: [ticket("linear", "ENG-412", "Rate limits for the public API", "Todo")],
+                status: "clarifying", suggestedGoal: "g-api", gaps: ["Per key or per org"]),
+            Wire.IntakeRequest(
+                id: "req-invoice-pdf", source: "jira", requester: "Sam Rivera", title: "Customers can't download invoice PDFs over 10 MB", at: ago(120),
+                thread: [.init(author: "Sam Rivera", text: "Three enterprise customers can't download their annual invoices. The PDF request times out after 30s once the file is over ~10 MB.", at: ago(120), bot: false)],
+                tickets: [ticket("jira", "SUP-1182", "Invoice PDF download times out", "Open"),
+                          ticket("jira", "SUP-1190", "Annual invoice won't download (Acme)", "Open"),
+                          ticket("jira", "SUP-1194", "Large invoice PDF error", "Open")],
+                status: "new", suggestedGoal: "g-web"),
+            Wire.IntakeRequest(
+                id: "req-welcome-cropped", source: "slack", channel: "#design", requester: "Kit Okafor", title: "Welcome screen is cropped on small phones", at: ago(60 * 26),
+                thread: [
+                    .init(author: "Kit Okafor", text: "@maple the welcome screen cuts off the Continue button on an iPhone SE.", at: ago(60 * 26), bot: false),
+                    .init(author: "maple", text: "Tracking this as ONB-3. I'll post questions here.", at: ago(60 * 25), bot: true),
+                ],
+                status: "accepted", taskId: "ONB-3", suggestedGoal: "g-onb"),
+        ]
     }
 
     /// Three on Mobile app (yours to change): one paused with a last run, and a one-off (`once`) tomorrow at 9:00;

@@ -51,6 +51,10 @@ struct RootView: View {
             } else if UserDefaults.standard.bool(forKey: "usage") {
                 tab = .settings
                 settingsPath.append(UsageRoute())
+            } else if tab == .inbox, let intake = UserDefaults.standard.string(forKey: "intake") {
+                // `-tab inbox -intake <id>` opens that request; `-intake list` the Requests list.
+                inboxPath.append(IntakeRoute())
+                if intake != "list" { inboxPath.append(IntakeRequestRoute(id: intake)) }
             } else if let id = UserDefaults.standard.string(forKey: "task"), store.feed.task(id) != nil {
                 if tab == .goals, let goal = store.feed.task(id)?.goal {
                     goalsPath.append(GoalRoute(id: goal))
@@ -98,6 +102,8 @@ extension View {
             .navigationDestination(for: GoalRoute.self) { GoalView(id: $0.id) }
             .navigationDestination(for: SessionRoute.self) { SessionTerminalView(machineID: $0.machine, sessionID: $0.session) }
             .navigationDestination(for: ActivityRoute.self) { _ in ActivityView() }
+            .navigationDestination(for: IntakeRoute.self) { _ in IntakeListView() }
+            .navigationDestination(for: IntakeRequestRoute.self) { IntakeDetailView(id: $0.id) }
     }
 }
 
@@ -246,6 +252,24 @@ struct InboxView: View {
             .overlay { if !store.feed.hasSnapshot { ProgressView() } }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink(value: IntakeRoute()) {
+                        Image(systemName: "tray.and.arrow.down")
+                            .overlay(alignment: .topTrailing) {
+                                if store.unansweredIntake > 0 {
+                                    Text("\(store.unansweredIntake)")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundStyle(.white)
+                                        .padding(.horizontal, 4)
+                                        .frame(minWidth: 15, minHeight: 15)
+                                        .background(Theme.accent, in: Capsule())
+                                        .offset(x: 9, y: -7)
+                                }
+                            }
+                    }
+                    .accessibilityLabel("Requests")
+                    .accessibilityIdentifier("inbox.requests")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     NavigationLink(value: ActivityRoute()) { Label("Activity", systemImage: "clock.arrow.circlepath") }
                         .accessibilityIdentifier("inbox.activity")
                 }
@@ -264,6 +288,14 @@ struct InboxView: View {
             }
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)
+
+            if store.unansweredIntake > 0 {
+                NavigationLink(value: IntakeRoute()) {
+                    Label("\(store.unansweredIntake) new request\(store.unansweredIntake == 1 ? "" : "s")", systemImage: "tray.and.arrow.down.fill")
+                        .foregroundStyle(Theme.accent)
+                }
+                .accessibilityIdentifier("inbox.newRequests")
+            }
 
             let all = entries
             if all.isEmpty, store.feed.hasSnapshot {
