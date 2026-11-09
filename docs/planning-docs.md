@@ -87,7 +87,7 @@ opens one. One editor, one sync path, no native CRDT.
   like a bearer token (revoked or expired tokens get 401), and DocHub echoes `maple-token`.
 - **Embed bridge** (`/app/docs/embed.html`, for a WKWebView; `frame-ancestors 'none'` means it isn't iframable):
   `window.mapleDocs.load({ docId, token, me, members, tasks })`, `setTheme('light'|'dark')`, `exportMarkdown()`,
-  `destroy()`. Events `ready`, `status`, `peers`, `synced`, `theme`, `error`, `openTask` are posted to
+  `focus()` (caret at the end of the doc), `destroy()`. Events `ready`, `status`, `peers`, `synced`, `theme`, `error`, `openTask` are posted to
   `window.webkit.messageHandlers.maple` if it exists, otherwise to `window.parent`, and logged as `[maple-docs]`.
 
 ## In the Mac app (MF-362)
@@ -101,6 +101,11 @@ opens one. One editor, one sync path, no native CRDT.
   typed argument, so the token is never in a URL (each load and navigation is logged as `[docs] load|navigate <url>`).
   It calls `setTheme` when the app's appearance changes, opens `openTask` natively, shows `status`/`synced`/`peers`
   in a title bar, and shows `error` with a Retry. Navigation stays on the embed's origin; other links go to NSWorkspace.
+- **New docs open ready to type (MF-382):** the editor's Placeholder extension marks an empty doc's paragraph
+  `is-editor-empty` (the "Type / for blocks…" hint), and on the first `sync` an empty Yjs fragment gets one empty
+  paragraph (`ensureStarterBlock`). `FactoryClient.createDoc` remembers the title; the `doc.updated` whose
+  `createdBy` is me and whose title matches opens that doc (like the web's `pendingCreate`), and on its `synced`
+  `DocEditorView` makes the WKWebView first responder and calls `mapleDocs.focus()`.
 - **Demo mode:** `createDocEditor({ demo: { markdown } })` seeds the Y.Doc from Markdown (`seedFromMarkdown`), uses a
   local Awareness with no socket, and posts `synced`. `scripts/build-docs-editor.mjs` copies embed.html, the bundle
   and the CSS into `apps/mac/Sources/MapleFactory/Resources/DocsEmbed` (checked by `gen:check`). Signed out, the app
