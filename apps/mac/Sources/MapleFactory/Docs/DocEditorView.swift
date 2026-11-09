@@ -35,6 +35,10 @@ struct DocEditorView: NSViewRepresentable {
     let status: DocEditorStatus
     /// Bumped by Retry to reload the page.
     let reloadToken: Int
+    /// Put the caret in the doc once it syncs (MF-382): a doc we just created opens ready to type.
+    var focusOnSync = false
+    /// Called after that focus, so it happens once.
+    var onFocused: () -> Void = {}
     /// The embed's `command` events (doc.comment / doc.resolve / doc.reopen), for the app's socket.
     var onCommand: ([String: Any]) -> Void = { _ in }
     let openTask: (String) -> Void
@@ -123,6 +127,13 @@ struct DocEditorView: NSViewRepresentable {
                                      in: nil, in: .page) { _ in }
         }
 
+        /// Makes the page first responder and puts the caret at the end of the doc, so typing works without a click.
+        func focusEditor() {
+            guard let web else { return }
+            web.window?.makeFirstResponder(web)
+            web.callAsyncJavaScript("window.mapleDocs?.focus()", arguments: [:], in: nil, in: .page) { _ in }
+        }
+
         func pushThreads() {
             guard let view else { return }
             web?.callAsyncJavaScript("window.mapleDocs?.updateThreads(JSON.parse(json))", arguments: ["json": view.threadsJSON],
@@ -147,7 +158,9 @@ struct DocEditorView: NSViewRepresentable {
             switch type {
             case "ready": load()
             case "status": view.status.status = body["status"] as? String ?? view.status.status
-            case "synced": view.status.synced = true; view.status.error = nil
+            case "synced":
+                view.status.synced = true; view.status.error = nil
+                if view.focusOnSync { focusEditor(); view.onFocused() }
             case "peers":
                 let peers = (body["peers"] as? [[String: Any]]) ?? []
                 view.status.peers = peers.compactMap { p in

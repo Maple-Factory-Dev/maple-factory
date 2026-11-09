@@ -407,7 +407,18 @@ final class AppState {
 
     /// The connected factory. Signed in, tasks and goals are its, and actions go to it; otherwise
     /// everything here is the design mockup's.
-    var client: FactoryClient?
+    var client: FactoryClient? {
+        didSet { client?.onDocCreated = { [weak self] id in self?.openCreatedDoc(id) } }
+    }
+    /// A doc to focus once its editor syncs (MF-382): the one we just created, so it opens ready to type.
+    var focusDoc: String?
+
+    /// Opens a doc we just created, with the caret in it.
+    func openCreatedDoc(_ id: String) {
+        focusDoc = id
+        closeFocus()
+        destination = .doc(id)
+    }
     var isLive: Bool { client?.isSignedIn == true }
     /// Signed in, but the factory's first snapshot hasn't landed: show the loader, not the mock's goal.
     var isLoadingFactory: Bool { Self.isLoading(signedIn: client?.isSignedIn == true, hasSnapshot: client?.hasSnapshot == true) }
