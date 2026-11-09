@@ -2280,6 +2280,55 @@ pub struct Doc {
     /// An emoji or SF Symbol name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+    /// Comment threads on it not yet resolved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_threads: Option<u32>,
+}
+
+/// Where a comment thread sits in a doc's text: two Yjs relative positions on its `prosemirror` fragment, so concurrent edits move it with the text. Opaque to the server.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocAnchor {
+    /// Base64 Y.RelativePosition of the range's start.
+    pub from: String,
+    /// Base64 Y.RelativePosition of the range's end.
+    pub to: String,
+    /// The text selected when the thread started.
+    pub quote: String,
+}
+
+/// One comment in a doc's thread.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocComment {
+    pub id: Uuid,
+    pub author: String,
+    pub text: String,
+    pub at: u64,
+    /// Members it @mentions (never the author).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mentions: Option<Vec<String>>,
+}
+
+/// A comment thread anchored to text in a shared doc.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocThread {
+    pub id: Uuid,
+    pub doc: Uuid,
+    /// None: a comment on the whole doc.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<DocAnchor>,
+    #[serde(default)]
+    pub comments: Vec<DocComment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_at: Option<u64>,
+    pub created_by: String,
+    pub created_at: u64,
 }
 
 /// Someone with the app open, and the task they're looking at.
@@ -3604,6 +3653,32 @@ pub enum ClientMessage {
         id: Uuid,
         archived: bool,
     },
+    /// Comment on a doc: start a thread on an anchored range, or reply to one (a reply reopens a resolved thread).
+    #[serde(rename = "doc.comment")]
+    DocComment {
+        doc: Uuid,
+        /// None: start a new thread (then `anchor` is required).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thread: Option<Uuid>,
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        anchor: Option<DocAnchor>,
+    },
+    #[serde(rename = "doc.resolve")]
+    DocResolve {
+        doc: Uuid,
+        thread: Uuid,
+    },
+    #[serde(rename = "doc.reopen")]
+    DocReopen {
+        doc: Uuid,
+        thread: Uuid,
+    },
+    /// Ask for a doc's comment threads; answered with `doc.threads` to this connection.
+    #[serde(rename = "doc.threads")]
+    DocThreads {
+        doc: Uuid,
+    },
     /// The task this app is showing, if any, for teammates' presence.
     #[serde(rename = "presence")]
     Presence {
@@ -4379,6 +4454,18 @@ pub enum ServerToClient {
     #[serde(rename = "doc.removed")]
     DocRemoved {
         id: Uuid,
+    },
+    /// A doc's comment threads, to the connection that asked.
+    #[serde(rename = "doc.threads")]
+    DocThreads {
+        doc: Uuid,
+        #[serde(default)]
+        threads: Vec<DocThread>,
+    },
+    /// A doc comment thread changed, to every member.
+    #[serde(rename = "doc.thread.updated")]
+    DocThreadUpdated {
+        thread: DocThread,
     },
     /// Your draft, to your apps only.
     #[serde(rename = "draft.updated")]

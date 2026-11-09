@@ -27,7 +27,9 @@ struct FactorySidebar: View {
                     .contextMenu { NotificationMenu() }
                 navRow("Activity", icon: "waveform.path.ecg", destination: .activity)
                 navRow("Scratchpad", icon: "note.text", destination: .scratchpad, count: "\(state.notes.count)")
-                navRow("Docs", icon: "doc.richtext", destination: .docs, count: "\(DocsIndex.docs(client).count)")
+                navRow("Docs", icon: "doc.richtext", destination: .docs,
+                       badge: client.isSignedIn ? FeedState.openThreadTotal(client.docs).nonZeroBadge : nil,
+                       count: "\(DocsIndex.docs(client).count)")
                 navRow("Usage", icon: "gauge.with.dots.needle.33percent", destination: .usage)
                 if client.canSeeStats {
                     navRow("Statistics", icon: "chart.bar.xaxis", destination: .statistics)

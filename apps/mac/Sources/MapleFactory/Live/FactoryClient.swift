@@ -62,6 +62,8 @@ import Foundation
     private(set) var notes: [Note] = []
     /// Shared planning docs' index (docs/planning-docs.md), archived ones included; see `FeedState.activeDocs`.
     private(set) var docs: [Wire.Doc] = []
+    /// Comment threads of docs we've opened (MF-364), by doc id.
+    private(set) var docThreads: [String: [Wire.DocThread]] = [:]
     /// Your Draft with AI runs, by id.
     private(set) var drafts: [String: Wire.Draft] = [:]
     /// Goals you chose to follow (true) or stop following (false), by id.
@@ -326,6 +328,7 @@ import Foundation
         intakeRequests = []
         notes = []
         docs = []
+        docThreads = [:]
         drafts = [:]
         follows = [:]
         quietHours = nil
@@ -662,6 +665,8 @@ import Foundation
             store(for: batch.id).apply(events: batch.events, epoch: batch.epoch)
         case .docUpdated, .docRemoved:
             FeedState.applyDoc(message, to: &docs)
+        case .docThreads, .docThreadUpdated:
+            FeedState.applyThreads(message, to: &docThreads)
         case .pushDevices:
             // Phone push devices: only the iPhone and Android apps register or list them.
             break
@@ -1072,6 +1077,15 @@ import Foundation
     func createDoc(title: String, goal: String?) { send(.docCreate(.init(title: title, goal: goal))) }
     func renameDoc(id: String, title: String) { send(.docRename(.init(id: id, title: title))) }
     func archiveDoc(id: String, archived: Bool = true) { send(.docArchive(.init(id: id, archived: archived))) }
+    /// A doc's comment threads (MF-364): answered with doc.threads, then kept current by doc.thread.updated.
+    func askDocThreads(_ id: String) { send(.docThreads(.init(doc: id))) }
+    /// Relays the docs embed's `command` event: only doc.comment / doc.resolve / doc.reopen get through.
+    func sendDocCommand(_ command: [String: Any]) {
+        guard let type = command["type"] as? String, ["doc.comment", "doc.resolve", "doc.reopen"].contains(type),
+              let data = try? JSONSerialization.data(withJSONObject: command),
+              let message = try? JSONDecoder().decode(Wire.ClientMessage.self, from: data) else { return }
+        send(message)
+    }
 
     /// What the docs editor host needs: the bare embed page (no token, no theme: the host adds `?theme=` so a
     /// theme switch doesn't look like a new page) and the token it hands over through the JS bridge. Nothing

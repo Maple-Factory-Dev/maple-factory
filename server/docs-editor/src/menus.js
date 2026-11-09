@@ -126,7 +126,7 @@ export function mentionSuggestions({ members, tasks }) {
 }
 
 /** The bubble menu's buttons over a text selection. */
-export function bubbleMenuElement(editor) {
+export function bubbleMenuElement(editor, onComment = null) {
   const el = document.createElement("div");
   el.className = "doc-bubble";
   const buttons = [
@@ -146,19 +146,22 @@ export function bubbleMenuElement(editor) {
     { label: "+Col", title: "Add column", table: true, run: (c) => c.addColumnAfter() },
     { label: "−Row", title: "Delete row", table: true, run: (c) => c.deleteRow() },
     { label: "−Col", title: "Delete column", table: true, run: (c) => c.deleteColumn() },
+    // MF-364: start a comment thread on the selection.
+    ...(onComment ? [{ label: "Comment", title: "Comment", comment: true }] : []),
   ].map((b) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.textContent = b.label;
     btn.title = b.title;
     btn.className = `doc-bubble-${b.title.toLowerCase().replace(/\s+/g, "-")}`;
-    btn.addEventListener("mousedown", (e) => { e.preventDefault(); b.run(editor.chain().focus()).run(); });
+    btn.addEventListener("mousedown", (e) => { e.preventDefault(); if (b.comment) onComment(); else b.run(editor.chain().focus()).run(); });
     el.append(btn);
     return { btn, b };
   });
   const sync = () => {
     const inTable = editor.isActive("table");
     buttons.forEach(({ btn, b }) => {
+      if (b.comment) return;
       if (b.table) btn.hidden = !inTable;
       else btn.classList.toggle("on", editor.isActive(...[].concat(b.active)));
     });

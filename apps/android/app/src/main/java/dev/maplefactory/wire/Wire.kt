@@ -2019,6 +2019,45 @@ data class Doc(
     val archived: Boolean? = null,
     /** An emoji or SF Symbol name. */
     val icon: String? = null,
+    /** Comment threads on it not yet resolved. */
+    val openThreads: Long? = null,
+)
+
+/** Where a comment thread sits in a doc's text: two Yjs relative positions on its `prosemirror` fragment, so concurrent edits move it with the text. Opaque to the server. */
+@Serializable
+data class DocAnchor(
+    /** Base64 Y.RelativePosition of the range's start. */
+    val from: String,
+    /** Base64 Y.RelativePosition of the range's end. */
+    val to: String,
+    /** The text selected when the thread started. */
+    val quote: String,
+)
+
+/** One comment in a doc's thread. */
+@Serializable
+data class DocComment(
+    val id: String,
+    val author: String,
+    val text: String,
+    val at: Long,
+    /** Members it @mentions (never the author). */
+    val mentions: List<String>? = null,
+)
+
+/** A comment thread anchored to text in a shared doc. */
+@Serializable
+data class DocThread(
+    val id: String,
+    val doc: String,
+    /** None: a comment on the whole doc. */
+    val anchor: DocAnchor? = null,
+    val comments: List<DocComment> = emptyList(),
+    val resolved: Boolean? = null,
+    val resolvedBy: String? = null,
+    val resolvedAt: Long? = null,
+    val createdBy: String,
+    val createdAt: Long,
 )
 
 /** Someone with the app open, and the task they're looking at. */
@@ -3298,6 +3337,30 @@ sealed class ClientMessage {
         val id: String,
         val archived: Boolean,
     ) : ClientMessage()
+    /** Comment on a doc: start a thread on an anchored range, or reply to one (a reply reopens a resolved thread). */
+    @Serializable
+    data class DocComment(
+        val doc: String,
+        /** None: start a new thread (then `anchor` is required). */
+        val thread: String? = null,
+        val text: String,
+        val anchor: dev.maplefactory.wire.DocAnchor? = null,
+    ) : ClientMessage()
+    @Serializable
+    data class DocResolve(
+        val doc: String,
+        val thread: String,
+    ) : ClientMessage()
+    @Serializable
+    data class DocReopen(
+        val doc: String,
+        val thread: String,
+    ) : ClientMessage()
+    /** Ask for a doc's comment threads; answered with `doc.threads` to this connection. */
+    @Serializable
+    data class DocThreads(
+        val doc: String,
+    ) : ClientMessage()
     /** The task this app is showing, if any, for teammates' presence. */
     @Serializable
     data class Presence(
@@ -3864,6 +3927,10 @@ sealed class ClientMessage {
             "doc.create" -> json.decodeFromJsonElement(DocCreate.serializer(), body)
             "doc.rename" -> json.decodeFromJsonElement(DocRename.serializer(), body)
             "doc.archive" -> json.decodeFromJsonElement(DocArchive.serializer(), body)
+            "doc.comment" -> json.decodeFromJsonElement(DocComment.serializer(), body)
+            "doc.resolve" -> json.decodeFromJsonElement(DocResolve.serializer(), body)
+            "doc.reopen" -> json.decodeFromJsonElement(DocReopen.serializer(), body)
+            "doc.threads" -> json.decodeFromJsonElement(DocThreads.serializer(), body)
             "presence" -> json.decodeFromJsonElement(Presence.serializer(), body)
             "session.open" -> json.decodeFromJsonElement(SessionOpen.serializer(), body)
             "session.attach" -> json.decodeFromJsonElement(SessionAttach.serializer(), body)
@@ -3963,6 +4030,10 @@ sealed class ClientMessage {
             is DocCreate -> "doc.create" to json.encodeToJsonElement(DocCreate.serializer(), value)
             is DocRename -> "doc.rename" to json.encodeToJsonElement(DocRename.serializer(), value)
             is DocArchive -> "doc.archive" to json.encodeToJsonElement(DocArchive.serializer(), value)
+            is DocComment -> "doc.comment" to json.encodeToJsonElement(DocComment.serializer(), value)
+            is DocResolve -> "doc.resolve" to json.encodeToJsonElement(DocResolve.serializer(), value)
+            is DocReopen -> "doc.reopen" to json.encodeToJsonElement(DocReopen.serializer(), value)
+            is DocThreads -> "doc.threads" to json.encodeToJsonElement(DocThreads.serializer(), value)
             is Presence -> "presence" to json.encodeToJsonElement(Presence.serializer(), value)
             is SessionOpen -> "session.open" to json.encodeToJsonElement(SessionOpen.serializer(), value)
             is SessionAttach -> "session.attach" to json.encodeToJsonElement(SessionAttach.serializer(), value)
@@ -4177,6 +4248,17 @@ sealed class ServerToClient {
     data class DocRemoved(
         val id: String,
     ) : ServerToClient()
+    /** A doc's comment threads, to the connection that asked. */
+    @Serializable
+    data class DocThreads(
+        val doc: String,
+        val threads: List<dev.maplefactory.wire.DocThread> = emptyList(),
+    ) : ServerToClient()
+    /** A doc comment thread changed, to every member. */
+    @Serializable
+    data class DocThreadUpdated(
+        val thread: dev.maplefactory.wire.DocThread,
+    ) : ServerToClient()
     /** Your draft, to your apps only. */
     @Serializable
     data class DraftUpdated(
@@ -4360,6 +4442,8 @@ sealed class ServerToClient {
             "note.removed" -> json.decodeFromJsonElement(NoteRemoved.serializer(), body)
             "doc.updated" -> json.decodeFromJsonElement(DocUpdated.serializer(), body)
             "doc.removed" -> json.decodeFromJsonElement(DocRemoved.serializer(), body)
+            "doc.threads" -> json.decodeFromJsonElement(DocThreads.serializer(), body)
+            "doc.thread.updated" -> json.decodeFromJsonElement(DocThreadUpdated.serializer(), body)
             "draft.updated" -> json.decodeFromJsonElement(DraftUpdated.serializer(), body)
             "scout.updated" -> json.decodeFromJsonElement(ScoutUpdated.serializer(), body)
             "recurring.updated" -> json.decodeFromJsonElement(RecurringUpdated.serializer(), body)
@@ -4405,6 +4489,8 @@ sealed class ServerToClient {
             is NoteRemoved -> "note.removed" to json.encodeToJsonElement(NoteRemoved.serializer(), value)
             is DocUpdated -> "doc.updated" to json.encodeToJsonElement(DocUpdated.serializer(), value)
             is DocRemoved -> "doc.removed" to json.encodeToJsonElement(DocRemoved.serializer(), value)
+            is DocThreads -> "doc.threads" to json.encodeToJsonElement(DocThreads.serializer(), value)
+            is DocThreadUpdated -> "doc.thread.updated" to json.encodeToJsonElement(DocThreadUpdated.serializer(), value)
             is DraftUpdated -> "draft.updated" to json.encodeToJsonElement(DraftUpdated.serializer(), value)
             is ScoutUpdated -> "scout.updated" to json.encodeToJsonElement(ScoutUpdated.serializer(), value)
             is RecurringUpdated -> "recurring.updated" to json.encodeToJsonElement(RecurringUpdated.serializer(), value)

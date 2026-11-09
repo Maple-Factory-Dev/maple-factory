@@ -2,7 +2,7 @@
 // the apps see them), the sessions working on them, and per-machine settings. One Durable Object
 // owns it all, so every change is serialized without locks.
 
-import type { Doc, Goal, GoalFollow, Recurring, GoalTally, IntakeRequest, MachineSettings, McpConnector, MergeHold, Note, OrgRepo, PromptAdditions, QuietHours, RepoWorktreeScripts, RiskAcceptance, RiskPolicy, Role, Task, WorktreeScripts } from "../wire.ts";
+import type { Doc, DocThread, Goal, GoalFollow, Recurring, GoalTally, IntakeRequest, MachineSettings, McpConnector, MergeHold, Note, OrgRepo, PromptAdditions, QuietHours, RepoWorktreeScripts, RiskAcceptance, RiskPolicy, Role, Task, WorktreeScripts } from "../wire.ts";
 import { DEFAULT_POLICY } from "./policy.ts";
 import { validateQuietHours } from "../quiet-hours.ts";
 import { inferEvents, type StatEvent } from "./stats.ts";
@@ -146,6 +146,8 @@ export class Store {
       CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, owner TEXT NOT NULL, updated INTEGER NOT NULL, doc TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS notes_owner ON notes (owner, updated);
       CREATE TABLE IF NOT EXISTS docs (id TEXT PRIMARY KEY, goal TEXT, created_by TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, archived INTEGER NOT NULL DEFAULT 0, json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS doc_threads (id TEXT PRIMARY KEY, doc TEXT NOT NULL, updated_at INTEGER NOT NULL, json TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS doc_threads_doc ON doc_threads (doc, updated_at);
       CREATE TABLE IF NOT EXISTS goal_follows (login TEXT NOT NULL, goal TEXT NOT NULL, following INTEGER NOT NULL, PRIMARY KEY (login, goal));
       CREATE TABLE IF NOT EXISTS quiet_hours (login TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS push_devices (
@@ -516,19 +518,28 @@ export class Store {
   // Shared docs (docs/planning-docs.md): the index only; each doc's text is in its DocHub. Org-wide, not per owner.
 
   docs(): Doc[] {
-    return this.sql.exec<{ json: string }>("SELECT json FROM docs ORDER BY updated_at DESC").toArray().map((r) => JSON.parse(r.json));
+    const open = new Map(
+      this.sql.exec<{ doc: string; n: number }>("SELECT doc, COUNT(*) AS n FROM doc_threads WHERE json_extract(json, '$.resolved') IS NOT 1 GROUP BY doc").toArray().map((r) => [r.doc, r.n]),
+    );
+    return this.sql.exec<{ json: string }>("SELECT json FROM docs ORDER BY updated_at DESC").toArray().map((r) => {
+      const d: Doc = JSON.parse(r.json);
+      return { ...d, openThreads: open.get(d.id) || null };
+    });
   }
 
+  /** A doc's index entry, with its open-thread count worked out now. */
   doc(id: string): Doc | null {
     const row = this.sql.exec<{ json: string }>("SELECT json FROM docs WHERE id = ?", id).toArray()[0];
-    return row ? JSON.parse(row.json) : null;
+    if (!row) return null;
+    const d: Doc = JSON.parse(row.json);
+    return { ...d, openThreads: this.openThreadCount(id) || null };
   }
 
   saveDoc(doc: Doc) {
     this.sql.exec(
       `INSERT INTO docs (id, goal, created_by, created_at, updated_at, archived, json) VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (id) DO UPDATE SET goal = excluded.goal, updated_at = excluded.updated_at, archived = excluded.archived, json = excluded.json`,
-      doc.id, doc.goal ?? null, doc.createdBy, doc.createdAt, doc.updatedAt, doc.archived ? 1 : 0, JSON.stringify(doc),
+      doc.id, doc.goal ?? null, doc.createdBy, doc.createdAt, doc.updatedAt, doc.archived ? 1 : 0, JSON.stringify({ ...doc, openThreads: undefined }),
     );
   }
 
@@ -539,6 +550,33 @@ export class Store {
     const touched = { ...doc, updatedAt: Math.max(doc.updatedAt, at) };
     this.saveDoc(touched);
     return touched;
+  }
+
+  // Doc comment threads (MF-364): one JSON row each, anchored by Yjs positions the server never reads.
+
+  threads(docId: string): DocThread[] {
+    return this.sql.exec<{ json: string }>("SELECT json FROM doc_threads WHERE doc = ? ORDER BY updated_at", docId).toArray().map((r) => JSON.parse(r.json));
+  }
+
+  thread(id: string): DocThread | null {
+    const row = this.sql.exec<{ json: string }>("SELECT json FROM doc_threads WHERE id = ?", id).toArray()[0];
+    return row ? JSON.parse(row.json) : null;
+  }
+
+  threadCount(docId: string): number {
+    return this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM doc_threads WHERE doc = ?", docId).toArray()[0]?.n ?? 0;
+  }
+
+  saveThread(t: DocThread) {
+    const at = Math.max(t.createdAt, ...t.comments.map((c) => c.at), t.resolvedAt ?? 0);
+    this.sql.exec(
+      "INSERT INTO doc_threads (id, doc, updated_at, json) VALUES (?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET updated_at = excluded.updated_at, json = excluded.json",
+      t.id, t.doc, at, JSON.stringify(t),
+    );
+  }
+
+  openThreadCount(docId: string): number {
+    return this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM doc_threads WHERE doc = ? AND json_extract(json, '$.resolved') IS NOT 1", docId).toArray()[0]?.n ?? 0;
   }
 
   // Recurring tasks: a goal's saved prompts that start a new task every interval.

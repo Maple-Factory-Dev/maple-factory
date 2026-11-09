@@ -29,10 +29,14 @@ struct DocEditorView: NSViewRepresentable {
     let me: [String: Any]
     let members: [[String: Any]]
     let tasks: [[String: Any]]
+    /// The doc's comment threads, JSON-encoded (MF-364): pushed with `mapleDocs.updateThreads` when they change.
+    var threadsJSON: String = "[]"
     let dark: Bool
     let status: DocEditorStatus
     /// Bumped by Retry to reload the page.
     let reloadToken: Int
+    /// The embed's `command` events (doc.comment / doc.resolve / doc.reopen), for the app's socket.
+    var onCommand: ([String: Any]) -> Void = { _ in }
     let openTask: (String) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -57,8 +61,10 @@ struct DocEditorView: NSViewRepresentable {
         let coordinator = context.coordinator
         let reload = coordinator.view?.docId != docId || coordinator.view?.source != source || coordinator.view?.reloadToken != reloadToken
         let themeChanged = coordinator.view?.dark != dark
+        let threadsChanged = coordinator.view?.threadsJSON != threadsJSON
         coordinator.update(self)
         if reload { coordinator.loadPage() } else if themeChanged { coordinator.setTheme() }
+        if !reload && threadsChanged { coordinator.pushThreads() }
     }
 
     static func dismantleNSView(_ web: WKWebView, coordinator: Coordinator) {
@@ -117,9 +123,16 @@ struct DocEditorView: NSViewRepresentable {
                                      in: nil, in: .page) { _ in }
         }
 
+        func pushThreads() {
+            guard let view else { return }
+            web?.callAsyncJavaScript("window.mapleDocs?.updateThreads(JSON.parse(json))", arguments: ["json": view.threadsJSON],
+                                     in: nil, in: .page) { _ in }
+        }
+
         private func load() {
             guard let view, let web else { return }
             var args: [String: Any] = ["docId": view.docId, "me": view.me, "members": view.members, "tasks": view.tasks]
+            if let threads = try? JSONSerialization.jsonObject(with: Data(view.threadsJSON.utf8)) { args["threads"] = threads }
             switch view.source {
             case .live(_, let token): args["token"] = token
             case .demo(let markdown): args["demo"] = ["markdown": markdown]
@@ -143,6 +156,7 @@ struct DocEditorView: NSViewRepresentable {
                 }
             case "error": view.status.error = body["message"] as? String ?? "The doc couldn't be opened."
             case "openTask": if let id = body["id"] as? String { view.openTask(id) }
+            case "command": if let command = body["command"] as? [String: Any] { view.onCommand(command) }
             default: break
             }
         }

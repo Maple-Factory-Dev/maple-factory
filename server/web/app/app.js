@@ -181,7 +181,9 @@ function send(msg) {
 function receive(m) {
   settings.receive(m);
   // Docs (MF-361): state.docs from the snapshot, doc.updated and doc.removed.
-  if (docs.receive(m) && m.type !== "snapshot") return render();
+  const docMsg = docs.receive(m);
+  if (docMsg === "quiet") return;
+  if (docMsg && m.type !== "snapshot") return render();
   if (m.type === "task.updated" || m.type === "snapshot") queueMicrotask(() => docs.tasksChanged()); // live task embeds (MF-363)
   switch (m.type) {
     case "snapshot":
