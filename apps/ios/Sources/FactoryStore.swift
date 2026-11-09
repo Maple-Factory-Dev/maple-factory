@@ -33,6 +33,8 @@ final class FactoryStore {
     private(set) var reviewNotes: [String: [Wire.ReviewNote]] = [:]
     /// The last `stats` reply, for admins' Statistics (FeedState doesn't keep it).
     private(set) var stats: Wire.StatsSummary?
+    /// The last `report` reply, for the Day report screen; the view checks its `since` against the day it shows.
+    private(set) var dayReport: Wire.DayReport?
     /// CI check logs asked for (`task.checkLog`), keyed `<task>/<check>`. The server never broadcasts or keeps them.
     private(set) var checkLogs: [String: CheckLogLoad] = [:]
     /// The goal sent with `goal.save` (GoalEditorSheet): waiting on the server, kept, or refused.
@@ -142,6 +144,7 @@ final class FactoryStore {
         feed = FeedState()
         diffs = [:]
         stats = nil
+        dayReport = nil
         goalSave = nil
         pushDevices = []
         quietHours = nil
@@ -286,6 +289,7 @@ final class FactoryStore {
         if case .pushDevices(let reply) = message { pushDevices = reply.devices }
         if case .quietHoursUpdated(let update) = message { quietHours = update.quietHours }
         if case .stats(let reply) = message { stats = reply.summary }
+        if case .report(let reply) = message { dayReport = reply.report }
         if case .checkLog(let reply) = message {
             // Only one still asked for: a log forgotten by a re-run stays forgotten.
             let key = Self.checkLogKey(task: reply.id, check: reply.check)
@@ -606,6 +610,14 @@ final class FactoryStore {
     func follow(_ goal: String, _ following: Bool) { send(.goalFollow(.init(id: goal, following: following))) }
     /// Asks for the factory's statistics over the last `days`; the reply lands in `stats`.
     func loadStats(days: Int) { send(.statsGet(.init(days: UInt32(days), goal: nil))) }
+
+    /// Your day report for `day`'s local calendar day (so time zones stay right), like the Mac's;
+    /// the answer lands in `dayReport`.
+    func requestReport(day: Date) {
+        let start = Calendar.current.startOfDay(for: day)
+        let end = Calendar.current.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(86_400)
+        send(.reportGet(.init(since: UInt64(start.timeIntervalSince1970 * 1000), until: UInt64(end.timeIntervalSince1970 * 1000))))
+    }
 
     /// Starts a task in `goal`: handed to a planner now (`plan`), or kept as a draft. An empty brief
     /// sends the title as the brief, like the Mac's composer; `repo` counts only when it's one of the goal's.
@@ -1206,6 +1218,8 @@ final class FactoryStore {
             }
         case .statsGet(let m):
             stats = DemoData.stats(days: Int(m.days))
+        case .reportGet(let m):
+            dayReport = DemoData.dayReport(since: m.since, until: m.until)
         case .taskCheckLog(let m):
             let failed = feed.task(m.id)?.pr?.checks.first { $0.name == m.check }?.status == .failed
             Task { @MainActor in
