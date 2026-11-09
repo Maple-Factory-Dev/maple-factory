@@ -267,15 +267,15 @@ impl Sessions {
         let name = format!("maple-{id}");
         let started_at = now_ms();
         // A restarted task session picks its earlier conversation up, if that one was saved for this agent and folder.
-        let resume_id = resume_from
-            .filter(|r| agent.hooks && r.prompt.len() <= MAX_RESUME_PROMPT && !r.prompt.trim().is_empty())
-            .and_then(|r| match crate::agent_sessions::resumable(r.session, agent_name, cwd) {
+        let resume_id = resume_from.filter(|r| agent.hooks && r.prompt.len() <= MAX_RESUME_PROMPT && !r.prompt.trim().is_empty()).and_then(|r| {
+            match crate::agent_sessions::resumable(r.session, agent_name, cwd) {
                 Some(conversation) => Some((conversation, r.prompt.as_str())),
                 None => {
                     info!("session {id}: no saved {agent_name} conversation for {} in {cwd}; starting afresh", r.session);
                     None
                 }
-            });
+            }
+        });
         let ports = self.claim_ports(id);
 
         let mut args: Vec<String> = vec![
@@ -362,8 +362,12 @@ impl Sessions {
                 info!("session {id}: resuming {agent_name} conversation {conversation}");
                 // The card's images went in with the first start; the conversation still has them.
                 let argv = agents::argv(&shell, &agent, agents::Resume::Id(conversation.clone()), hook_args, model, unattended, &[], Some(short));
-                let fallback =
-                    Fallback { argv: wrap(fresh), prompt_file: long.map(str::to_string), secrets: if sourced { env.clone() } else { vec![] }, until: started_at + RESUME_GRACE_MS };
+                let fallback = Fallback {
+                    argv: wrap(fresh),
+                    prompt_file: long.map(str::to_string),
+                    secrets: if sourced { env.clone() } else { vec![] },
+                    until: started_at + RESUME_GRACE_MS,
+                };
                 (argv, Some(fallback))
             }
             None => (fresh, None),

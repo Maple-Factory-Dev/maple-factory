@@ -71,9 +71,8 @@ pub fn sweep_in(dir: &Path, cwd: Option<&str>) {
             continue;
         }
         let old = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| SystemTime::now().duration_since(t).ok()).is_some_and(|age| age > KEEP);
-        let gone = cwd.is_some_and(|cwd| {
-            std::fs::read(&path).ok().and_then(|b| serde_json::from_slice::<Record>(&b).ok()).is_some_and(|r| same_dir(&r.cwd, cwd))
-        });
+        let gone =
+            cwd.is_some_and(|cwd| std::fs::read(&path).ok().and_then(|b| serde_json::from_slice::<Record>(&b).ok()).is_some_and(|r| same_dir(&r.cwd, cwd)));
         if old || gone {
             let _ = std::fs::remove_file(&path);
         }

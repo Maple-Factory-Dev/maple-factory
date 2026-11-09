@@ -926,8 +926,7 @@ mod tests {
         assert!(file[4].contains(PROMPT_FILE_ENV));
         // A non-UUID never reaches argv, and other agents start afresh.
         assert_eq!(argv("/bin/zsh", &get("claude"), Resume::Id("--dangerously-skip-permissions".into()), vec![], None, None, &[], None)[5..], ["claude"]);
-        let aider =
-            Agent { id: "aider".into(), label: "Aider".into(), command: "aider".into(), args: vec![], prompt: PromptMode::None, hooks: false };
+        let aider = Agent { id: "aider".into(), label: "Aider".into(), command: "aider".into(), args: vec![], prompt: PromptMode::None, hooks: false };
         assert_eq!(argv("/bin/sh", &aider, id(), vec![], None, None, &[], None)[5..], ["aider"]);
     }
 

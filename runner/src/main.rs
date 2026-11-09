@@ -1,6 +1,6 @@
 mod agent_config;
-mod agent_sessions;
 mod agent_login;
+mod agent_sessions;
 mod agents;
 mod attachments;
 mod autoupdate;
