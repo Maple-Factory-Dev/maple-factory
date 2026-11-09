@@ -655,6 +655,8 @@ enum class IntegrationKind(val raw: String) {
     Linear("linear"),
     /** Jira issues with the factory's label. */
     Jira("jira"),
+    /** Langfuse: the factory sends it each task as a trace, with its sessions' cost and its review outcomes as scores (outbound only). */
+    Langfuse("langfuse"),
     /** A value this build doesn't know yet; newer servers may send them. */
     Unknown("unknown"),
     ;
@@ -1763,7 +1765,7 @@ data class Integration(
     val values: Map<String, String> = emptyMap(),
     /** Fields whose value comes from the Worker's environment variables, not Settings. */
     val fromEnv: List<String> = emptyList(),
-    /** Where it sends its events: a full URL when the factory has a PUBLIC_URL, otherwise a path on the server the app is signed in to. */
+    /** Where it sends its events: a full URL when the factory has a PUBLIC_URL, otherwise a path on the server the app is signed in to. Empty for an outbound integration (Langfuse), which the factory sends to and nothing sends back. */
     val webhookUrl: String,
     /** A link that creates its app on the other side with this factory's URLs filled in (Slack's new-app page with a manifest). None: it has none, or the factory has no PUBLIC_URL. */
     val setupUrl: String? = null,
@@ -3481,6 +3483,11 @@ sealed class ClientMessage {
         val enabled: Boolean,
         val values: Map<String, String> = emptyMap(),
     ) : ClientMessage()
+    /** Admins only: try an outbound integration with its saved settings (Langfuse: send one test trace). The answer comes back as a toast; a failure also becomes its last error. */
+    @Serializable
+    data class IntegrationsTest(
+        val kind: dev.maplefactory.wire.IntegrationKind,
+    ) : ClientMessage()
     /** Read the repos the GitHub App is installed on again. */
     data object ReposRefresh : ClientMessage()
     /** Admins only: a repo the GitHub App doesn't list (or there's no app). */
@@ -3846,6 +3853,7 @@ sealed class ClientMessage {
             "members.revoke" -> json.decodeFromJsonElement(MembersRevoke.serializer(), body)
             "connectors.save" -> json.decodeFromJsonElement(ConnectorsSave.serializer(), body)
             "integrations.save" -> json.decodeFromJsonElement(IntegrationsSave.serializer(), body)
+            "integrations.test" -> json.decodeFromJsonElement(IntegrationsTest.serializer(), body)
             "repos.refresh" -> ReposRefresh
             "repos.add" -> json.decodeFromJsonElement(ReposAdd.serializer(), body)
             "repos.remove" -> json.decodeFromJsonElement(ReposRemove.serializer(), body)
@@ -3941,6 +3949,7 @@ sealed class ClientMessage {
             is MembersRevoke -> "members.revoke" to json.encodeToJsonElement(MembersRevoke.serializer(), value)
             is ConnectorsSave -> "connectors.save" to json.encodeToJsonElement(ConnectorsSave.serializer(), value)
             is IntegrationsSave -> "integrations.save" to json.encodeToJsonElement(IntegrationsSave.serializer(), value)
+            is IntegrationsTest -> "integrations.test" to json.encodeToJsonElement(IntegrationsTest.serializer(), value)
             is ReposRefresh -> "repos.refresh" to null
             is ReposAdd -> "repos.add" to json.encodeToJsonElement(ReposAdd.serializer(), value)
             is ReposRemove -> "repos.remove" to json.encodeToJsonElement(ReposRemove.serializer(), value)

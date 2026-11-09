@@ -567,6 +567,8 @@ pub enum IntegrationKind {
     Linear,
     /// Jira issues with the factory's label.
     Jira,
+    /// Langfuse: the factory sends it each task as a trace, with its sessions' cost and its review outcomes as scores (outbound only).
+    Langfuse,
     /// A value this build doesn't know yet; newer servers may send them.
     #[serde(other)]
     Other,
@@ -1961,7 +1963,7 @@ pub struct Integration {
     /// Fields whose value comes from the Worker's environment variables, not Settings.
     #[serde(default)]
     pub from_env: Vec<String>,
-    /// Where it sends its events: a full URL when the factory has a PUBLIC_URL, otherwise a path on the server the app is signed in to.
+    /// Where it sends its events: a full URL when the factory has a PUBLIC_URL, otherwise a path on the server the app is signed in to. Empty for an outbound integration (Langfuse), which the factory sends to and nothing sends back.
     pub webhook_url: String,
     /// A link that creates its app on the other side with this factory's URLs filled in (Slack's new-app page with a manifest). None: it has none, or the factory has no PUBLIC_URL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3796,6 +3798,11 @@ pub enum ClientMessage {
         enabled: bool,
         #[serde(default)]
         values: BTreeMap<String, String>,
+    },
+    /// Admins only: try an outbound integration with its saved settings (Langfuse: send one test trace). The answer comes back as a toast; a failure also becomes its last error.
+    #[serde(rename = "integrations.test")]
+    IntegrationsTest {
+        kind: IntegrationKind,
     },
     /// Read the repos the GitHub App is installed on again.
     #[serde(rename = "repos.refresh")]

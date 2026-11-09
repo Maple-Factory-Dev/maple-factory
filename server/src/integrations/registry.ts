@@ -9,8 +9,8 @@ import { orgHub } from "../util.ts";
 export interface IntegrationDef {
   kind: IntegrationKind;
   label: string;
-  /** Where its events reach the factory. */
-  webhookPath: string;
+  /** Where its events reach the factory. None: it's outbound, the factory sends to it and nothing comes back. */
+  webhookPath?: string;
   fields: (IntegrationField & { env: keyof Env })[];
   /** A link that creates its app on the other side with the factory's URLs filled in, from its public URL. */
   setupUrl?: (base: string) => string;
@@ -48,6 +48,8 @@ export function manifest(publicUrl: string) {
 /** Slack's new-app page with this factory's manifest filled in. */
 export const slackSetupUrl = (publicUrl: string) => `https://api.slack.com/apps?new_app=1&manifest_json=${encodeURIComponent(JSON.stringify(manifest(publicUrl)))}`;
 
+export const LANGFUSE_DEFAULT_HOST = "https://cloud.langfuse.com";
+
 const LABEL_HELP = "The label that sends an issue to the factory. Default: maple.";
 
 export const INTEGRATIONS: IntegrationDef[] = [
@@ -81,6 +83,15 @@ export const INTEGRATIONS: IntegrationDef[] = [
       { name: "email", label: "Account email", secret: false, required: false, env: "JIRA_EMAIL", help: "The account the bot comments as." },
       { name: "apiToken", label: "API token", secret: true, required: false, env: "JIRA_API_TOKEN", help: "That account's API token (id.atlassian.com › Security)." },
       { name: "label", label: "Label", secret: false, required: false, env: "JIRA_LABEL", help: LABEL_HELP },
+    ],
+  },
+  {
+    kind: "langfuse",
+    label: "Langfuse",
+    fields: [
+      { name: "publicKey", label: "Public key", secret: false, required: true, env: "LANGFUSE_PUBLIC_KEY", help: "Your Langfuse project's Settings › API Keys › public key (pk-lf-…)." },
+      { name: "secretKey", label: "Secret key", secret: true, required: true, env: "LANGFUSE_SECRET_KEY", help: "The secret key that goes with it (sk-lf-…)." },
+      { name: "host", label: "Host", secret: false, required: false, env: "LANGFUSE_HOST", help: `Where your Langfuse runs, e.g. https://us.cloud.langfuse.com or your own. Default: ${LANGFUSE_DEFAULT_HOST}.` },
     ],
   },
 ];
@@ -119,10 +130,34 @@ export function merged(def: IntegrationDef, enabled: boolean, saved: Record<stri
       if (!/^https:\/\/[^\s/]+\/?$/.test(value)) return `${def.label}'s site needs to be an https:// address, like https://acme.atlassian.net.`;
       value = new URL(value).origin;
     }
+    if (value && f.name === "publicKey" && !value.startsWith("pk-lf-")) return `${def.label}'s public key starts with pk-lf-.`;
+    if (value && f.name === "secretKey" && !value.startsWith("sk-lf-")) return `${def.label}'s secret key starts with sk-lf-.`;
+    if (value && f.name === "host") {
+      const host = langfuseHost(value);
+      if (!host) return `${def.label}'s host needs to be an https:// address, like ${LANGFUSE_DEFAULT_HOST}.`;
+      value = host;
+    }
     if (value) out[f.name] = value;
     if (enabled && f.required && !value && !env[f.name]) return `${def.label} needs its ${f.label.toLowerCase()}.`;
   }
   return out;
+}
+
+/**
+ * A Langfuse host as its origin, or null when it won't do: https only, except plain http to this machine
+ * (a Langfuse running locally) since nothing leaves it.
+ */
+export function langfuseHost(value: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return null;
+  }
+  const local = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && local)) return null;
+  if (url.username || url.password || url.search || url.hash) return null;
+  return url.origin;
 }
 
 /** How the Worker's handlers reach integrations' settings and status (OrgHub keeps them). */

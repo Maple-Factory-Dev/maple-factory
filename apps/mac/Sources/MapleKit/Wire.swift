@@ -1672,17 +1672,20 @@ public enum Wire {
         case linear
         /// Jira issues with the factory's label.
         case jira
+        /// Langfuse: the factory sends it each task as a trace, with its sessions' cost and its review outcomes as scores (outbound only).
+        case langfuse
         /// A value this build doesn't know yet; newer servers may send them.
         case other(String)
 
         /// The values this build knows; never `.other`.
-        public static let allCases: [IntegrationKind] = [.slack, .linear, .jira]
+        public static let allCases: [IntegrationKind] = [.slack, .linear, .jira, .langfuse]
 
         public init(rawValue: String) {
             switch rawValue {
             case "slack": self = .slack
             case "linear": self = .linear
             case "jira": self = .jira
+            case "langfuse": self = .langfuse
             default: self = .other(rawValue)
             }
         }
@@ -1692,6 +1695,7 @@ public enum Wire {
             case .slack: "slack"
             case .linear: "linear"
             case .jira: "jira"
+            case .langfuse: "langfuse"
             case .other(let value): value
             }
         }
@@ -3941,7 +3945,7 @@ public enum Wire {
         public var values: [String: String]
         /// Fields whose value comes from the Worker's environment variables, not Settings.
         public var fromEnv: [String]
-        /// Where it sends its events: a full URL when the factory has a PUBLIC_URL, otherwise a path on the server the app is signed in to.
+        /// Where it sends its events: a full URL when the factory has a PUBLIC_URL, otherwise a path on the server the app is signed in to. Empty for an outbound integration (Langfuse), which the factory sends to and nothing sends back.
         public var webhookUrl: String
         /// A link that creates its app on the other side with this factory's URLs filled in (Slack's new-app page with a manifest). None: it has none, or the factory has no PUBLIC_URL.
         public var setupUrl: String?
@@ -7293,6 +7297,15 @@ public enum Wire {
         }
     }
 
+    /// Admins only: try an outbound integration with its saved settings (Langfuse: send one test trace). The answer comes back as a toast; a failure also becomes its last error.
+    public struct ClientMessageIntegrationsTest: Codable, Hashable, Sendable {
+        public var kind: IntegrationKind
+
+        public init(kind: IntegrationKind) {
+            self.kind = kind
+        }
+    }
+
     /// Admins only: a repo the GitHub App doesn't list (or there's no app).
     public struct ClientMessageReposAdd: Codable, Hashable, Sendable {
         public var name: String
@@ -7941,6 +7954,7 @@ public enum Wire {
         case membersRevoke(ClientMessageMembersRevoke)
         case connectorsSave(ClientMessageConnectorsSave)
         case integrationsSave(ClientMessageIntegrationsSave)
+        case integrationsTest(ClientMessageIntegrationsTest)
         case reposRefresh
         case reposAdd(ClientMessageReposAdd)
         case reposRemove(ClientMessageReposRemove)
@@ -8040,6 +8054,7 @@ public enum Wire {
             case "members.revoke": self = .membersRevoke(try ClientMessageMembersRevoke(from: decoder))
             case "connectors.save": self = .connectorsSave(try ClientMessageConnectorsSave(from: decoder))
             case "integrations.save": self = .integrationsSave(try ClientMessageIntegrationsSave(from: decoder))
+            case "integrations.test": self = .integrationsTest(try ClientMessageIntegrationsTest(from: decoder))
             case "repos.refresh": self = .reposRefresh
             case "repos.add": self = .reposAdd(try ClientMessageReposAdd(from: decoder))
             case "repos.remove": self = .reposRemove(try ClientMessageReposRemove(from: decoder))
@@ -8225,6 +8240,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .integrationsSave(let body):
                 try c.encode("integrations.save", forKey: .type)
+                try body.encode(to: encoder)
+            case .integrationsTest(let body):
+                try c.encode("integrations.test", forKey: .type)
                 try body.encode(to: encoder)
             case .reposRefresh:
                 try c.encode("repos.refresh", forKey: .type)

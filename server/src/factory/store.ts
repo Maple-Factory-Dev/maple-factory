@@ -228,7 +228,8 @@ export class Store {
   // Costs: one row per factory session, its highest totals so far.
 
   /** Keeps the higher of each total, so a restarted status line (counting from zero again) can't lower them. */
-  recordSessionCost(c: SessionCostRow) {
+  /** Keeps a session's spend (never going down), and returns it as kept. */
+  recordSessionCost(c: SessionCostRow): SessionCostRow {
     const old = this.sql.exec<{ cost_usd: number | null; tokens: string; model: string | null }>(
       "SELECT cost_usd, tokens, model FROM session_costs WHERE session = ?", c.session,
     ).toArray()[0];
@@ -249,6 +250,7 @@ export class Store {
        ON CONFLICT (session) DO UPDATE SET model = excluded.model, cost_usd = excluded.cost_usd, tokens = excluded.tokens, updated = excluded.updated`,
       c.session, c.task, c.goal, c.role, c.agent, model, costUsd, JSON.stringify(tokens), c.updated,
     );
+    return { ...c, model, costUsd, tokens };
   }
 
   /** Sessions that spent anything since `since` (ms), on `goal`'s tasks when given. */

@@ -13,6 +13,7 @@ import { Store } from "./factory/store.ts";
 import { Secrets } from "./secrets.ts";
 import { Push, deviceId } from "./push.ts";
 import { Integrations } from "./integrations/store.ts";
+import { LangfuseSink } from "./integrations/langfuse.ts";
 import { Engine, FactoryError } from "./factory/engine.ts";
 import { redacted } from "./factory/connectors.ts";
 import { aggregatePresence, isMobileClient, type Connection } from "./presence.ts";
@@ -51,6 +52,7 @@ export class OrgHub extends DurableObject<Env> {
   private intake: Intake;
   private secrets: Secrets;
   private integrations: Integrations;
+  private langfuse: LangfuseSink;
   /** Each machine's runner update (storage `u:<id>`), loaded before anything else runs. */
   private updates = new Map<string, MachineUpdate>();
 
@@ -62,6 +64,10 @@ export class OrgHub extends DurableObject<Env> {
     this.store = new Store(ctx.storage.sql);
     this.secrets = new Secrets(ctx.storage.sql, env);
     this.integrations = new Integrations(ctx.storage.sql, env);
+    this.langfuse = new LangfuseSink({
+      config: (kind) => this.integrations.config(kind),
+      event: (kind, error) => this.integrationEvent(kind, error),
+    }, (p) => ctx.waitUntil(p));
     this.intake = new Intake(this.store, {
       broadcast: (request) => this.broadcast({ type: "intake.updated", request }),
       waitUntil: (p) => ctx.waitUntil(p),
@@ -88,6 +94,7 @@ export class OrgHub extends DurableObject<Env> {
         problem: (text) => ctx.waitUntil(this.integrationEvent("slack", text)),
       },
       userToken: (login) => userToken(env, login),
+      langfuse: this.langfuse,
     }, this.intake, this.secrets);
   }
 
@@ -1043,6 +1050,19 @@ export class OrgHub extends DurableObject<Env> {
         const integrations = await this.integrationList();
         await audit(this.env, client.member.login, "integrations.saved", msg.kind, integrations.find((i) => i.kind === msg.kind));
         this.broadcast({ type: "integrations.updated", integrations });
+        return;
+      }
+      case "integrations.test": {
+        if (client.member.role !== "admin") {
+          this.send(ws, { type: "error", message: "Only admins can test the factory's integrations.", requestId: null });
+          return;
+        }
+        if (msg.kind !== "langfuse") {
+          this.send(ws, { type: "error", message: "Only outbound integrations (Langfuse) have a test.", requestId: null });
+          return;
+        }
+        const error = await this.langfuse.test();
+        this.send(ws, error ? { type: "error", message: error, requestId: null } : { type: "toast", text: "Langfuse took the test trace: look for “Maple Factory test trace” in its Tracing page.", taskId: null });
         return;
       }
       case "members.revoke": {
