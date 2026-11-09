@@ -41,15 +41,64 @@ final class QuestionCardTests: XCTestCase {
     }
 
     func testLongHandOptionWrapsInsideTheCard() {
+        openHandTask()
+        checkHandOptions()
+        snap("hand-card")
+    }
+
+    /// BIL-7 is building with a raised hand: Reply to hand, Steer and Comment all sit in the bar,
+    /// fully on screen, tappable without scrolling it sideways (MF-353's "Comment" was cut off).
+    func testActionBarFitsTheScreen() {
+        openHandTask()
+        checkActionBar()
+        snap("action-bar")
+    }
+
+    /// At a large text size the hand's options still wrap inside the card, and the bar's secondary
+    /// actions collapse to icons instead of running off the edge.
+    func testLargeTextHandAndActionBarFit() {
+        app.terminate()
+        app.launchArguments = ["-demo", "YES", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityL"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Inbox"].waitForExistence(timeout: 60))
+        openHandTask()
+        checkHandOptions()
+        snap("hand-card-large-text")
+        checkActionBar()
+        snap("action-bar-large-text")
+    }
+
+    private func openHandTask() {
         app.openLink("maplefactory://task/BIL-7")
         XCTAssertTrue(app.navigationBars["BIL-7"].waitForExistence(timeout: 20), "the task's detail didn't open")
-        let option = app.buttons.containing(NSPredicate(format: "label CONTAINS 'leave beta'")).firstMatch
-        XCTAssertTrue(option.waitForExistence(timeout: 10), "the raised hand should show its long option")
-        if !option.isHittable { app.swipeUp() }
+    }
+
+    private func checkHandOptions() {
         let width = app.windows.firstMatch.frame.width
-        XCTAssertLessThanOrEqual(option.frame.maxX, width, "the long hand option spills past the right edge")
-        XCTAssertTrue(option.isHittable)
-        snap("hand-card")
+        for index in 0..<2 {
+            let option = app.buttons["hand-option-\(index)"]
+            XCTAssertTrue(option.waitForExistence(timeout: 10), "hand option \(index) is missing")
+            var swipes = 0
+            while !option.isHittable, swipes < 6 { app.swipeUp(); swipes += 1 }
+            XCTAssertGreaterThanOrEqual(option.frame.minX, 0, "hand option \(index) starts off the left edge")
+            XCTAssertLessThanOrEqual(option.frame.maxX, width, "hand option \(index) spills past the right edge")
+            XCTAssertTrue(option.isHittable, "hand option \(index) can't be tapped")
+        }
+        XCTAssertTrue(app.buttons["hand-option-1"].label.contains("leave beta"))
+        XCTAssertTrue(app.buttons["hand-option-0"].label.contains("Recommended"))
+    }
+
+    private func checkActionBar() {
+        let width = app.windows.firstMatch.frame.width
+        let bar = app.descendants(matching: .any)["action-bar"].firstMatch
+        XCTAssertTrue(bar.waitForExistence(timeout: 10), "the action bar is missing")
+        for title in ["Reply to hand", "Steer", "Comment"] {
+            let button = app.buttons.matching(NSPredicate(format: "label == %@", title)).firstMatch
+            XCTAssertTrue(button.exists, "\(title) is missing from the action bar")
+            XCTAssertGreaterThanOrEqual(button.frame.minX, 0, "\(title) starts off the left edge")
+            XCTAssertLessThanOrEqual(button.frame.maxX, width, "\(title) is cut off at the right edge")
+            XCTAssertTrue(button.isHittable, "\(title) can't be tapped without scrolling")
+        }
     }
 
     private func snap(_ name: String) {

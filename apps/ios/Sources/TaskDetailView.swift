@@ -1023,80 +1023,110 @@ struct ActionBar: View {
     @Binding var compose: Compose?
 
     var body: some View {
-        let me = store.me
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                if task.state == .awaitingApproval, !task.approvals.contains(me) {
-                    action("Approve plan", "checkmark", prominent: true) { store.approvePlan(task.id) }
-                    action("Request changes", "arrow.uturn.left") {
-                        compose = Compose(title: "Request changes to the plan", placeholder: "What should the planner change?", send: "Send") { store.steer(task.id, text: $0) }
-                    }
-                }
-                if task.question != nil {
-                    action("Answer", "bubble.left", prominent: task.state != .awaitingApproval) {
-                        compose = Compose(title: "Answer the agent", placeholder: task.question?.text ?? "", send: "Answer") { store.answer(task.id, text: $0) }
-                    }
-                }
-                if task.hand != nil {
-                    action("Reply to hand", "hand.raised") {
-                        compose = Compose(title: "Help the agent", placeholder: task.hand?.summary ?? "", send: "Send") { store.resolveHand(task.id, option: nil, note: $0) }
-                    }
-                }
-                if task.state == .reviewing {
-                    let approved = task.reviews.count >= task.reviewsNeeded
-                    if !task.reviews.contains(me) {
-                        action("Approve changes", "checkmark.seal", prominent: true) { store.approveChanges(task.id) }
-                    }
-                    if task.mergeAt != nil {
-                        action("Hold merge", "pause.circle") { store.holdMerge(task.id) }
-                    }
-                    if approved {
-                        action("Merge", "arrow.triangle.merge", prominent: task.reviews.contains(me)) { store.merge(task.id) }
-                    }
-                    action("Request changes", "arrow.uturn.left") {
-                        compose = Compose(title: "Request changes", placeholder: "What should the builder change?", send: "Request") { store.steer(task.id, text: $0) }
-                    }
-                    // Another automated-review round with your focus, once the last one is in (the Mac's ReviewActions).
-                    if task.autoReview?.rounds.isEmpty == false {
-                        let running = task.autoReview?.rounds.last?.verdict == .inProgress
-                        action(running ? "Reviewing…" : "Request review…", "eye", enabled: FactoryStore.canRequestReview(task, feed: store.feed)) {
-                            compose = Compose(title: "Request a review of \(task.id)", placeholder: "What should it look for? e.g. check security", send: "Send") { [store, task] in
-                                store.requestReview(task.id, focus: $0)
-                            }
-                        }
-                        .accessibilityIdentifier("request-review")
-                    }
-                }
-                if task.state == .building || task.state == .planning {
-                    action("Steer", "arrow.triangle.turn.up.right.diamond") {
-                        compose = Compose(title: "Steer the agent", placeholder: "Redirect the \(task.state == .planning ? "planner" : "builder")…", send: "Send") { store.steer(task.id, text: $0) }
-                    }
-                }
-                if task.pr?.checks.contains(where: { $0.status == .failed }) ?? false || task.hand?.reason == .sessionEnded {
-                    action("Retry", "arrow.clockwise") { store.retryTask(task.id) }
-                }
-                action("Comment", "text.bubble") {
-                    compose = Compose(title: "Comment on \(task.id)", placeholder: "Write a comment; @mention people", send: "Comment") { store.comment(task.id, text: $0) }
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+        // Full labels when they fit; then the secondary actions as icons (the prominent one keeps its
+        // words); scrolling only as a last resort, so "Comment" never slides silently off the edge.
+        ViewThatFits(in: .horizontal) {
+            row(compact: false)
+            row(compact: true)
+            ScrollView(.horizontal, showsIndicators: false) { row(compact: true) }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("action-bar")
         .background(.bar)
     }
 
+    private func row(compact: Bool) -> some View {
+        HStack(spacing: 8) { buttons(compact: compact) }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .fixedSize(horizontal: true, vertical: false)
+    }
+
     @ViewBuilder
-    private func action(_ title: String, _ icon: String, prominent: Bool = false, enabled: Bool = true, _ perform: @escaping () -> Void) -> some View {
+    private func buttons(compact: Bool) -> some View {
+        let me = store.me
+        if task.state == .awaitingApproval, !task.approvals.contains(me) {
+            action(compact: compact, "Approve plan", "checkmark", prominent: true) { store.approvePlan(task.id) }
+            action(compact: compact, "Request changes", "arrow.uturn.left") {
+                compose = Compose(title: "Request changes to the plan", placeholder: "What should the planner change?", send: "Send") { store.steer(task.id, text: $0) }
+            }
+        }
+        if task.question != nil {
+            action(compact: compact, "Answer", "bubble.left", prominent: task.state != .awaitingApproval) {
+                compose = Compose(title: "Answer the agent", placeholder: task.question?.text ?? "", send: "Answer") { store.answer(task.id, text: $0) }
+            }
+        }
+        if task.hand != nil {
+            action(compact: compact, "Reply to hand", "hand.raised") {
+                compose = Compose(title: "Help the agent", placeholder: task.hand?.summary ?? "", send: "Send") { store.resolveHand(task.id, option: nil, note: $0) }
+            }
+        }
+        if task.state == .reviewing {
+            let approved = task.reviews.count >= task.reviewsNeeded
+            if !task.reviews.contains(me) {
+                action(compact: compact, "Approve changes", "checkmark.seal", prominent: true) { store.approveChanges(task.id) }
+            }
+            if task.mergeAt != nil {
+                action(compact: compact, "Hold merge", "pause.circle") { store.holdMerge(task.id) }
+            }
+            if approved {
+                action(compact: compact, "Merge", "arrow.triangle.merge", prominent: task.reviews.contains(me)) { store.merge(task.id) }
+            }
+            action(compact: compact, "Request changes", "arrow.uturn.left") {
+                compose = Compose(title: "Request changes", placeholder: "What should the builder change?", send: "Request") { store.steer(task.id, text: $0) }
+            }
+            // Another automated-review round with your focus, once the last one is in (the Mac's ReviewActions).
+            if task.autoReview?.rounds.isEmpty == false {
+                let running = task.autoReview?.rounds.last?.verdict == .inProgress
+                action(compact: compact, running ? "Reviewing…" : "Request review…", "eye", enabled: FactoryStore.canRequestReview(task, feed: store.feed)) {
+                    compose = Compose(title: "Request a review of \(task.id)", placeholder: "What should it look for? e.g. check security", send: "Send") { [store, task] in
+                        store.requestReview(task.id, focus: $0)
+                    }
+                }
+                .accessibilityIdentifier("request-review")
+            }
+        }
+        if task.state == .building || task.state == .planning {
+            action(compact: compact, "Steer", "arrow.triangle.turn.up.right.diamond") {
+                compose = Compose(title: "Steer the agent", placeholder: "Redirect the \(task.state == .planning ? "planner" : "builder")…", send: "Send") { store.steer(task.id, text: $0) }
+            }
+        }
+        if task.pr?.checks.contains(where: { $0.status == .failed }) ?? false || task.hand?.reason == .sessionEnded {
+            action(compact: compact, "Retry", "arrow.clockwise") { store.retryTask(task.id) }
+        }
+        action(compact: compact, "Comment", "text.bubble") {
+            compose = Compose(title: "Comment on \(task.id)", placeholder: "Write a comment; @mention people", send: "Comment") { store.comment(task.id, text: $0) }
+        }
+    }
+
+    @ViewBuilder
+    private func action(compact: Bool = false, _ title: String, _ icon: String, prominent: Bool = false, enabled: Bool = true, _ perform: @escaping () -> Void) -> some View {
         if prominent {
             Button(action: perform) { Label(title, systemImage: icon).font(.subheadline.weight(.semibold)) }
                 .buttonStyle(.borderedProminent)
                 .tint(Theme.approve)
                 .disabled(!enabled)
         } else {
-            Button(action: perform) { Label(title, systemImage: icon).font(.subheadline) }
-                .buttonStyle(.bordered)
-                .disabled(!enabled)
+            // Icon-only keeps the Label's title as the accessibility label, so VoiceOver still says "Comment".
+            Button(action: perform) {
+                Label(title, systemImage: icon)
+                    .font(.subheadline)
+                    .labelStyle(ActionLabelStyle(compact: compact))
+            }
+            .buttonStyle(.bordered)
+            .disabled(!enabled)
+        }
+    }
+}
+
+private struct ActionLabelStyle: LabelStyle {
+    let compact: Bool
+    func makeBody(configuration: Configuration) -> some View {
+        if compact {
+            Label(configuration).labelStyle(.iconOnly)
+        } else {
+            Label(configuration).labelStyle(.titleAndIcon)
         }
     }
 }

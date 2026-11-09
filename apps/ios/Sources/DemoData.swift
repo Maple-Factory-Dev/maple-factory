@@ -214,7 +214,7 @@ enum DemoData {
             task("BIL-7", goal: "g-web", title: "Invoice PDFs with line items", state: .building, owner: "sam", updated: 35) { t in
                 t.brief = "Render each invoice as a PDF with its usage line items."
                 t.hand = .init(reason: .needsInput, summary: "Stripe's invoice API doesn't return usage line items for metered prices. Build them from our own usage table instead?", at: ago(35), assignee: me,
-                               options: [.init(title: "Use our usage table", detail: "Matches what customers see in the app.", recommended: true),
+                               options: [.init(title: "Build the line items from our own usage table and reconcile the totals against Stripe's invoice", detail: "Matches what customers already see on the usage page in the app, and we can ship it this week without waiting on Stripe.", recommended: true),
                                          .init(title: "Wait for Stripe's metered line items to leave beta, then switch the invoice renderer over to their API", detail: "Simpler, but needs their beta.", recommended: false)])
                 t.worker = .init(role: .builder, agent: "codex", machine: "m-mini", session: "s3", startedAt: ago(50))
                 // What the builder shared, for ArtifactViewTests: a sandboxed chart, an SVG, a note, a screenshot and the PDF.
