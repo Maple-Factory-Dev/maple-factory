@@ -84,6 +84,18 @@ enum DemoData {
         return task
     }
 
+    /// MF-358's demo diagram (APP-14), for screenshots and DiagramViewerTests: "runner" matches three labels.
+    static let approvalFlow = ProcessInfo.processInfo.environment["DIAGRAM_SOURCE"] ?? UserDefaults.standard.string(forKey: "diagramsource") ?? """
+    flowchart LR
+      plan[Plan v2 ready] --> push[Server sends APNs push]
+      push --> tap{Approve tapped?}
+      tap -- yes --> approve[task.approvePlan]
+      tap -- no --> wait[Waits in the inbox]
+      approve --> runner[Runner picks up the build]
+      runner -- needs a Mac --> mac[Runner on a Mac with Xcode]
+      runner -- failed --> retry[Runner retries once]
+    """
+
     private static func tasks() -> [Wire.Task] {
         [
             task("APP-14", goal: "g-app", title: "Push notifications when a plan needs your approval", state: .awaitingApproval, owner: "sam", updated: 4) { t in
@@ -104,6 +116,8 @@ enum DemoData {
                 t.risk = .init(level: .medium, reasons: ["Touches sign-in", "New server table"], areas: ["auth"])
                 t.footprint = .init(files: 6, lines: 240, estimated: true)
                 t.mockups = [.init(id: "m1", title: "The notification", kind: "screen", html: mockupHTML, status: .proposed, version: 1)]
+                t.diagrams = [.init(id: "D1", title: "Approve from a push", source: DemoData.approvalFlow,
+                                    notes: ["The runner only moves once the server records the approval."])]
                 t.events = [
                     .init(who: "sam", text: "created the task", at: ago(70)),
                     .init(who: "planner", text: "wrote plan v1", at: ago(50)),

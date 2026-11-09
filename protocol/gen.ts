@@ -272,7 +272,8 @@ function kotlinType(t: Ty, qualify = false): string {
   }
 }
 
-const kotlinDoc = (doc: string | undefined, indent = "") => (doc ? `${indent}/** ${doc.replaceAll("\n", " ")} */\n` : "");
+// Kotlin nests block comments, so a `/*` inside a doc (like `apps/mac/**`) would open another one: break it up.
+const kotlinDoc = (doc: string | undefined, indent = "") => (doc ? `${indent}/** ${doc.replaceAll("\n", " ").replaceAll("/*", "/&#42;").replaceAll("*/", "&#42;/")} */\n` : "");
 
 function kotlinClass(name: string, fields: Fields, docs: Record<string, string> = {}, doc: string | undefined, indent: string, parent?: string): string {
   const entries = Object.entries(fields);

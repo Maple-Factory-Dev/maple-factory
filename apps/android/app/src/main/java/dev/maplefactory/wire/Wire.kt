@@ -1448,7 +1448,7 @@ data class WorktreeScripts(
     val archive: String? = null,
     /** How long each one may run (default 600). */
     val timeoutSecs: Long? = null,
-    /** Path rules, one `glob tag[,tag]` per line (e.g. `apps/mac/** macos`): a task whose plan touches a matching file needs those machine tags. */
+    /** Path rules, one `glob tag[,tag]` per line (e.g. `apps/mac/&#42;* macos`): a task whose plan touches a matching file needs those machine tags. */
     val requirePaths: String? = null,
 )
 
