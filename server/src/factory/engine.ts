@@ -28,6 +28,7 @@ import { loginFor } from "../slack-links.ts";
 import { checkCommands, checksFor, parseCheck, stripCover, pathRules, RepoSetup, requiresFor, SCRIPT_VARIABLES, scriptsProblem, SETUP_PREFIX, tidyScripts } from "./repo-setup.ts";
 import { merged, redacted } from "./connectors.ts";
 import { assess, budgetCostUsd, budgetMinutes, budgetUse, type BudgetUse, overBudgetMode, validPolicy } from "./policy.ts";
+import type { LangfuseSink, TraceTask } from "../integrations/langfuse.ts";
 import { cycleSplit, findingDetail, manualReason, type StatKind } from "./stats.ts";
 import { trackStage } from "./stages.ts";
 import type { Intake } from "./intake.ts";
@@ -81,6 +82,8 @@ type Hooks = {
   slack?: { token(): Promise<string | null>; problem(text: string): void };
   /** A member's GitHub user token from their sign-in (auth.ts userToken), to approve a pull request as them; null: none that works. */
   userToken?(login: string): Promise<string | null>;
+  /** Langfuse (integrations/langfuse.ts): tasks as traces, sessions' cost as generations, touchpoints as scores. */
+  langfuse?: LangfuseSink;
 };
 
 /** How a "didn't merge" for missing approving reviews starts: a builder can't fix that, so it goes to a person. */
@@ -613,6 +616,7 @@ export class Engine {
           for (const m of request.thread.filter((m) => !m.bot)) task.comments.push(await this.comment(m.author, m.text, { at: m.at, via: sourceTitle(request) }));
         }
         this.save(task);
+        this.hooks.langfuse?.trace(this.traceTask(task));
         await audit(this.env, who, "task.created", task.id, { title: task.title });
         if (msg.plan) await this.startPlanning(task, who);
         if (request) this.intake.accepted(request, this.store.task(task.id) ?? task, "created", who);
@@ -630,6 +634,7 @@ export class Engine {
           task.title = msg.title.trim();
           // The person named it; the planner's suggestion is moot.
           task.suggestedTitle = null;
+          this.hooks.langfuse?.trace(this.traceTask(task));
         }
         if (msg.brief != null) task.brief = msg.brief;
         if (msg.shareable != null) task.shareable = msg.shareable;
@@ -1924,12 +1929,13 @@ export class Engine {
         const s = this.store.session(c.session);
         const task = s && this.store.task(s.task);
         if (!s || !task) return null;
-        this.store.recordSessionCost({
+        const spent = this.store.recordSessionCost({
           session: s.id, task: task.id, goal: task.goal, role: s.role, agent: c.agent || s.agent, model: c.model ?? null,
           costUsd: c.costUsd ?? null,
           tokens: { input: c.inputTokens, output: c.outputTokens, cacheRead: c.cacheReadTokens, cacheWrite: c.cacheWriteTokens },
           updated: Date.now(),
         });
+        this.hooks.langfuse?.cost(this.traceTask(task), spent);
         await this.checkBudgets(task.id);
         return null;
       }
@@ -4127,7 +4133,14 @@ export class Engine {
   }
 
   private stat(task: Task, kind: StatKind, detail: Record<string, unknown> = {}, actor: string | null = null, role: string | null = null) {
-    this.store.recordStat({ at: now(), kind, task: task.id, goal: task.goal, role, actor, detail });
+    const at = now();
+    this.store.recordStat({ at, kind, task: task.id, goal: task.goal, role, actor, detail });
+    this.hooks.langfuse?.stat({ ...this.traceTask(task), changes: task.changes, autoReview: task.autoReview }, kind, detail, at);
+  }
+
+  /** What Langfuse's trace shows of a task. */
+  private traceTask(task: Task): TraceTask {
+    return { id: task.id, title: task.title, repo: task.repo ?? null, createdAt: task.createdAt, agent: task.agent, goalName: this.store.goal(task.goal)?.name ?? null };
   }
 
   /** Takes a task's hand down (answered, retried, cancelled, or replaced by another), recording how long it was up,
