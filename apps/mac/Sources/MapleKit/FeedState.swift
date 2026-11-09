@@ -34,6 +34,8 @@ public struct FeedState: Sendable {
     public var recurring: [String: Wire.Recurring] = [:]
     /// Shared planning docs' index entries, archived ones included (see `activeDocs`).
     public var docs: [Wire.Doc] = []
+    /// Docs' comment threads (MF-364), by doc id: only for docs someone asked about with `doc.threads`.
+    public var docThreads: [String: [Wire.DocThread]] = [:]
     public var hasSnapshot = false
     /// The finished tasks the snapshot left out (older than its 14 days) and not loaded since, by goal id.
     /// Empty from an older server, which sends every task.
@@ -131,6 +133,8 @@ public struct FeedState: Sendable {
             Self.upsert(update.doc, into: &docs, front: true)
         case .docRemoved(let removed):
             docs.removeAll { $0.id == removed.id }
+        case .docThreads, .docThreadUpdated:
+            Self.applyThreads(message, to: &docThreads)
         case .toast(let toast):
             return .toast(toast.text, taskId: toast.taskId)
         case .error(let error):
@@ -406,6 +410,27 @@ public extension FeedState {
     static func activeDocs(_ docs: [Wire.Doc]) -> [Wire.Doc] {
         docs.filter { $0.archived != true }.sorted { $0.updatedAt > $1.updatedAt }
     }
+    /// Open comment threads across every active doc: the sidebar Docs row's badge (MF-364).
+    static func openThreadTotal(_ docs: [Wire.Doc]) -> Int {
+        activeDocs(docs).reduce(0) { $0 + Int($1.openThreads ?? 0) }
+    }
+    /// A doc's open-thread badge: nil when there's none to show.
+    static func threadBadge(_ doc: Wire.Doc) -> Int? {
+        guard let n = doc.openThreads, n > 0, doc.archived != true else { return nil }
+        return Int(n)
+    }
+    /// doc.threads replaces a doc's threads; doc.thread.updated upserts one.
+    static func applyThreads(_ message: Wire.ServerToClient, to threads: inout [String: [Wire.DocThread]]) {
+        switch message {
+        case .docThreads(let list):
+            threads[list.doc] = list.threads
+        case .docThreadUpdated(let update):
+            var list = threads[update.thread.doc] ?? []
+            if let i = list.firstIndex(where: { $0.id == update.thread.id }) { list[i] = update.thread } else { list.append(update.thread) }
+            threads[update.thread.doc] = list
+        default: break
+        }
+    }
     /// One doc change applied to a list (doc.updated upserts, doc.removed drops).
     static func applyDoc(_ message: Wire.ServerToClient, to docs: inout [Wire.Doc]) {
         switch message {
@@ -418,6 +443,10 @@ public extension FeedState {
     }
 }
 extension Wire.Goal: Identifiable {}
+public extension Int {
+    /// The sidebar's open-thread badge text: nil for zero.
+    var nonZeroBadge: String? { self > 0 ? "\(self)" : nil }
+}
 extension Wire.Machine: Identifiable {}
 extension Wire.IntakeRequest: Identifiable {}
 

@@ -105,6 +105,21 @@ struct DocsView: View {
     }
 }
 
+/// A doc's open comment threads (MF-364): a small native badge, nothing when there are none.
+struct ThreadBadge: View {
+    let count: Int?
+    var body: some View {
+        if let count, count > 0 {
+            Label("\(count)", systemImage: "text.bubble")
+                .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                .foregroundStyle(Theme.accent)
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .background(Capsule().fill(Theme.accent.opacity(0.12)))
+                .help("\(count) open comment thread\(count == 1 ? "" : "s")")
+        }
+    }
+}
+
 /// One doc in a list: opens on click; a context menu renames it inline, archives it or copies its link.
 struct DocRow: View {
     @Environment(AppState.self) private var state
@@ -132,6 +147,7 @@ struct DocRow: View {
                 Text(goal).font(.system(size: 11.5)).foregroundStyle(Theme.textMuted).lineLimit(1)
             }
             Spacer()
+            ThreadBadge(count: FeedState.threadBadge(doc))
             Text(DocsIndex.edited(doc)).font(.system(size: 11.5)).foregroundStyle(Theme.textFaint)
         }
         .padding(.horizontal, 10).frame(height: 32)
@@ -173,6 +189,7 @@ struct GoalDocsSection: View {
             HStack {
                 Text("Docs").font(.system(size: 13, weight: .semibold))
                 Text("\(docs.count)").font(.system(size: 12).monospacedDigit()).foregroundStyle(Theme.textMuted)
+                ThreadBadge(count: FeedState.openThreadTotal(docs))
                 Spacer()
                 if client.isSignedIn {
                     Button { creating = true } label: { Label("New doc", systemImage: "plus").font(.system(size: 12)) }
@@ -245,14 +262,24 @@ struct DocPage: View {
                 .font(.system(size: 12)).padding(.horizontal, 16).padding(.vertical, 8).background(Theme.raised)
             }
             if let source {
-                DocEditorView(docId: id, source: source, me: me, members: members, tasks: tasks, dark: scheme == .dark,
-                              status: status, reloadToken: reload) { task in state.openFullView(task) }
+                DocEditorView(docId: id, source: source, me: me, members: members, tasks: tasks,
+                              threadsJSON: threadsJSON, dark: scheme == .dark,
+                              status: status, reloadToken: reload,
+                              onCommand: { client.sendDocCommand($0) }) { task in state.openFullView(task) }
             } else {
                 ContentUnavailableView("Doc not found", systemImage: "doc.richtext", description: Text("It may have been removed."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .background(Theme.editorBG)
+        .task(id: "\(id)-\(client.isSignedIn)") { if client.isSignedIn { client.askDocThreads(id) } }
+    }
+
+    /// The doc's threads as JSON for `mapleDocs.updateThreads` (MF-364).
+    private var threadsJSON: String {
+        let list = client.docThreads[id] ?? []
+        guard let data = try? JSONEncoder().encode(list) else { return "[]" }
+        return String(decoding: data, as: UTF8.self)
     }
 
     private var source: DocEditorView.Source? {
@@ -288,6 +315,7 @@ struct DocPage: View {
             Circle().fill(dotColor).frame(width: 7, height: 7)
                 .help(status.synced ? "Synced" : status.status.capitalized)
             Spacer()
+            ThreadBadge(count: doc.flatMap(FeedState.threadBadge))
             HStack(spacing: -6) {
                 ForEach(status.peers.prefix(5), id: \.login) { peer in
                     Text(String(peer.name.prefix(1)).uppercased())

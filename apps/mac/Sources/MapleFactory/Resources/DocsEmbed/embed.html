@@ -5,8 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Maple doc</title>
 <!-- The docs editor with no feed chrome, for the Mac and iOS apps to host in a WKWebView (MF-361).
-     Bridge: window.mapleDocs.load({ docId, token, me, members, tasks, demo? }), updateTasks(tasks), setTheme('light'|'dark'), exportMarkdown(),
-     destroy(). Events (ready, status, peers, synced, theme, error, openTask) go to
+     Bridge: window.mapleDocs.load({ docId, token, me, members, tasks, threads?, demo? }), updateTasks(tasks), updateThreads(threads),
+     setTheme('light'|'dark'), exportMarkdown(), destroy(). Events (ready, status, peers, synced, theme, error, openTask, plus MF-364's
+     command {command} for the app to relay to its socket and threads {open} for badges) go to
      window.webkit.messageHandlers.maple when it exists, else to window.parent via postMessage. See docs/planning-docs.md. -->
 <link rel="stylesheet" href="editor.css">
 <style>
@@ -16,7 +17,7 @@
   :root[data-theme="dark"] { --bg: #18161c; --raised: #221f27; --card: #1f1c23; --text: #e4e6ea; --muted: #9096a0; --faint: #5d626c;
     --stroke: rgba(255,255,255,.07); --fill: rgba(255,255,255,.06); --accent: #ff7a48; --merged: #3dd68c; --mention: #f07ab4; color-scheme: dark; }
   html, body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif; }
-  #doc { max-width: 760px; margin: 0 auto; padding: 16px 16px 0; }
+  #doc { max-width: 1080px; margin: 0 auto; padding: 16px 16px 0; }
 </style>
 </head>
 <body>
@@ -36,12 +37,14 @@
   applyTheme(theme);
 
   let tasks = [];
+  let threads = [];
   window.mapleDocs = {
     /** Opens a doc. `token` is the app's `mft_…` token, sent as the socket's `maple-token` subprotocol (no cookie
      *  needed); `me` {login, name, avatar}; `members` [{login, name, avatar}] and `tasks` [{id, title}] feed the
      *  @ and # menus and MF-12 links. `demo` {markdown}: a local-only doc with no socket (the Mac app's signed-out mockup). */
-    async load({ docId, token, me, members = [], tasks: list = [], demo = null }) {
+    async load({ docId, token, me, members = [], tasks: list = [], threads: open = [], demo = null }) {
       tasks = list;
+      threads = open ?? [];
       handle?.destroy();
       const { createDocEditor } = await import("./editor.bundle.js");
       handle = createDocEditor({
@@ -50,6 +53,9 @@
         me: me ?? { login: "me" },
         members: () => members,
         tasks: () => tasks,
+        // Comments (MF-364): the app owns the socket; the rail's commands go out through it.
+        threads: () => threads,
+        sendThreadCommand: demo ? null : (command) => post("command", { command }),
         onEvent: (type, data) => post(type, Array.isArray(data) ? { peers: data } : data),
       });
       return true;
@@ -58,6 +64,8 @@
     exportMarkdown: () => handle?.exportMarkdown() ?? null,
     /** New task objects from the app's feed (MF-363): task embeds redraw in place. */
     updateTasks: (list) => { tasks = list ?? []; handle?.tasksChanged(); },
+    /** The doc's comment threads from the app's feed (MF-364): highlights and the rail redraw. */
+    updateThreads: (list) => { threads = list ?? []; handle?.threadsChanged(); },
     destroy: () => { handle?.destroy(); handle = null; },
   };
   post("ready");

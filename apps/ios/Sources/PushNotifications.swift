@@ -74,7 +74,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
     /// What a tap does, and what `-pushRef <id>` runs at launch: RootView's pendingLink opens the TaskRoute.
     static func open(ref: String?, in store: FactoryStore) {
-        guard let ref, !ref.isEmpty else { return }
+        // A doc @mention (MF-364) is `doc:<id>`: iOS has no docs yet, so it just opens the app.
+        guard let ref, !ref.isEmpty, !ref.hasPrefix("doc:") else { return }
         store.pendingLink = .task(ref)
     }
 }

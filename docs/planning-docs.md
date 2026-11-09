@@ -112,11 +112,33 @@ opens one. One editor, one sync path, no native CRDT.
 ## Deferred
 
 - Hosting the embed in the iOS app.
-- Comments and threads anchored in a doc.
 - Decisions recorded from a doc, and turning parts of it into tasks.
 - An MCP server so agents can read and edit docs.
 - Search, history/versions browsing, and permissions finer than "org members".
 
+
+## Comments (MF-364)
+
+Select text (or a block) and choose **Comment** in the bubble menu to start a thread on it.
+
+- **Where threads live.** OrgHub's `doc_threads` table, one JSON `DocThread` per row, not in the Yjs doc. So the doc's
+  content and its Markdown export never carry comments. `Doc.openThreads` is worked out from that table on every read.
+- **Anchors.** A `DocAnchor` is two Yjs relative positions (base64, opaque to the server) on the `prosemirror`
+  fragment, plus the quoted text. Concurrent edits move the anchor with the text: typing before the range shifts it,
+  typing inside grows it. When the range collapses (its text was deleted), `resolveAnchor` says `{orphan: true}` and the
+  rail lists the thread under **On deleted text** (`server/docs-editor/src/comments.js`).
+- **Wire.** `doc.comment {doc, thread?, text, anchor?}` starts a thread (an anchor is required then) or replies. A reply
+  reopens a resolved thread. `doc.resolve` / `doc.reopen` flip it. `doc.threads {doc}` is answered with `doc.threads`
+  to that connection only. Every change is broadcast as `doc.thread.updated`, plus `doc.updated` with the new count.
+  Limits: 10k characters a comment, 500 threads a doc, and anchors of at most 2 KB.
+- **@mentions** use `mentionsIn` (members only, never the author). Each mention is pushed with reason `mention` and ref
+  `doc:<id>` through `Push.send`, so quiet hours and a relay that's off are handled the same way as task comments.
+- **Editor.** Open threads' ranges are highlighted (the active one is stronger). The margin rail lines cards up with
+  their anchors and has Open / Resolved filters, reply (with `@` completion), Resolve and Reopen. Hosts pass
+  `threads()` and `sendThreadCommand(cmd)` to `createDocEditor` and call `handle.threadsChanged()`.
+- **Embed (Mac).** `mapleDocs.updateThreads(threads)` feeds the threads in. The embed posts `command {command}` for the
+  app to send on its socket and `threads {open}` for badges. The Mac app shows the open-thread count on doc rows, in
+  the goal's Docs section, on the editor's title bar, and the total on the sidebar's Docs row.
 
 ## Planning visuals (MF-363)
 
