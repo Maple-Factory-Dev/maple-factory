@@ -361,6 +361,14 @@ struct EvidenceView: View {
     }
 }
 
+extension View {
+    /// A full-width option whose label wraps over several lines: a rounded rectangle, not the
+    /// capsule `.bordered` draws on iOS 26, whose curve clips multi-line text into an oval.
+    func optionButtonShape() -> some View {
+        buttonBorderShape(.roundedRectangle(radius: 12))
+    }
+}
+
 struct HandCard: View {
     @Environment(FactoryStore.self) private var store
     let task: Wire.Task
@@ -370,7 +378,7 @@ struct HandCard: View {
         Card("Raised hand: \(hand.reason.rawValue)", icon: "exclamationmark.triangle.fill") {
             Text(hand.summary).font(.callout)
             Text("For \(hand.assignee) · \(When.ago(hand.at)) ago").font(.caption).foregroundStyle(.secondary)
-            ForEach(hand.options, id: \.title) { option in
+            ForEach(Array(hand.options.enumerated()), id: \.element.title) { index, option in
                 Button { store.resolveHand(task.id, option: option.title, note: "") } label: {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(option.title)
@@ -388,7 +396,9 @@ struct HandCard: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .buttonStyle(.bordered)
+                .optionButtonShape()
                 .tint(option.recommended ? Theme.approve : .secondary)
+                .accessibilityIdentifier("hand-option-\(index)")
             }
         }
         .tint(Theme.warning)
@@ -489,6 +499,7 @@ struct QuestionCard: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .buttonStyle(.bordered)
+                    .optionButtonShape()
                     .tint(parsed.recommended ? Theme.approve : .secondary)
                     .accessibilityIdentifier("question-option-\(index)")
                 }
