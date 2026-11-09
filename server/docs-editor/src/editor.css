@@ -163,27 +163,25 @@
 .doc-code-item.current { font-weight: 600; color: var(--accent); }
 .doc-code-empty { padding: 5px 8px; color: var(--faint); }
 .doc-codeblock pre { padding-right: 24px; }
-.doc-prose .hljs-comment, .doc-prose .hljs-quote { color: #6a737d; font-style: italic; }
-.doc-prose .hljs-keyword, .doc-prose .hljs-selector-tag, .doc-prose .hljs-doctag, .doc-prose .hljs-meta .hljs-keyword, .doc-prose .hljs-template-tag { color: #cf222e; }
-.doc-prose .hljs-string, .doc-prose .hljs-regexp, .doc-prose .hljs-addition, .doc-prose .hljs-meta .hljs-string { color: #0a3069; }
-.doc-prose .hljs-number, .doc-prose .hljs-literal, .doc-prose .hljs-variable.constant_, .doc-prose .hljs-symbol, .doc-prose .hljs-bullet { color: #0550ae; }
-.doc-prose .hljs-title, .doc-prose .hljs-title.function_, .doc-prose .hljs-section { color: #8250df; }
-.doc-prose .hljs-title.class_, .doc-prose .hljs-type, .doc-prose .hljs-built_in, .doc-prose .hljs-selector-class, .doc-prose .hljs-selector-id { color: #953800; }
-.doc-prose .hljs-attr, .doc-prose .hljs-attribute, .doc-prose .hljs-property, .doc-prose .hljs-params, .doc-prose .hljs-variable, .doc-prose .hljs-template-variable { color: #0550ae; }
-.doc-prose .hljs-name, .doc-prose .hljs-tag, .doc-prose .hljs-selector-pseudo { color: #116329; }
-.doc-prose .hljs-meta { color: #6639ba; }
-.doc-prose .hljs-deletion { color: #82071e; background: color-mix(in srgb, #ff818266 50%, transparent); }
-.doc-prose .hljs-addition { background: color-mix(in srgb, #aceebb 60%, transparent); }
+/* Token colors: highlight.js's GitHub theme, and GitHub Dark when the editor is dark (data-theme from the
+   embed, or the system setting in /app, which doesn't set data-theme). */
+.doc-editor { --hl-keyword: #d73a49; --hl-title: #6f42c1; --hl-const: #005cc5; --hl-string: #032f62; --hl-builtin: #e36209; --hl-comment: #6a737d; --hl-name: #22863a; --hl-subst: #24292e; --hl-bullet: #735c0f; --hl-add: #22863a; --hl-add-bg: #f0fff4; --hl-del: #b31d28; --hl-del-bg: #ffeef0; }
+.doc-editor[data-theme="dark"] { --hl-keyword: #ff7b72; --hl-title: #d2a8ff; --hl-const: #79c0ff; --hl-string: #a5d6ff; --hl-builtin: #ffa657; --hl-comment: #8b949e; --hl-name: #7ee787; --hl-subst: #c9d1d9; --hl-bullet: #f2cc60; --hl-add: #aff5b4; --hl-add-bg: #033a16; --hl-del: #ffdcd7; --hl-del-bg: #67060c; --hl-bg: #0d1117; --hl-text: #c9d1d9; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .doc-editor:not([data-theme="light"]) { --hl-keyword: #ff7b72; --hl-title: #d2a8ff; --hl-const: #79c0ff; --hl-string: #a5d6ff; --hl-builtin: #ffa657; --hl-comment: #8b949e; --hl-name: #7ee787; --hl-subst: #c9d1d9; --hl-bullet: #f2cc60; --hl-add: #aff5b4; --hl-add-bg: #033a16; --hl-del: #ffdcd7; --hl-del-bg: #67060c; --hl-bg: #0d1117; --hl-text: #c9d1d9; }
+}
+.doc-codeblock pre { background: var(--hl-bg, var(--raised)); color: var(--hl-text, inherit); }
+.doc-prose .hljs-keyword, .doc-prose .hljs-doctag, .doc-prose .hljs-template-tag, .doc-prose .hljs-template-variable, .doc-prose .hljs-type, .doc-prose .hljs-variable.language_ { color: var(--hl-keyword); }
+.doc-prose .hljs-title, .doc-prose .hljs-title.class_, .doc-prose .hljs-title.class_.inherited__, .doc-prose .hljs-title.function_ { color: var(--hl-title); }
+.doc-prose .hljs-attr, .doc-prose .hljs-attribute, .doc-prose .hljs-literal, .doc-prose .hljs-meta, .doc-prose .hljs-number, .doc-prose .hljs-operator, .doc-prose .hljs-variable, .doc-prose .hljs-selector-attr, .doc-prose .hljs-selector-class, .doc-prose .hljs-selector-id { color: var(--hl-const); }
+.doc-prose .hljs-regexp, .doc-prose .hljs-string, .doc-prose .hljs-meta .hljs-string { color: var(--hl-string); }
+.doc-prose .hljs-built_in, .doc-prose .hljs-symbol { color: var(--hl-builtin); }
+.doc-prose .hljs-comment, .doc-prose .hljs-code, .doc-prose .hljs-formula { color: var(--hl-comment); }
+.doc-prose .hljs-name, .doc-prose .hljs-quote, .doc-prose .hljs-selector-tag, .doc-prose .hljs-selector-pseudo { color: var(--hl-name); }
+.doc-prose .hljs-subst { color: var(--hl-subst); }
+.doc-prose .hljs-section { color: var(--hl-const); font-weight: 700; }
+.doc-prose .hljs-bullet { color: var(--hl-bullet); }
 .doc-prose .hljs-emphasis { font-style: italic; }
 .doc-prose .hljs-strong { font-weight: 700; }
-.doc-prose .hljs-link { text-decoration: underline; }
-.doc-editor[data-theme="dark"] .hljs-comment, .doc-editor[data-theme="dark"] .hljs-quote { color: #8b949e; }
-.doc-editor[data-theme="dark"] .hljs-keyword, .doc-editor[data-theme="dark"] .hljs-selector-tag, .doc-editor[data-theme="dark"] .hljs-doctag, .doc-editor[data-theme="dark"] .hljs-meta .hljs-keyword, .doc-editor[data-theme="dark"] .hljs-template-tag { color: #ff7b72; }
-.doc-editor[data-theme="dark"] .hljs-string, .doc-editor[data-theme="dark"] .hljs-regexp, .doc-editor[data-theme="dark"] .hljs-addition, .doc-editor[data-theme="dark"] .hljs-meta .hljs-string { color: #a5d6ff; }
-.doc-editor[data-theme="dark"] .hljs-number, .doc-editor[data-theme="dark"] .hljs-literal, .doc-editor[data-theme="dark"] .hljs-variable.constant_, .doc-editor[data-theme="dark"] .hljs-symbol, .doc-editor[data-theme="dark"] .hljs-bullet, .doc-editor[data-theme="dark"] .hljs-attr, .doc-editor[data-theme="dark"] .hljs-attribute, .doc-editor[data-theme="dark"] .hljs-property, .doc-editor[data-theme="dark"] .hljs-params, .doc-editor[data-theme="dark"] .hljs-variable, .doc-editor[data-theme="dark"] .hljs-template-variable { color: #79c0ff; }
-.doc-editor[data-theme="dark"] .hljs-title, .doc-editor[data-theme="dark"] .hljs-title.function_, .doc-editor[data-theme="dark"] .hljs-section { color: #d2a8ff; }
-.doc-editor[data-theme="dark"] .hljs-title.class_, .doc-editor[data-theme="dark"] .hljs-type, .doc-editor[data-theme="dark"] .hljs-built_in, .doc-editor[data-theme="dark"] .hljs-selector-class, .doc-editor[data-theme="dark"] .hljs-selector-id { color: #ffa657; }
-.doc-editor[data-theme="dark"] .hljs-name, .doc-editor[data-theme="dark"] .hljs-tag, .doc-editor[data-theme="dark"] .hljs-selector-pseudo { color: #7ee787; }
-.doc-editor[data-theme="dark"] .hljs-meta { color: #d2a8ff; }
-.doc-editor[data-theme="dark"] .hljs-deletion { color: #ffdcd7; background: color-mix(in srgb, #f85149 25%, transparent); }
-.doc-editor[data-theme="dark"] .hljs-addition { background: color-mix(in srgb, #2ea043 25%, transparent); }
+.doc-prose .hljs-addition { color: var(--hl-add); background: var(--hl-add-bg); }
+.doc-prose .hljs-deletion { color: var(--hl-del); background: var(--hl-del-bg); }
