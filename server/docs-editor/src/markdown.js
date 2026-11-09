@@ -1,6 +1,8 @@
 // Markdown import/export for the docs editor (docs/planning-docs.md), with prosemirror-markdown over the
 // TipTap schema: headings, bullet/ordered/task lists, quotes, fenced code with its language, links, bold/
-// italic/code/strike, and two inline atoms: member mentions (`@login`) and task refs (`MF-12`).
+// italic/code/strike, and two inline atoms: member mentions (`@login`) and task refs (`MF-12`). MF-363 adds
+// the planning visuals: ```mermaid and ```chart fences, GFM tables, attachment images and file links, and
+// GitHub alert quotes for callouts, toggles, task embeds and research blocks.
 import MarkdownIt from "markdown-it";
 import { MarkdownParser, MarkdownSerializer } from "prosemirror-markdown";
 import { Slice, Fragment } from "@tiptap/pm/model";
@@ -12,7 +14,8 @@ export { taskResolver };
 /** markdown-it with `@login` and `MF-12` inline rules and GitHub-style task lists.
  *  `members`: logins that make a mention (null: any `@login`); `tasks`: an id → task lookup (taskResolver). */
 function tokenizer({ members, tasks }) {
-  const md = MarkdownIt("commonmark", { html: false, linkify: false }).enable("strikethrough");
+  const md = MarkdownIt("commonmark", { html: false, linkify: false }).enable(["strikethrough", "table"]);
+  md.core.ruler.push("visuals", visuals);
   const known = members ? new Map(members.map((m) => [m.login.toLowerCase(), m])) : null;
 
   // `@login` and `MF-12` in text (not in links or code) become mention and taskref tokens. A core rule
@@ -89,6 +92,71 @@ function tokenizer({ members, tasks }) {
   return md;
 }
 
+const ALERT = /^\[!(NOTE|TIP|WARNING|IMPORTANT|TOGGLE|TASK|RESEARCH)\][ \t]*([^\n]*)/;
+const ATTACHMENT = /^\/attachments\//;
+
+/** A core rule (before task refs) that turns block tokens into the planning-visual tokens. */
+function visuals(state) {
+  const T = state.Token;
+  let toks = state.tokens;
+  const closeOf = (i) => { for (let j = i + 1; j < toks.length; j++) if (toks[j].type === "blockquote_close" && toks[j].level === toks[i].level) return j; return toks.length - 1; };
+  for (let i = 0; i < toks.length; i++) {
+    const tok = toks[i];
+    if (tok.type === "fence") {
+      const lang = tok.info.trim().split(/\s+/)[0];
+      if (lang === "mermaid") tok.type = "mermaid";
+      if (lang === "chart") {
+        tok.type = "chart";
+        const kind = tok.content.match(/^type:\s*(\w+)/m)?.[1];
+        tok.attrs = [["kind", kind === "line" ? "line" : "bar"], ["title", tok.content.match(/^title:[ \t]*(.*)$/m)?.[1].trim() ?? ""]];
+      }
+    } else if ((tok.type === "th_open" || tok.type === "td_open") && toks[i + 1]?.type === "inline") {
+      // Table cells hold blocks: wrap the cell's inline content in a paragraph.
+      toks.splice(i + 1, 0, new T("paragraph_open", "p", 1));
+      toks.splice(i + 3, 0, new T("paragraph_close", "p", -1));
+    } else if (tok.type === "paragraph_open" && toks[i + 1]?.type === "inline" && toks[i + 2]?.type === "paragraph_close") {
+      const kids = toks[i + 1].children ?? [];
+      let t = null;
+      if (kids.length === 1 && kids[0].type === "image") {
+        t = new T("doc_image", "", 0);
+        const width = +(kids[0].attrGet("title") ?? "").match(/^width=(\d+)$/)?.[1] || null;
+        t.attrs = [["src", kids[0].attrGet("src")], ["alt", kids[0].content], ["width", width]];
+      } else if (kids.length === 3 && kids[0].type === "link_open" && ATTACHMENT.test(kids[0].attrGet("href") ?? "") && kids[1].type === "text" && kids[2].type === "link_close") {
+        t = new T("file_attachment", "", 0);
+        let size = null, mime = null;
+        for (const part of (kids[0].attrGet("title") ?? "").split(" · ")) {
+          const n = part.match(/^(\d+) bytes$/);
+          if (n) size = +n[1]; else if (part.includes("/")) mime = part;
+        }
+        t.attrs = [["href", kids[0].attrGet("href")], ["name", kids[1].content], ["size", size], ["mime", mime]];
+      }
+      if (t) toks.splice(i, 3, t);
+    } else if (tok.type === "blockquote_open" && toks[i + 1]?.type === "paragraph_open" && toks[i + 2]?.type === "inline") {
+      const m = toks[i + 2].content.match(ALERT);
+      if (!m) continue;
+      const [, kind, rest] = m;
+      const j = closeOf(i);
+      if (kind === "TASK" || kind === "RESEARCH") {
+        // Atoms: only the marker line is read back; the rest (the task's live state, the answer) is a snapshot.
+        const id = rest.match(new RegExp(`^(${TASK_ID.source})\\b`))?.[1] ?? null;
+        const t = new T(kind === "TASK" ? "task_embed" : "research", "", 0);
+        t.attrs = kind === "TASK" ? [["id", id]] : [["task", id], ["question", id ? rest.slice(id.length).replace(/^\s*·\s*/, "") : rest.trim()]];
+        toks.splice(i, j - i + 1, t);
+        continue;
+      }
+      tok.type = kind === "TOGGLE" ? "toggle_open" : "callout_open";
+      toks[j].type = kind === "TOGGLE" ? "toggle_close" : "callout_close";
+      tok.attrs = kind === "TOGGLE" ? [["summary", rest.trim()]] : [["tone", kind.toLowerCase()]];
+      // Drop the marker line from the first paragraph (and the paragraph, when that was all of it).
+      const inline = toks[i + 2];
+      const kids = inline.children ?? [];
+      const br = kids.findIndex((k) => k.type === "softbreak" || k.type === "hardbreak");
+      if (br < 0) toks.splice(i + 1, 3);
+      else { inline.children = kids.slice(br + 1); inline.content = inline.content.slice(inline.content.indexOf("\n") + 1); }
+    }
+  }
+}
+
 /** A parser from Markdown to a ProseMirror doc in `schema`. */
 export function markdownParser(schema, ctx = {}) {
   return new MarkdownParser(schema, tokenizer(ctx), {
@@ -103,6 +171,20 @@ export function markdownParser(schema, ctx = {}) {
     code_block: { block: "codeBlock", noCloseToken: true },
     fence: { block: "codeBlock", getAttrs: (tok) => ({ language: tok.info.trim().split(/\s+/)[0] || null }), noCloseToken: true },
     hr: { node: "horizontalRule" },
+    mermaid: { node: "mermaid", getAttrs: (tok) => ({ source: tok.content.replace(/\n$/, "") }), noCloseToken: true },
+    chart: { node: "chart", getAttrs: (tok) => ({ kind: tok.attrGet("kind"), title: tok.attrGet("title") }), noCloseToken: true },
+    table: { block: "table" },
+    thead: { ignore: true },
+    tbody: { ignore: true },
+    tr: { block: "tableRow" },
+    th: { block: "tableHeader" },
+    td: { block: "tableCell" },
+    doc_image: { node: "image", getAttrs: (tok) => ({ src: tok.attrGet("src"), alt: tok.attrGet("alt") ?? "", width: tok.attrGet("width") }), noCloseToken: true },
+    file_attachment: { node: "fileAttachment", getAttrs: (tok) => ({ href: tok.attrGet("href"), name: tok.attrGet("name"), size: tok.attrGet("size"), mime: tok.attrGet("mime") }), noCloseToken: true },
+    callout: { block: "callout", getAttrs: (tok) => ({ tone: tok.attrGet("tone") }) },
+    toggle: { block: "toggle", getAttrs: (tok) => ({ summary: tok.attrGet("summary") }) },
+    task_embed: { node: "taskEmbed", getAttrs: (tok) => ({ id: tok.attrGet("id") }), noCloseToken: true },
+    research: { node: "research", getAttrs: (tok) => ({ task: tok.attrGet("task"), question: tok.attrGet("question") }), noCloseToken: true },
     hardbreak: { node: "hardBreak" },
     mention: { node: "mention", getAttrs: (tok) => ({ id: tok.attrGet("id"), label: tok.attrGet("label") }) },
     taskref: { node: "taskRef", getAttrs: (tok) => ({ id: tok.attrGet("id"), title: tok.attrGet("title") }) },
@@ -118,6 +200,30 @@ export function markdownParser(schema, ctx = {}) {
 export function fromMarkdown(schema, text, ctx = {}) {
   return markdownParser(schema, ctx).parse(text);
 }
+
+// The task lookup an export snapshots embeds from (set by toMarkdown for the length of one serialize).
+let exportTasks = null;
+const oneLine = (s) => String(s ?? "").replace(/\s*\n\s*/g, " ").trim();
+const fence = (state, node, lang, body) => {
+  const f = body.match(/`{3,}/gm) ? "~~~~" : "```";
+  state.write(f + lang + "\n");
+  state.text(body, false);
+  state.write("\n");
+  state.write(f);
+  state.closeBlock(node);
+};
+const linkTarget = (href) => (/[\s()<>]/.test(href) ? `<${href.replace(/[<>]/g, encodeURIComponent)}>` : href);
+/** One table cell as single-line Markdown, its pipes escaped. */
+const cellText = (cell) => serializer.serialize(cell).trim().replace(/\n+/g, " ").replace(/(?<!\\)\|/g, "\\|");
+/** An alert quote: `> [!KIND] line`, then optional extra Markdown lines, each quoted. */
+const alert = (state, node, line, extra = null) => state.wrapBlock("> ", null, node, () => {
+  state.write(line);
+  for (const l of extra ? extra.trim().split("\n") : []) {
+    state.out += "\n";
+    if (l.trim()) state.write(l);
+    else state.out += state.delim.replace(/\s+$/, "");
+  }
+});
 
 const list = (indent, delim) => (state, node) => state.renderList(node, indent, typeof delim === "function" ? delim(node) : () => delim);
 
@@ -152,6 +258,40 @@ export const serializer = new MarkdownSerializer(
     taskItem: (state, node) => { state.write(node.attrs.checked ? "[x] " : "[ ] "); state.renderContent(node); },
     mention: (state, node) => state.write(`@${node.attrs.id}`),
     taskRef: (state, node) => state.write(node.attrs.id),
+    mermaid: (state, node) => fence(state, node, "mermaid", node.attrs.source),
+    chart: (state, node) => fence(state, node, "chart", `type: ${node.attrs.kind}${node.attrs.title ? `\ntitle: ${oneLine(node.attrs.title)}` : ""}`),
+    table: (state, node) => {
+      const rows = [];
+      node.forEach((row) => { const cells = []; row.forEach((c) => cells.push(cellText(c))); rows.push(cells); });
+      const cols = Math.max(1, ...rows.map((r) => r.length));
+      const line = (r) => `| ${Array.from({ length: cols }, (_, i) => r[i] ?? "").join(" | ")} |`;
+      [line(rows[0] ?? []), `|${" --- |".repeat(cols)}`, ...rows.slice(1).map(line)].forEach((l, i) => { if (i) state.ensureNewLine(); state.write(l); });
+      state.closeBlock(node);
+    },
+    tableRow: () => {},
+    tableHeader: () => {},
+    tableCell: () => {},
+    image: (state, node) => {
+      state.write(`![${(node.attrs.alt ?? "").replace(/[[\]\\]/g, "\\$&")}](${linkTarget(node.attrs.src ?? "")}${node.attrs.width ? ` "width=${node.attrs.width}"` : ""})`);
+      state.closeBlock(node);
+    },
+    fileAttachment: (state, node) => {
+      const title = [node.attrs.mime, node.attrs.size != null ? `${node.attrs.size} bytes` : null].filter(Boolean).join(" · ");
+      state.write(`[${(node.attrs.name ?? "file").replace(/[[\]\\]/g, "\\$&")}](${linkTarget(node.attrs.href ?? "")}${title ? ` "${title}"` : ""})`);
+      state.closeBlock(node);
+    },
+    callout: (state, node) => state.wrapBlock("> ", null, node, () => { state.write(`[!${node.attrs.tone.toUpperCase()}]\n`); state.renderContent(node); }),
+    toggle: (state, node) => state.wrapBlock("> ", null, node, () => { state.write(`[!TOGGLE]${node.attrs.summary ? ` ${oneLine(node.attrs.summary)}` : ""}\n`); state.renderContent(node); }),
+    taskEmbed: (state, node) => {
+      const t = exportTasks?.(node.attrs.id);
+      const parts = [node.attrs.id ?? "", t?.title && oneLine(t.title), t?.state, t?.pr?.number && `PR #${t.pr.number}`, t?.assignee && `@${t.assignee}`];
+      alert(state, node, `[!TASK] ${parts.filter(Boolean).join(" · ")}`);
+    },
+    research: (state, node) => {
+      const t = exportTasks?.(node.attrs.task);
+      const q = oneLine(node.attrs.question);
+      alert(state, node, `[!RESEARCH] ${node.attrs.task ? `${node.attrs.task} · ${q}` : q}`, t?.findings?.answer ?? null);
+    },
   },
   {
     italic: { open: "*", close: "*", mixable: true, expelEnclosingWhitespace: true },
@@ -182,9 +322,15 @@ function backticks(node, side) {
   return result;
 }
 
-/** A ProseMirror doc → Markdown. */
-export function toMarkdown(doc) {
-  return serializer.serialize(doc).replace(/\n+$/, "") + "\n";
+/** A ProseMirror doc → Markdown. `tasks` (an id → task lookup) snapshots task embeds' state, PR and owner,
+ *  and research blocks' answers, into the export. */
+export function toMarkdown(doc, { tasks = null } = {}) {
+  exportTasks = tasks;
+  try {
+    return serializer.serialize(doc).replace(/\n+$/, "") + "\n";
+  } finally {
+    exportTasks = null;
+  }
 }
 
 /** Whether pasted plain text reads as Markdown (and so goes through the parser, not in as plain text). */
