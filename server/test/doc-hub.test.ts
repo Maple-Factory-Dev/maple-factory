@@ -437,6 +437,37 @@ test("/docs/<id>/sync: members get a 101; no member, a revoked one, a bad origin
   assert.equal(r.forwarded.length, 2, "only members reach the DocHub");
 });
 
+test("/docs/<id>/sync: an app token as the maple-token subprotocol authes the socket; revoked, expired or bad tokens get 401", async () => {
+  const r = await routeEnv();
+  const now = Date.now();
+  const token = async (t: string, login: string, expires: number) =>
+    r.db.sql.prepare("INSERT INTO app_tokens (token_hash, login, created_at, expires_at) VALUES (?, ?, ?, ?)").run(await sha256(t), login, now, expires);
+  await token("mft_good", "ann", now + 60_000);
+  await token("mft_old", "ann", now - 1);
+  await token("mft_rex", "rex", now + 60_000);
+  const proto = (t: string) => ({ "sec-websocket-protocol": `maple-token, ${t}` });
+
+  const ok = await r.call(DOC_ID, proto("mft_good"));
+  assert.equal(ok.status, 101);
+  assert.equal(r.forwarded[0].headers.get("x-member-login"), "ann");
+  assert.equal(r.forwarded[0].headers.get("sec-websocket-protocol"), "maple-token, mft_good", "DocHub sees it and echoes maple-token");
+
+  assert.equal((await r.call(DOC_ID, proto("mft_old"))).status, 401, "expired token");
+  const { revokeMember } = await import("../src/auth.ts");
+  await revokeMember(r.env as never, "rex", "test", false);
+  assert.equal((await r.call(DOC_ID, proto("mft_rex"))).status, 401, "revoked member's token");
+  assert.equal((await r.call(DOC_ID, proto("mft_nope"))).status, 401, "unknown token");
+  assert.equal((await r.call(DOC_ID, { "sec-websocket-protocol": "mft_good" })).status, 401, "needs the maple-token marker");
+  assert.equal((await r.call(DOC_ID, { ...proto("mft_good"), origin: "https://evil.example" })).status, 403, "same-origin still applies");
+  // Only on a sync socket upgrade: the same header on a plain request, or elsewhere, isn't a sign-in.
+  const { currentMember } = await import("../src/auth.ts");
+  const plain = new Request(`https://factory.example/docs/${DOC_ID}/sync`, { headers: proto("mft_good") });
+  assert.equal(await currentMember(plain, r.env as never), null);
+  const elsewhere = new Request("https://factory.example/client/connect", { headers: { upgrade: "websocket", ...proto("mft_good") } });
+  assert.equal(await currentMember(elsewhere, r.env as never), null);
+  assert.equal(r.forwarded.length, 1);
+});
+
 // ---- OrgHub's doc index ------------------------------------------------------
 
 function orgHub() {

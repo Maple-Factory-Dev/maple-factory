@@ -169,9 +169,21 @@ export async function stillMember(env: Env, row: MemberRow, notify = true): Prom
   return { ...row, role, checked_at: now };
 }
 
+/** A browser WebSocket can't send an Authorization header, so the docs editor in a WKWebView passes its app token
+ *  as a subprotocol: `Sec-WebSocket-Protocol: maple-token, mft_…`. Taken only on a WebSocket upgrade to a doc's
+ *  sync socket (MF-361), and looked up exactly like a bearer token; DocHub echoes `maple-token` back. */
+export const DOC_SYNC_PATH = /^\/docs\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/sync$/;
+function socketToken(request: Request): string | undefined {
+  if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return undefined;
+  if (!DOC_SYNC_PATH.test(new URL(request.url).pathname)) return undefined;
+  const protocols = (request.headers.get("sec-websocket-protocol") ?? "").split(",").map((p) => p.trim());
+  if (protocols[0] !== "maple-token" || protocols.length !== 2) return undefined;
+  return /^mft_[\w-]+$/.exec(protocols[1])?.[0];
+}
+
 /** The signed-in member, from a session cookie, an app token, or local dev's DEV_LOGIN. */
 export async function currentMember(request: Request, env: Env): Promise<Member | null> {
-  const bearer = /^Bearer (mft_[\w-]+)$/.exec(request.headers.get("authorization") ?? "")?.[1];
+  const bearer = /^Bearer (mft_[\w-]+)$/.exec(request.headers.get("authorization") ?? "")?.[1] ?? socketToken(request);
   if (bearer) {
     const row = await env.DB.prepare(
       `SELECT m.* FROM app_tokens t JOIN members m ON m.login = t.login WHERE t.token_hash = ? AND t.expires_at > ?`,
