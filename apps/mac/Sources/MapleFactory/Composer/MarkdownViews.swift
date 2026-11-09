@@ -193,7 +193,56 @@ struct MarkdownPreview: View {
             LinkedImage(alt: alt, path: path, thumbnail: thumbnails)
         case let .file(name, path):
             AttachmentChip(name: name, path: path)
+        case let .table(header, alignments, rows):
+            table(header: header, alignments: alignments, rows: rows)
         }
+    }
+
+    /// A bordered grid that scrolls sideways when it's wider than the column: a semibold header on a
+    /// faint fill, hairlines between rows, each column aligned as its delimiter row says.
+    private func table(header: [String], alignments: [TableAlignment], rows: [[String]]) -> some View {
+        func alignment(_ column: Int) -> HorizontalAlignment {
+            switch alignments.indices.contains(column) ? alignments[column] : .leading {
+            case .leading: .leading
+            case .center: .center
+            case .trailing: .trailing
+            }
+        }
+        func cell(_ text: String, column: Int, header: Bool) -> some View {
+            let rendered = inline(text)
+            return Text(rendered)
+                .font(.system(size: baseSize - 0.5, weight: header ? .semibold : .regular))
+                .foregroundStyle(Theme.text.opacity(header ? 1 : 0.9))
+                .taskRefHover(rendered, size: baseSize - 0.5, weight: header ? .semibold : .regular, known: knownTasks)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(minWidth: 40, maxWidth: 420, alignment: Alignment(horizontal: alignment(column), vertical: .center))
+                .gridColumnAlignment(alignment(column))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+        }
+        return ScrollView(.horizontal, showsIndicators: true) {
+            Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+                GridRow {
+                    ForEach(Array(header.enumerated()), id: \.offset) { column, text in
+                        cell(text, column: column, header: true)
+                    }
+                }
+                .background(Theme.fill)
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                    Hairline()
+                    GridRow {
+                        ForEach(Array(row.enumerated()), id: \.offset) { column, text in
+                            cell(text, column: column, header: false)
+                        }
+                    }
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 7))
+            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.border))
+            .padding(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("markdown.table")
     }
 
     /// Body-size inline text whose task references show a preview card on hover (TaskRefHover).

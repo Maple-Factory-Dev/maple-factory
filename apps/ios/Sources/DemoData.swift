@@ -639,6 +639,12 @@ extension DemoData {
     - Quantities summed over the billing period
     - Prices from the plan, not from Stripe
 
+    | Metric | Quantity | Unit price |
+    |:-------|:--------:|-----------:|
+    | `builds` | 800 | **$0.02** |
+    | `seats` | 14 | **$9.00** |
+    | `storage_gb` | 52 | $0.10 |
+
     > Totals match the app's Usage page to the cent.
     """
 

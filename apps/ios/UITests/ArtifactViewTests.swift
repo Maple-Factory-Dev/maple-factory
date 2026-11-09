@@ -42,6 +42,18 @@ final class ArtifactViewTests: XCTestCase {
         add(shot)
     }
 
+    /// MF-379: a Markdown artifact's GFM table is drawn as a table, not a paragraph of pipes.
+    func testMarkdownTableRendersAsATable() {
+        revealArtifacts()
+        tapChip("art-notes")
+        let table = element("markdown.table")
+        XCTAssertTrue(table.waitForExistence(timeout: 5), "the table isn't drawn as a table")
+        for _ in 0..<6 where !(table.isHittable && table.frame.maxY < app.frame.height * 0.8) { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(app.staticTexts["Unit price"].exists, "no header cell")
+        XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "|:---")).firstMatch.exists, "raw pipes showing")
+        screenshot("markdown-table")
+    }
+
     func testChipsSwitchTheViewer() {
         revealArtifacts()
         for id in ids { XCTAssertTrue(chip(id).exists, "no chip for \(id)") }

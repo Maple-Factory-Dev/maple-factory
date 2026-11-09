@@ -341,3 +341,67 @@ test("a removed Artifacts block is appended again; an empty one drops it", () =>
   assert.equal(swapArtifacts(`Above\n\n${block}\n\nBelow`, ""), "Above\n\n\n\nBelow");
   assert.equal(swapArtifacts("No block here", ""), "No block here");
 });
+
+// ---- tables ----
+
+const cellText = (nodes) => nodes.map((n) => n.text ?? cellText(n.children ?? [])).join("");
+const table = (b) => ({ align: b.align, header: b.header.map(cellText), rows: b.rows.map((r) => r.map(cellText)) });
+
+test("a table: header, alignments and rows, with inline formatting in cells", () => {
+  const blocks = parse("| Name | Size | Done | Plain |\n|:-----|:----:|-----:|---|\n| `a` | **big** | yes | x |\n| b | small | no | y |\n\nafter");
+  assert.deepEqual(blocks.map((b) => b.type), ["table", "paragraph"]);
+  assert.deepEqual(table(blocks[0]), {
+    align: ["left", "center", "right", null],
+    header: ["Name", "Size", "Done", "Plain"],
+    rows: [["a", "big", "yes", "x"], ["b", "small", "no", "y"]],
+  });
+  assert.equal(blocks[0].rows[0][0][0].type, "code");
+  assert.equal(blocks[0].rows[0][1][0].type, "strong");
+});
+
+test("a table keeps escaped pipes and pads or cuts ragged rows", () => {
+  const [b] = parse("| a | b |\n|---|---|\n| x \\| y | z | extra |\n| only |");
+  assert.deepEqual(table(b).rows, [["x | y", "z"], ["only", ""]]);
+});
+
+test("a table with no outer pipes", () => {
+  const blocks = parse("a | b\n--- | ---\n1 | 2");
+  assert.deepEqual(blocks.map((b) => b.type), ["table"]);
+  assert.deepEqual(table(blocks[0]).rows, [["1", "2"]]);
+});
+
+test("pipes with no delimiter row (or a mismatched one) stay a paragraph", () => {
+  assert.deepEqual(parse("| a | b |\n| c | d |").map((b) => b.type), ["paragraph"]);
+  assert.deepEqual(parse("| a | b |\n|---|").map((b) => b.type), ["paragraph"]);
+});
+
+test("a table inside a code fence stays code", () => {
+  assert.deepEqual(parse("```\n| a |\n|---|\n```"), [{ type: "code", lang: null, text: "| a |\n|---|" }]);
+});
+
+test("a table straight after a paragraph, ended by a non-pipe line", () => {
+  const blocks = parse("Intro line\n| a |\n|---|\n| 1 |\nnot a row");
+  assert.deepEqual(blocks.map((b) => b.type), ["paragraph", "table", "paragraph"]);
+  assert.deepEqual(table(blocks[1]).rows, [["1"]]);
+});
+
+test("a table renders as thead/tbody with per-cell alignment and its text kept as text", () => {
+  const h = (tag, attrs = {}, ...children) => ({ tag, attrs, children: children.flat(Infinity).filter((c) => c != null && c !== false) });
+  const md = render(parse("| <b>x</b> | n |\n|---|--:|\n| <script>alert(1)</script> | 2 |"), h);
+  const wrap = md.children[0];
+  assert.equal(wrap.attrs.class, "md-table");
+  const [thead, tbody] = wrap.children[0].children;
+  assert.equal(thead.tag, "thead");
+  const [th1, th2] = thead.children[0].children;
+  assert.deepEqual(th1, { tag: "th", attrs: { style: null }, children: ["<b>x</b>"] });
+  assert.equal(th2.attrs.style, "text-align:right");
+  const td = tbody.children[0].children[0];
+  assert.equal(td.tag, "td");
+  assert.deepEqual(td.children, ["<script>alert(1)</script>"]);
+});
+
+// Both match GFM; pinned so the Swift and web parsers don't drift apart (mirrors MarkdownTests.tableRowRules).
+test("after the delimiter row any line with a pipe is a row, and a pipe inside inline code splits the cell", () => {
+  const [b] = parse("| a | b |\n|---|---|\nloose | row\n| `x | y` |");
+  assert.deepEqual(table(b).rows, [["loose", "row"], ["`x", "y`"]]);
+});
