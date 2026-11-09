@@ -65,11 +65,15 @@ struct FactoryLoadingTests {
 struct LastPageTests {
     @Test func encodingRoundTrips() {
         let all: [Destination] = [.inbox, .myTasks, .activity, .scratchpad, .usage, .needsHand, .machines, .intake, .allGoals,
-                                  .goal("Maple Factory"), .goal("inbox"), .goal("goal:odd")]
+                                  .goal("Maple Factory"), .goal("inbox"), .goal("goal:odd"), .docs, .doc("d-1")]
         for destination in all { #expect(Destination(encoded: destination.encoded) == destination) }
         #expect(Destination.goal("inbox").encoded == "goal:inbox")
         #expect(Destination.inbox.encoded == "inbox")
         #expect(Destination(encoded: "nonsense") == nil)
+        #expect(Destination.docs.encoded == "docs")
+        #expect(Destination.doc("d-1").encoded == "doc:d-1")
+        #expect(Destination(argument: "docs") == .docs)
+        #expect(Destination(argument: "doc:d-1") == .doc("d-1"))
     }
 
     @Test func rememberedGoalWins() {

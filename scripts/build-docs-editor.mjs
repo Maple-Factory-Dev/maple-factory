@@ -11,6 +11,8 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = join(root, "server/docs-editor/src");
 const OUT = join(root, "server/web/app/docs");
+// The Mac app bundles a copy of the embed for its signed-out demo doc (MF-362), served from its own scheme.
+const MAC = join(root, "apps/mac/Sources/MapleFactory/Resources/DocsEmbed");
 const check = process.argv.includes("--check");
 
 // The source hash covers the editor's sources, the task resolver it imports from /app, and the lockfile
@@ -41,15 +43,20 @@ const files = {
   "editor.css": `/* GENERATED from server/docs-editor/src/editor.css by scripts/build-docs-editor.mjs. Do not edit. */\n${readFileSync(join(SRC, "editor.css"), "utf8")}`,
 };
 
+const targets = Object.entries(files).map(([name, text]) => [join(OUT, name), text]);
+for (const name of ["embed.html", "editor.bundle.js", "editor.css"]) {
+  const text = name === "embed.html" ? readFileSync(join(OUT, name), "utf8") : files[name];
+  targets.push([join(MAC, name), text]);
+}
+
 let stale = 0;
-for (const [name, text] of Object.entries(files)) {
-  const to = join(OUT, name);
+for (const [to, text] of targets) {
   const same = existsSync(to) && readFileSync(to, "utf8") === text;
   if (check) {
     console.log(`${relative(root, to)}  ${same ? "ok" : "STALE"}`);
     if (!same) stale++;
   } else {
-    mkdirSync(OUT, { recursive: true });
+    mkdirSync(dirname(to), { recursive: true });
     writeFileSync(to, text);
     console.log(`${relative(root, to)}  ${(text.length / 1024).toFixed(0)} KB${same ? " (unchanged)" : ""}`);
   }

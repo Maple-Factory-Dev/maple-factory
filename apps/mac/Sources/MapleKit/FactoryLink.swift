@@ -6,6 +6,8 @@ import Foundation
 public enum FactoryLink: Equatable, Sendable {
     case task(String)
     case session(machine: String, id: String)
+    /// `maplefactory://doc/<id>`: a shared planning doc.
+    case doc(String)
 
     public init?(url: URL) {
         guard url.scheme?.lowercased() == "maplefactory" else { return nil }
@@ -13,6 +15,8 @@ public enum FactoryLink: Equatable, Sendable {
         switch url.host() {
         case "task" where path.count == 1:
             self = .task(path[path.startIndex])
+        case "doc" where path.count == 1:
+            self = .doc(path[path.startIndex])
         case "session" where path.count == 2:
             self = .session(machine: path[path.startIndex], id: path[path.startIndex + 1])
         default:
