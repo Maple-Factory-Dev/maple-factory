@@ -337,6 +337,10 @@ struct ContentView: View {
                 PageViewerView(html: html, caption: caption, scripts: scripts)
                     .transition(.opacity.combined(with: .scale(scale: 0.97)))
                     .zIndex(10)
+            } else if case let .diagram(html, caption)? = state.lightbox {
+                DiagramViewerView(html: html, caption: caption)
+                    .transition(.opacity.combined(with: .scale(scale: 0.97)))
+                    .zIndex(10)
             } else if let lightbox = state.lightbox {
                 ProofLightboxView(lightbox: lightbox)
                     .transition(.opacity.combined(with: .scale(scale: 0.97)))

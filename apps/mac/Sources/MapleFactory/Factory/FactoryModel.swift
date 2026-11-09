@@ -298,6 +298,8 @@ struct FactoryTask: Identifiable {
     var intakeID: String? = nil
     /// Screens and terminal output the planner drew for the change.
     var mockups: [Mockup] = []
+    /// Mermaid diagrams the planner drew: flows, architecture, state machines (MF-358).
+    var diagrams: [Wire.Diagram] = []
     /// Files its agents shared: charts, pages, images (MF-205).
     var artifacts: [Wire.Artifact] = []
     /// Its time, span by span, and when it was made (ms): the Time card adds them up (MF-302, live only).
