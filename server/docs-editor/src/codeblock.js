@@ -29,7 +29,9 @@ const grammars = (() => {
     alias[id] = id;
     for (const a of g.aliases ?? []) alias[String(a).toLowerCase()] ??= id;
   }
-  return { names, alias };
+  const aliases = {};
+  for (const [a, id] of Object.entries(alias)) (aliases[id] ??= []).push(a);
+  return { names, alias, aliases };
 })();
 
 /** The picker's choices: Plain text (id null) first, then the common languages, then every other grammar A–Z. */
@@ -52,6 +54,33 @@ export function canonicalLanguage(attr) {
   return undefined;
 }
 
+/** The picker's choices matching what was typed: by name, id or alias (`ts`, `py`, `txt`), case-insensitive.
+ *  Names that start with the query come first, then the rest in list order. An empty query lists them all. */
+export function filterLanguages(query) {
+  const q = String(query ?? "").trim().toLowerCase();
+  if (!q) return CODE_LANGUAGES;
+  const keys = (l) => [l.label.toLowerCase(), ...(l.id ? grammars.aliases[l.id] ?? [l.id] : [...PLAIN, "none"])];
+  const scored = [];
+  for (const l of CODE_LANGUAGES) {
+    const k = keys(l);
+    if (k.some((x) => x === q)) scored.push([0, l]);
+    else if (k.some((x) => x.startsWith(q))) scored.push([1, l]);
+    else if (k.some((x) => x.includes(q))) scored.push([2, l]);
+  }
+  return scored.sort((a, b) => a[0] - b[0]).map(([, l]) => l);
+}
+
+const labelFor = (attr) => {
+  const id = canonicalLanguage(attr);
+  return id === undefined ? `${attr} (unknown)` : id === null ? "Plain text" : grammars.names[id];
+};
+
+const h = (tag, cls) => {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  return e;
+};
+
 export const DocCodeBlock = CodeBlockLowlight.extend({
   // CodeBlock defaults the attr to `defaultLanguage`; keep it null so a new block exports as a bare ``` fence
   // (the plugin still treats null as plaintext: no highlighting).
@@ -62,40 +91,83 @@ export const DocCodeBlock = CodeBlockLowlight.extend({
   addNodeView() {
     return ({ node, editor, getPos }) => {
       let current = node;
-      const select = document.createElement("select");
-      select.className = "doc-code-lang";
-      select.setAttribute("aria-label", "Code language");
-      for (const { id, label } of CODE_LANGUAGES) select.append(new Option(label, id ?? ""));
-      let unknown = null; // the '<lang> (unknown)' option, while the attr is a language lowlight doesn't know
-      const sync = () => {
-        const attr = current.attrs.language;
-        const id = canonicalLanguage(attr);
-        unknown?.remove();
-        unknown = null;
-        if (id === undefined) {
-          unknown = new Option(`${attr} (unknown)`, `?${attr}`);
-          select.prepend(unknown);
-          select.value = unknown.value;
-        } else select.value = id ?? "";
+      // A button showing the language; clicking it opens a search box over the list (type to filter, arrows
+      // to move, Enter to pick, Escape to close). An unknown attr shows as '<lang> (unknown)' and is never
+      // rewritten unless someone picks a language.
+      const button = h("button", "doc-code-lang");
+      button.type = "button";
+      button.setAttribute("aria-haspopup", "listbox");
+      button.setAttribute("aria-label", "Code language");
+      const search = h("input", "doc-code-search");
+      search.type = "text";
+      search.placeholder = "Search languages";
+      search.spellcheck = false;
+      search.setAttribute("aria-label", "Search languages");
+      const list = h("div", "doc-code-list");
+      list.setAttribute("role", "listbox");
+      const pop = h("div", "doc-code-pop");
+      pop.hidden = true;
+      pop.append(search, list);
+      let shown = [];
+      let active = 0;
+      const highlight = (i) => {
+        active = Math.max(0, Math.min(i, shown.length - 1));
+        [...list.children].forEach((c, n) => c.classList.toggle("on", n === active));
+        list.children[active]?.scrollIntoView?.({ block: "nearest" });
       };
-      select.addEventListener("change", () => {
-        if (select.value.startsWith("?")) return;
+      const choose = (lang) => {
+        close();
         const pos = getPos();
         if (typeof pos !== "number") return;
         const at = editor.state.doc.nodeAt(pos);
-        if (at) editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, null, { ...at.attrs, language: select.value || null }));
+        if (at && canonicalLanguage(at.attrs.language) !== lang) editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, null, { ...at.attrs, language: lang }));
+        editor.commands.focus();
+      };
+      const render = () => {
+        shown = filterLanguages(search.value);
+        const mine = canonicalLanguage(current.attrs.language);
+        list.replaceChildren(...shown.map((l, n) => {
+          const item = h("div", "doc-code-item" + (l.id === mine ? " current" : ""));
+          item.setAttribute("role", "option");
+          item.textContent = l.label;
+          item.addEventListener("mousedown", (e) => { e.preventDefault(); choose(l.id); });
+          item.addEventListener("mousemove", () => { if (active !== n) highlight(n); });
+          return item;
+        }));
+        if (!shown.length) list.append(Object.assign(h("div", "doc-code-empty"), { textContent: "No matching language" }));
+        highlight(search.value ? 0 : Math.max(0, shown.findIndex((l) => l.id === mine)));
+      };
+      const onOutside = (e) => { if (!head.contains(e.target)) close(); };
+      const open = () => {
+        pop.hidden = false;
+        search.value = "";
+        render();
+        search.focus();
+        document.addEventListener("mousedown", onOutside, true);
+      };
+      const close = () => {
+        if (pop.hidden) return;
+        pop.hidden = true;
+        document.removeEventListener("mousedown", onOutside, true);
+      };
+      button.addEventListener("click", () => (pop.hidden ? open() : close()));
+      search.addEventListener("input", render);
+      search.addEventListener("keydown", (e) => {
+        if (e.key === "ArrowDown") { e.preventDefault(); highlight(active + 1); }
+        else if (e.key === "ArrowUp") { e.preventDefault(); highlight(active - 1); }
+        else if (e.key === "Enter") { e.preventDefault(); if (shown[active]) choose(shown[active].id); }
+        else if (e.key === "Escape") { e.preventDefault(); close(); editor.commands.focus(); }
       });
-      const head = document.createElement("div");
-      head.className = "doc-code-head";
+      const head = h("div", "doc-code-head");
       head.contentEditable = "false";
       head.setAttribute("data-own", "");
-      head.append(select);
+      head.append(button, pop);
       const pre = document.createElement("pre");
       const code = document.createElement("code");
       pre.append(code);
-      const dom = document.createElement("div");
-      dom.className = "doc-codeblock";
+      const dom = h("div", "doc-codeblock");
       dom.append(head, pre);
+      const sync = () => { button.textContent = labelFor(current.attrs.language); };
       sync();
       return {
         dom,
@@ -104,11 +176,12 @@ export const DocCodeBlock = CodeBlockLowlight.extend({
           if (next.type !== current.type) return false;
           const changed = next.attrs.language !== current.attrs.language;
           current = next;
-          if (changed) sync();
+          if (changed) { sync(); if (!pop.hidden) render(); }
           return true;
         },
         stopEvent: (e) => head.contains(e.target),
         ignoreMutation: (m) => m.type !== "selection" && !code.contains(m.target),
+        destroy: () => document.removeEventListener("mousedown", onOutside, true),
       };
     };
   },

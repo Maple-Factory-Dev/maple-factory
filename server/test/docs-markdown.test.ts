@@ -226,3 +226,15 @@ test("lowlight decorates ts blocks and leaves plain and unknown blocks alone", (
   assert.deepEqual(decorations("```not-a-language\nconst a: number = 1;\n```\n"), [], "no auto-detect guessing");
   editor.destroy();
 });
+
+test("typing in the language picker filters by name, id or alias (C1)", async () => {
+  const { filterLanguages } = await import("../docs-editor/src/codeblock.js");
+  assert.equal(filterLanguages("").length, CODE_LANGUAGES.length);
+  assert.equal(filterLanguages("py")[0].id, "python");
+  assert.equal(filterLanguages("ts")[0].id, "typescript");
+  assert.equal(filterLanguages("Swi")[0].id, "swift");
+  assert.equal(filterLanguages("txt")[0].id, null, "Plain text by its aliases");
+  assert.equal(filterLanguages("plain")[0].id, null);
+  assert.ok(filterLanguages("script").some((l) => l.id === "javascript"), "matches inside names");
+  assert.deepEqual(filterLanguages("zzzz-nope"), []);
+});

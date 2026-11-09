@@ -150,9 +150,19 @@
 .doc-codeblock { position: relative; }
 .doc-codeblock + * { margin-top: 0.6em; }
 .doc-code-head { position: absolute; top: 6px; right: 8px; z-index: 1; opacity: .55; transition: opacity .12s; }
-.doc-codeblock:hover .doc-code-head, .doc-code-head:focus-within { opacity: 1; }
-.doc-code-lang { appearance: none; -webkit-appearance: none; max-width: 160px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--muted); font: 500 11px/1.4 system-ui, sans-serif; padding: 2px 16px 2px 6px; cursor: pointer; background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%); background-position: right 8px center, right 4px center; background-size: 4px 4px; background-repeat: no-repeat; }
-.doc-code-lang:hover, .doc-code-lang:focus { border-color: var(--stroke); background-color: var(--card); color: var(--text); outline: none; }
+.doc-codeblock:hover .doc-code-head, .doc-code-head:focus-within, .doc-code-head:has(.doc-code-pop:not([hidden])) { opacity: 1; }
+.doc-code-lang { border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--muted); font: 500 11px/1.4 system-ui, sans-serif; padding: 2px 6px; cursor: pointer; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-code-lang::after { content: " \25BE"; }
+.doc-code-lang:hover, .doc-code-lang:focus-visible { border-color: var(--stroke); background: var(--card); color: var(--text); outline: none; }
+.doc-code-pop { position: absolute; top: calc(100% + 4px); right: 0; width: 220px; padding: 4px; background: var(--card); border: 1px solid var(--stroke); border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.18); font: 13px/1.3 system-ui, sans-serif; color: var(--text); }
+.doc-code-pop[hidden] { display: none; }
+.doc-code-search { width: 100%; box-sizing: border-box; border: 1px solid var(--stroke); border-radius: 6px; background: var(--raised); color: var(--text); font: inherit; padding: 5px 8px; margin-bottom: 4px; outline: none; }
+.doc-code-search:focus { border-color: var(--accent); }
+.doc-code-list { max-height: 240px; overflow-y: auto; }
+.doc-code-item { padding: 5px 8px; border-radius: 6px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.doc-code-item.on { background: var(--fill); }
+.doc-code-item.current { font-weight: 600; color: var(--accent); }
+.doc-code-empty { padding: 5px 8px; color: var(--faint); }
 .doc-codeblock pre { padding-right: 24px; }
 .doc-prose .hljs-comment, .doc-prose .hljs-quote { color: #6a737d; font-style: italic; }
 .doc-prose .hljs-keyword, .doc-prose .hljs-selector-tag, .doc-prose .hljs-doctag, .doc-prose .hljs-meta .hljs-keyword, .doc-prose .hljs-template-tag { color: #cf222e; }
