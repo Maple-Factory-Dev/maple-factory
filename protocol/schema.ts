@@ -1037,8 +1037,23 @@ export const structs: Record<string, Struct> = {
   },
   Doc: {
     doc: "A shared planning doc: org-visible, edited by many people at once. Its text is a Yjs document synced over /docs/<id>/sync; this is its index entry.",
-    fields: { id: "uuid", title: "string", goal: "string?", createdBy: "string", createdAt: "u64", updatedAt: "u64", archived: "bool?", icon: "string?" },
-    fieldDocs: { goal: "The goal it belongs to. None: it stands alone.", updatedAt: "Last edit, to its title or its text.", archived: "Read-only and hidden from the list.", icon: "An emoji or SF Symbol name." },
+    fields: { id: "uuid", title: "string", goal: "string?", createdBy: "string", createdAt: "u64", updatedAt: "u64", archived: "bool?", icon: "string?", openThreads: "u32?" },
+    fieldDocs: { goal: "The goal it belongs to. None: it stands alone.", updatedAt: "Last edit, to its title or its text.", archived: "Read-only and hidden from the list.", icon: "An emoji or SF Symbol name.", openThreads: "Comment threads on it not yet resolved." },
+  },
+  DocAnchor: {
+    doc: "Where a comment thread sits in a doc's text: two Yjs relative positions on its `prosemirror` fragment, so concurrent edits move it with the text. Opaque to the server.",
+    fields: { from: "string", to: "string", quote: "string" },
+    fieldDocs: { from: "Base64 Y.RelativePosition of the range's start.", to: "Base64 Y.RelativePosition of the range's end.", quote: "The text selected when the thread started." },
+  },
+  DocComment: {
+    doc: "One comment in a doc's thread.",
+    fields: { id: "uuid", author: "string", text: "string", at: "u64", mentions: "string[]?" },
+    fieldDocs: { mentions: "Members it @mentions (never the author)." },
+  },
+  DocThread: {
+    doc: "A comment thread anchored to text in a shared doc.",
+    fields: { id: "uuid", doc: "uuid", anchor: "DocAnchor?", comments: "DocComment[]", resolved: "bool?", resolvedBy: "string?", resolvedAt: "u64?", createdBy: "string", createdAt: "u64" },
+    fieldDocs: { anchor: "None: a comment on the whole doc." },
   },
   Presence: {
     doc: "Someone with the app open, and the task they're looking at.",
@@ -1665,6 +1680,14 @@ export const unions: Record<string, Union> = {
       "doc.create": { doc: "Make a shared doc, in a goal or standing alone.", fields: { title: "string", goal: "string?", icon: "string?" } },
       "doc.rename": { fields: { id: "uuid", title: "string" } },
       "doc.archive": { doc: "Archive a doc (read-only, hidden), or bring it back.", fields: { id: "uuid", archived: "bool" } },
+      "doc.comment": {
+        doc: "Comment on a doc: start a thread on an anchored range, or reply to one (a reply reopens a resolved thread).",
+        fields: { doc: "uuid", thread: "uuid?", text: "string", anchor: "DocAnchor?" },
+        fieldDocs: { thread: "None: start a new thread (then `anchor` is required)." },
+      },
+      "doc.resolve": { fields: { doc: "uuid", thread: "uuid" } },
+      "doc.reopen": { fields: { doc: "uuid", thread: "uuid" } },
+      "doc.threads": { doc: "Ask for a doc's comment threads; answered with `doc.threads` to this connection.", fields: { doc: "uuid" } },
       presence: { doc: "The task this app is showing, if any, for teammates' presence.", fields: { viewing: "string?" } },
       "session.open": {
         fields: { machine: "string", agent: "string", cwd: "string", cols: "u16", rows: "u16", prompt: "string?" },
@@ -2008,6 +2031,8 @@ export const unions: Record<string, Union> = {
       "note.removed": { fields: { id: "uuid" } },
       "doc.updated": { doc: "A shared doc was made or changed, to every member.", fields: { doc: "Doc" } },
       "doc.removed": { fields: { id: "uuid" } },
+      "doc.threads": { doc: "A doc's comment threads, to the connection that asked.", fields: { doc: "uuid", threads: "DocThread[]" } },
+      "doc.thread.updated": { doc: "A doc comment thread changed, to every member.", fields: { thread: "DocThread" } },
       "draft.updated": { doc: "Your draft, to your apps only.", fields: { draft: "Draft" } },
       "scout.updated": { doc: "How a goal's Scout run is going.", fields: { run: "ScoutRun" } },
       "recurring.updated": { doc: "A recurring task was saved or ran.", fields: { recurring: "Recurring" } },

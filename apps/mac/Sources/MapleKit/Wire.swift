@@ -4441,8 +4441,10 @@ public enum Wire {
         public var archived: Bool?
         /// An emoji or SF Symbol name.
         public var icon: String?
+        /// Comment threads on it not yet resolved.
+        public var openThreads: UInt32?
 
-        public init(id: String, title: String, goal: String? = nil, createdBy: String, createdAt: UInt64, updatedAt: UInt64, archived: Bool? = nil, icon: String? = nil) {
+        public init(id: String, title: String, goal: String? = nil, createdBy: String, createdAt: UInt64, updatedAt: UInt64, archived: Bool? = nil, icon: String? = nil, openThreads: UInt32? = nil) {
             self.id = id
             self.title = title
             self.goal = goal
@@ -4451,6 +4453,80 @@ public enum Wire {
             self.updatedAt = updatedAt
             self.archived = archived
             self.icon = icon
+            self.openThreads = openThreads
+        }
+    }
+
+    /// Where a comment thread sits in a doc's text: two Yjs relative positions on its `prosemirror` fragment, so concurrent edits move it with the text. Opaque to the server.
+    public struct DocAnchor: Codable, Hashable, Sendable {
+        /// Base64 Y.RelativePosition of the range's start.
+        public var from: String
+        /// Base64 Y.RelativePosition of the range's end.
+        public var to: String
+        /// The text selected when the thread started.
+        public var quote: String
+
+        public init(from: String, to: String, quote: String) {
+            self.from = from
+            self.to = to
+            self.quote = quote
+        }
+    }
+
+    /// One comment in a doc's thread.
+    public struct DocComment: Codable, Hashable, Sendable {
+        public var id: String
+        public var author: String
+        public var text: String
+        public var at: UInt64
+        /// Members it @mentions (never the author).
+        public var mentions: [String]?
+
+        public init(id: String, author: String, text: String, at: UInt64, mentions: [String]? = nil) {
+            self.id = id
+            self.author = author
+            self.text = text
+            self.at = at
+            self.mentions = mentions
+        }
+    }
+
+    /// A comment thread anchored to text in a shared doc.
+    public struct DocThread: Codable, Hashable, Sendable {
+        public var id: String
+        public var doc: String
+        /// None: a comment on the whole doc.
+        public var anchor: DocAnchor?
+        public var comments: [DocComment]
+        public var resolved: Bool?
+        public var resolvedBy: String?
+        public var resolvedAt: UInt64?
+        public var createdBy: String
+        public var createdAt: UInt64
+
+        public init(id: String, doc: String, anchor: DocAnchor? = nil, comments: [DocComment] = [], resolved: Bool? = nil, resolvedBy: String? = nil, resolvedAt: UInt64? = nil, createdBy: String, createdAt: UInt64) {
+            self.id = id
+            self.doc = doc
+            self.anchor = anchor
+            self.comments = comments
+            self.resolved = resolved
+            self.resolvedBy = resolvedBy
+            self.resolvedAt = resolvedAt
+            self.createdBy = createdBy
+            self.createdAt = createdAt
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            doc = try c.decode(String.self, forKey: .doc)
+            anchor = try c.decodeIfPresent(DocAnchor.self, forKey: .anchor)
+            comments = try c.decodeIfPresent([DocComment].self, forKey: .comments) ?? []
+            resolved = try c.decodeIfPresent(Bool.self, forKey: .resolved)
+            resolvedBy = try c.decodeIfPresent(String.self, forKey: .resolvedBy)
+            resolvedAt = try c.decodeIfPresent(UInt64.self, forKey: .resolvedAt)
+            createdBy = try c.decode(String.self, forKey: .createdBy)
+            createdAt = try c.decode(UInt64.self, forKey: .createdAt)
         }
     }
 
@@ -6944,6 +7020,51 @@ public enum Wire {
         }
     }
 
+    /// Comment on a doc: start a thread on an anchored range, or reply to one (a reply reopens a resolved thread).
+    public struct ClientMessageDocComment: Codable, Hashable, Sendable {
+        public var doc: String
+        /// None: start a new thread (then `anchor` is required).
+        public var thread: String?
+        public var text: String
+        public var anchor: DocAnchor?
+
+        public init(doc: String, thread: String? = nil, text: String, anchor: DocAnchor? = nil) {
+            self.doc = doc
+            self.thread = thread
+            self.text = text
+            self.anchor = anchor
+        }
+    }
+
+    public struct ClientMessageDocResolve: Codable, Hashable, Sendable {
+        public var doc: String
+        public var thread: String
+
+        public init(doc: String, thread: String) {
+            self.doc = doc
+            self.thread = thread
+        }
+    }
+
+    public struct ClientMessageDocReopen: Codable, Hashable, Sendable {
+        public var doc: String
+        public var thread: String
+
+        public init(doc: String, thread: String) {
+            self.doc = doc
+            self.thread = thread
+        }
+    }
+
+    /// Ask for a doc's comment threads; answered with `doc.threads` to this connection.
+    public struct ClientMessageDocThreads: Codable, Hashable, Sendable {
+        public var doc: String
+
+        public init(doc: String) {
+            self.doc = doc
+        }
+    }
+
     /// The task this app is showing, if any, for teammates' presence.
     public struct ClientMessagePresence: Codable, Hashable, Sendable {
         public var viewing: String?
@@ -8007,6 +8128,10 @@ public enum Wire {
         case docCreate(ClientMessageDocCreate)
         case docRename(ClientMessageDocRename)
         case docArchive(ClientMessageDocArchive)
+        case docComment(ClientMessageDocComment)
+        case docResolve(ClientMessageDocResolve)
+        case docReopen(ClientMessageDocReopen)
+        case docThreads(ClientMessageDocThreads)
         case presence(ClientMessagePresence)
         case sessionOpen(ClientMessageSessionOpen)
         case sessionAttach(ClientMessageSessionAttach)
@@ -8110,6 +8235,10 @@ public enum Wire {
             case "doc.create": self = .docCreate(try ClientMessageDocCreate(from: decoder))
             case "doc.rename": self = .docRename(try ClientMessageDocRename(from: decoder))
             case "doc.archive": self = .docArchive(try ClientMessageDocArchive(from: decoder))
+            case "doc.comment": self = .docComment(try ClientMessageDocComment(from: decoder))
+            case "doc.resolve": self = .docResolve(try ClientMessageDocResolve(from: decoder))
+            case "doc.reopen": self = .docReopen(try ClientMessageDocReopen(from: decoder))
+            case "doc.threads": self = .docThreads(try ClientMessageDocThreads(from: decoder))
             case "presence": self = .presence(try ClientMessagePresence(from: decoder))
             case "session.open": self = .sessionOpen(try ClientMessageSessionOpen(from: decoder))
             case "session.attach": self = .sessionAttach(try ClientMessageSessionAttach(from: decoder))
@@ -8228,6 +8357,18 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .docArchive(let body):
                 try c.encode("doc.archive", forKey: .type)
+                try body.encode(to: encoder)
+            case .docComment(let body):
+                try c.encode("doc.comment", forKey: .type)
+                try body.encode(to: encoder)
+            case .docResolve(let body):
+                try c.encode("doc.resolve", forKey: .type)
+                try body.encode(to: encoder)
+            case .docReopen(let body):
+                try c.encode("doc.reopen", forKey: .type)
+                try body.encode(to: encoder)
+            case .docThreads(let body):
+                try c.encode("doc.threads", forKey: .type)
                 try body.encode(to: encoder)
             case .presence(let body):
                 try c.encode("presence", forKey: .type)
@@ -8750,6 +8891,32 @@ public enum Wire {
         }
     }
 
+    /// A doc's comment threads, to the connection that asked.
+    public struct ServerToClientDocThreads: Codable, Hashable, Sendable {
+        public var doc: String
+        public var threads: [DocThread]
+
+        public init(doc: String, threads: [DocThread] = []) {
+            self.doc = doc
+            self.threads = threads
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            doc = try c.decode(String.self, forKey: .doc)
+            threads = try c.decodeIfPresent([DocThread].self, forKey: .threads) ?? []
+        }
+    }
+
+    /// A doc comment thread changed, to every member.
+    public struct ServerToClientDocThreadUpdated: Codable, Hashable, Sendable {
+        public var thread: DocThread
+
+        public init(thread: DocThread) {
+            self.thread = thread
+        }
+    }
+
     /// Your draft, to your apps only.
     public struct ServerToClientDraftUpdated: Codable, Hashable, Sendable {
         public var draft: Draft
@@ -9128,6 +9295,8 @@ public enum Wire {
         case noteRemoved(ServerToClientNoteRemoved)
         case docUpdated(ServerToClientDocUpdated)
         case docRemoved(ServerToClientDocRemoved)
+        case docThreads(ServerToClientDocThreads)
+        case docThreadUpdated(ServerToClientDocThreadUpdated)
         case draftUpdated(ServerToClientDraftUpdated)
         case scoutUpdated(ServerToClientScoutUpdated)
         case recurringUpdated(ServerToClientRecurringUpdated)
@@ -9177,6 +9346,8 @@ public enum Wire {
             case "note.removed": self = .noteRemoved(try ServerToClientNoteRemoved(from: decoder))
             case "doc.updated": self = .docUpdated(try ServerToClientDocUpdated(from: decoder))
             case "doc.removed": self = .docRemoved(try ServerToClientDocRemoved(from: decoder))
+            case "doc.threads": self = .docThreads(try ServerToClientDocThreads(from: decoder))
+            case "doc.thread.updated": self = .docThreadUpdated(try ServerToClientDocThreadUpdated(from: decoder))
             case "draft.updated": self = .draftUpdated(try ServerToClientDraftUpdated(from: decoder))
             case "scout.updated": self = .scoutUpdated(try ServerToClientScoutUpdated(from: decoder))
             case "recurring.updated": self = .recurringUpdated(try ServerToClientRecurringUpdated(from: decoder))
@@ -9250,6 +9421,12 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .docRemoved(let body):
                 try c.encode("doc.removed", forKey: .type)
+                try body.encode(to: encoder)
+            case .docThreads(let body):
+                try c.encode("doc.threads", forKey: .type)
+                try body.encode(to: encoder)
+            case .docThreadUpdated(let body):
+                try c.encode("doc.thread.updated", forKey: .type)
                 try body.encode(to: encoder)
             case .draftUpdated(let body):
                 try c.encode("draft.updated", forKey: .type)
