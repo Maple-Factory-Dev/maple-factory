@@ -59,6 +59,10 @@ export const enums: Record<string, Enum> = {
     doc: "What a factory session is for.",
     values: { planner: "Writes the plan.", builder: "Builds and proves it.", reviewer: "Reviews the change." },
   },
+  DocSuggestionStatus: {
+    doc: "Where a suggested doc edit stands.",
+    values: { open: "Waiting for a person.", accepted: "Accepted: the doc's text was replaced.", rejected: "Rejected: the doc is unchanged." },
+  },
   GitHubIndicator: {
     doc: "githubstatus.com's overall indicator.",
     values: {
@@ -1055,13 +1059,18 @@ export const structs: Record<string, Struct> = {
   },
   DocComment: {
     doc: "One comment in a doc's thread.",
-    fields: { id: "uuid", author: "string", text: "string", at: "u64", mentions: "string[]?" },
-    fieldDocs: { mentions: "Members it @mentions (never the author)." },
+    fields: { id: "uuid", author: "string", text: "string", at: "u64", mentions: "string[]?", agent: "string?" },
+    fieldDocs: { mentions: "Members it @mentions (never the author).", agent: "Set when an agent wrote it, e.g. \"MF-365 builder\": shown as an agent badge." },
+  },
+  DocSuggestion: {
+    doc: "A proposed replacement for a thread's anchored text (MF-365): a person accepts or rejects it in the editor; agents never edit doc text directly.",
+    fields: { replacement: "string", status: "DocSuggestionStatus", decidedBy: "string?", decidedAt: "u64?" },
+    fieldDocs: { replacement: "Markdown that replaces the anchored text (empty: a deletion).", decidedBy: "Who accepted or rejected it." },
   },
   DocThread: {
     doc: "A comment thread anchored to text in a shared doc.",
-    fields: { id: "uuid", doc: "uuid", anchor: "DocAnchor?", comments: "DocComment[]", resolved: "bool?", resolvedBy: "string?", resolvedAt: "u64?", createdBy: "string", createdAt: "u64" },
-    fieldDocs: { anchor: "None: a comment on the whole doc." },
+    fields: { id: "uuid", doc: "uuid", anchor: "DocAnchor?", comments: "DocComment[]", resolved: "bool?", resolvedBy: "string?", resolvedAt: "u64?", createdBy: "string", createdAt: "u64", suggestion: "DocSuggestion?" },
+    fieldDocs: { anchor: "None: a comment on the whole doc.", suggestion: "Set when the thread is a suggested edit (a tracked change) rather than a plain comment." },
   },
   Presence: {
     doc: "Someone with the app open, and the task they're looking at.",
@@ -1700,6 +1709,7 @@ export const unions: Record<string, Union> = {
       },
       "doc.resolve": { fields: { doc: "uuid", thread: "uuid" } },
       "doc.reopen": { fields: { doc: "uuid", thread: "uuid" } },
+      "doc.suggestion": { doc: "Accept or reject a suggested edit; accepting replaces the anchored text in the doc.", fields: { doc: "uuid", thread: "uuid", accept: "bool" } },
       "doc.threads": { doc: "Ask for a doc's comment threads; answered with `doc.threads` to this connection.", fields: { doc: "uuid" } },
       presence: { doc: "The task this app is showing, if any, for teammates' presence.", fields: { viewing: "string?" } },
       "session.open": {

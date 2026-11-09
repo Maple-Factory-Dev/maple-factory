@@ -544,3 +544,57 @@ test("OrgHub: doc.create is in the index the snapshot sends and doc.updated reac
   await new Promise((r) => setTimeout(r, 0));
   assert.deepEqual(docCalls, [`${id} https://doc/close`]);
 });
+
+// MF-365: an accepted suggestion goes through the real OrgHub → DocHub path: /apply on the live doc, persisted,
+// sent to an open editor as a sync update; a stale one is refused and its thread stays open; the cap holds.
+test("OrgHub doc.suggestion: accept applies through a real DocHub to an open editor; stale and over-cap are refused", async () => {
+  const { seedDoc, readDoc } = await import("../docs-editor/src/headless.js");
+  const h = docHub();
+  const { org, client, store } = orgHub();
+  (org as unknown as { env: { DOC: unknown } }).env.DOC = {
+    idFromName: (n: string) => n,
+    get: () => ({ fetch: (url: string, init?: RequestInit) => h.hub.fetch(new Request(url, init)) }),
+  };
+  const ann = client("ann");
+  await ann.say({ type: "doc.create", title: "Plan" });
+  const id = ann.said()[0].doc.id as string;
+  // An editor seeds the doc through the socket, as the web editor would.
+  const ed = new Client("bob");
+  await ed.connect(h);
+  await settle(h, ed);
+  seedDoc(ed.doc, "We ship on Friday and then celebrate.\n\nSecond paragraph.\n");
+  await settle(h, ed);
+
+  const post = (path: string, body: object) => h.hub.fetch(new Request(`https://doc${path}`, { method: "POST", headers: { "x-doc-id": id }, body: JSON.stringify(body) }));
+  const thread = (quote: string, replacement: string) => {
+    const t = { id: crypto.randomUUID(), doc: id, anchor: null as unknown, comments: [{ id: crypto.randomUUID(), author: "MF-365", text: "Suggested edit.", at: 1, mentions: [], agent: "MF-365 builder" }], resolved: null, resolvedBy: null, resolvedAt: null, createdBy: "MF-365", createdAt: 1, suggestion: { replacement, status: "open", decidedBy: null, decidedAt: null } };
+    return post("/anchor", { quote }).then((r) => r.json()).then((a) => { t.anchor = a; (store as unknown as { saveThread(t: unknown): void }).saveThread(t); return t; });
+  };
+
+  const t1 = await thread("Friday", "Monday");
+  const before = rows(h.db, "updates");
+  await ann.say({ type: "doc.suggestion", doc: id, thread: t1.id, accept: true });
+  assert.ok(!ann.said().some((m) => m.type === "error"));
+  assert.ok(rows(h.db, "updates") > before, "the applied edit is persisted");
+  await settle(h, ed);
+  assert.equal(readDoc(ed.doc).blocks[0].markdown, "We ship on Monday and then celebrate.", "the open editor got it");
+  const saved = (store as unknown as { thread(id: string): { resolved: boolean; suggestion: { status: string; decidedBy: string } } }).thread(t1.id);
+  assert.equal(saved.resolved, true);
+  assert.deepEqual([saved.suggestion.status, saved.suggestion.decidedBy], ["accepted", "ann"]);
+
+  // Someone edits the quoted words first: Accept is refused and the thread stays open.
+  const t2 = await thread("then celebrate", "go home");
+  ((ed.doc.getXmlFragment("prosemirror").get(0) as Y.XmlElement).get(0) as Y.XmlText).insert("We ship on Monday and then ".length, "quietly ");
+  await settle(h, ed);
+  await ann.say({ type: "doc.suggestion", doc: id, thread: t2.id, accept: true });
+  assert.match(ann.said().find((m) => m.type === "error").message, /text changed/);
+  assert.equal((store as unknown as { thread(id: string): { resolved: unknown; suggestion: { status: string } } }).thread(t2.id).suggestion.status, "open");
+
+  // An accept whose update would push the doc past the cap is refused before it lands.
+  const t3 = await thread("Second paragraph.", "x".repeat(5000));
+  (h.hub as unknown as { bytes: number }).bytes = MAX_DOC_BYTES - 100;
+  const n = rows(h.db, "updates");
+  await ann.say({ type: "doc.suggestion", doc: id, thread: t3.id, accept: true });
+  assert.match(ann.said().find((m) => m.type === "error").message, /full/);
+  assert.equal(rows(h.db, "updates"), n);
+});

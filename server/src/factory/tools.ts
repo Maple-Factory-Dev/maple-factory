@@ -37,7 +37,47 @@ const proposal = obj(
   ["title", "brief"],
 );
 
+// Shared docs (MF-365): agents read, comment and suggest; only a person's Accept ever changes a doc's text.
+const docId = str("The doc's id (a uuid), from list_docs.");
+const blockId = str("A block id (b-…) from read_doc's `<!-- block … -->` markers.");
+const quote = str("Exact text from the doc (inside one paragraph, heading or list item) that appears once; with block, once in that block.");
+const DOC_TOOLS: Omit<Tool, "roles">[] = [
+  {
+    name: "list_docs",
+    description: "The org's shared planning docs (not archived): id, title, goal, last edit and open comment threads.",
+    inputSchema: obj({ q: str("Words in the title."), goal: str("Only this goal's docs (its id)."), limit: int("At most this many (default 50).") }),
+  },
+  {
+    name: "read_doc",
+    description: "A shared doc as Markdown, each top-level block preceded by a `<!-- block b-… -->` marker (ids stay put while the block exists), plus its open comment threads and suggested edits and where they sit.",
+    inputSchema: obj({ doc: docId }, ["doc"]),
+  },
+  {
+    name: "comment_on_doc",
+    description: "Start a comment thread on a shared doc: on a quoted span, on a whole block, or (neither) on the whole doc. @login mentions notify that member.",
+    inputSchema: obj({ doc: docId, text: str("The comment (Markdown)."), block: blockId, quote }, ["doc", "text"]),
+  },
+  {
+    name: "reply_to_doc_thread",
+    description: "Reply in one of a doc's comment threads (a reply reopens a resolved thread).",
+    inputSchema: obj({ doc: docId, thread: str("The thread's id, from read_doc."), text: str("The reply (Markdown).") }, ["doc", "thread", "text"]),
+  },
+  {
+    name: "resolve_doc_thread",
+    description: "Resolve one of a doc's comment threads.",
+    inputSchema: obj({ doc: docId, thread: str("The thread's id, from read_doc.") }, ["doc", "thread"]),
+  },
+  {
+    name: "suggest_doc_edit",
+    description: "Suggest replacing a quoted span or a block's text with new Markdown. It shows in the editor as a tracked change a person accepts or rejects; you can't edit a doc's text yourself, only suggest. An empty replacement suggests deleting it.",
+    inputSchema: obj({ doc: docId, replacement: str("The Markdown to put in its place (empty: delete it); at most 10,000 characters."), block: blockId, quote, note: str("Why, shown with the suggestion.") }, ["doc", "replacement"]),
+  },
+];
+export const DOC_TOOL_NAMES = DOC_TOOLS.map((t) => t.name);
+export const isDocTool = (name: string) => DOC_TOOL_NAMES.includes(name);
+
 const TOOLS: Tool[] = [
+  ...DOC_TOOLS.map((t) => ({ ...t, roles: ["planner", "builder", "reviewer"] as Role[] })),
   {
     name: "get_task",
     description: "The task you're working on: brief, plan, Done when items and their evidence, comments, change requests and review findings.",
@@ -285,6 +325,7 @@ const promptsSchema = obj({
 
 /** The tools of a session that isn't working on a factory task: your own Claude Code or Codex on a member's machine. */
 const PERSONAL_TOOLS: Omit<Tool, "roles">[] = [
+  ...DOC_TOOLS,
   {
     name: "get_repo_setup",
     description: "One of the factory's repos' setup: its worktree scripts (run by the runner with /bin/sh -c in the repo's main checkout), its prompt additions per role (added after the org's and before a goal's), the MAPLE_* variables the scripts get, and who changed them last.",

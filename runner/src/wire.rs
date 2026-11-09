@@ -93,6 +93,21 @@ pub enum Role {
     Other,
 }
 
+/// Where a suggested doc edit stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DocSuggestionStatus {
+    /// Waiting for a person.
+    Open,
+    /// Accepted: the doc's text was replaced.
+    Accepted,
+    /// Rejected: the doc is unchanged.
+    Rejected,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
 /// githubstatus.com's overall indicator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2321,6 +2336,23 @@ pub struct DocComment {
     /// Members it @mentions (never the author).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mentions: Option<Vec<String>>,
+    /// Set when an agent wrote it, e.g. "MF-365 builder": shown as an agent badge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+}
+
+/// A proposed replacement for a thread's anchored text (MF-365): a person accepts or rejects it in the editor; agents never edit doc text directly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocSuggestion {
+    /// Markdown that replaces the anchored text (empty: a deletion).
+    pub replacement: String,
+    pub status: DocSuggestionStatus,
+    /// Who accepted or rejected it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decided_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decided_at: Option<u64>,
 }
 
 /// A comment thread anchored to text in a shared doc.
@@ -2342,6 +2374,9 @@ pub struct DocThread {
     pub resolved_at: Option<u64>,
     pub created_by: String,
     pub created_at: u64,
+    /// Set when the thread is a suggested edit (a tracked change) rather than a plain comment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<DocSuggestion>,
 }
 
 /// Someone with the app open, and the task they're looking at.
@@ -3689,6 +3724,13 @@ pub enum ClientMessage {
     DocReopen {
         doc: Uuid,
         thread: Uuid,
+    },
+    /// Accept or reject a suggested edit; accepting replaces the anchored text in the doc.
+    #[serde(rename = "doc.suggestion")]
+    DocSuggestion {
+        doc: Uuid,
+        thread: Uuid,
+        accept: bool,
     },
     /// Ask for a doc's comment threads; answered with `doc.threads` to this connection.
     #[serde(rename = "doc.threads")]

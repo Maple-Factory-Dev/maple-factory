@@ -171,3 +171,36 @@ Images load only from `/attachments/`: an image in pasted or imported Markdown t
 
 A `/research` block (ask an agent from inside a doc, answer embedded) was pulled out of MF-363 and left to
 MF-366; until then a `> [!RESEARCH]` quote imports as an ordinary quote.
+
+## Doc tools for agents (MF-365)
+
+Agent sessions (a task's planner, builder and reviewer, and personal sessions on a member's machine) get six
+tools on the runner's `maple` MCP server, served by OrgHub's engine (`server/src/factory/doc-tools.ts`); the
+runner checks their arguments first (`validate()` in `runner/src/mcp.rs`).
+
+- `list_docs {q?, goal?, limit?}`: the org's docs that aren't archived.
+- `read_doc {doc}`: the doc as Markdown, each top-level block preceded by `<!-- block b-<client>-<clock> -->`
+  (the id of the Y.XmlElement item holding it, so it stays put until that block is deleted), then its open
+  threads and suggestions and the block and text each sits on.
+- `comment_on_doc {doc, text, block? | quote?}`: a thread on a quoted span (exact text, found once), a whole
+  block, or (neither) the whole doc.
+- `reply_to_doc_thread {doc, thread, text}`, `resolve_doc_thread {doc, thread}`.
+- `suggest_doc_edit {doc, replacement, block? | quote?, note?}`: a DocThread with `suggestion` set
+  (`{replacement, status: open|accepted|rejected, decidedBy, decidedAt}`). Agents never write doc text: only a
+  person's **Accept** in the editor (`doc.suggestion {doc, thread, accept}`) changes it.
+
+Docs are looked up only in this OrgHub's store, so only the org's own docs are reachable; archived docs,
+threads of another doc, over 500 threads, replacements over 10,000 characters and anchored spans over 2,000
+characters (an anchor keeps only that much of its quote) are refused. A reply on a decided suggestion leaves it
+resolved. Agents' comments carry `agent` (e.g. "MF-365 builder"), shown as a badge.
+
+DocHub converts headlessly with `server/docs-editor/src/headless.js` (y-tiptap's `initProseMirrorDoc`, the
+editor's TipTap schema and Markdown serializer, no DOM) behind internal routes only OrgHub calls:
+`POST /read`, `/anchor` (a quote or block → the same base64 Y.RelativePosition anchor comments.js makes) and
+`/apply` (Accept: refuses when the anchored text no longer reads as the quote, otherwise replaces it via
+`updateYFragment` on a copy first, so the update's own size counts against the doc cap; the update is persisted, sent to every open socket and touches OrgHub). A refused apply
+comes back to the person as an error and the suggestion stays open.
+
+In the web editor a suggestion's text is struck through in red, and its rail card ("Suggested edit by …")
+shows the original and the rendered replacement with Accept / Reject; decided ones sit under Resolved as Accepted or
+Rejected.

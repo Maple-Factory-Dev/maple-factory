@@ -1099,9 +1099,9 @@ import Foundation
     func archiveDoc(id: String, archived: Bool = true) { send(.docArchive(.init(id: id, archived: archived))) }
     /// A doc's comment threads (MF-364): answered with doc.threads, then kept current by doc.thread.updated.
     func askDocThreads(_ id: String) { send(.docThreads(.init(doc: id))) }
-    /// Relays the docs embed's `command` event: only doc.comment / doc.resolve / doc.reopen get through.
+    /// Relays the docs embed's `command` event: only doc.comment / doc.resolve / doc.reopen / doc.suggestion get through.
     func sendDocCommand(_ command: [String: Any]) {
-        guard let type = command["type"] as? String, ["doc.comment", "doc.resolve", "doc.reopen"].contains(type),
+        guard let type = command["type"] as? String, ["doc.comment", "doc.resolve", "doc.reopen", "doc.suggestion"].contains(type),
               let data = try? JSONSerialization.data(withJSONObject: command),
               let message = try? JSONDecoder().decode(Wire.ClientMessage.self, from: data) else { return }
         send(message)
