@@ -9,7 +9,11 @@ export function receiveDocs(state, m) {
   if (m.type === "snapshot") state.docs = m.docs ?? [];
   else if (m.type === "doc.updated") state.docs = [...(state.docs ?? []).filter((d) => d.id !== m.doc.id), m.doc];
   else if (m.type === "doc.removed") state.docs = (state.docs ?? []).filter((d) => d.id !== m.id);
-  else return false;
+  else if (m.type === "doc.threads") (state.docThreads ??= {})[m.doc] = m.threads;
+  else if (m.type === "doc.thread.updated") {
+    const list = (state.docThreads ??= {})[m.thread.doc] ?? [];
+    state.docThreads[m.thread.doc] = [...list.filter((t) => t.id !== m.thread.id), m.thread];
+  } else return false;
   return true;
 }
 
@@ -36,7 +40,15 @@ export function createDocs({ state, h, send, render, toast, icon, ago, allTasks 
   }
 
   function receive(m) {
-    if (!receiveDocs(state, m)) return false;
+    if (!receiveDocs(state, m)) {
+      // Reconnected: ask again for the open doc's threads.
+      if (m.type === "snapshot" && open) send({ type: "doc.threads", doc: open.id });
+      return false;
+    }
+    if (m.type === "doc.threads" || m.type === "doc.thread.updated") {
+      if (open?.id === (m.doc ?? m.thread.doc)) open.handle?.threadsChanged();
+      return "quiet"; // no full render: the editor redraws its own rail
+    }
     if (m.type === "doc.updated" && pendingCreate && m.doc.createdBy === state.me?.login && m.doc.title === pendingCreate) {
       pendingCreate = null;
       location.hash = `#/docs/${m.doc.id}`;
@@ -75,6 +87,7 @@ export function createDocs({ state, h, send, render, toast, icon, ago, allTasks 
             h("div", { style: "flex:1;min-width:0" },
               h("div", { class: "title" }, d.title || "Untitled doc"),
               h("div", { class: "sub" }, d.goal ? `${goalName(d.goal) ?? d.goal} · ` : "", `edited ${ago(d.updatedAt)} · by ${memberOf(d.createdBy)?.name || d.createdBy}`)),
+            d.openThreads ? h("span", { class: "pill tag doc-threads-count", title: `${d.openThreads} open comment thread${d.openThreads === 1 ? "" : "s"}` }, icon("message-square", { size: 12 }), ` ${d.openThreads}`) : null,
             d.archived && h("span", { class: "pill tag" }, "archived"))))
         : h("div", { class: "card empty" }, icon("file-text", { size: 28 }), archived ? "No archived docs." : "No docs yet."));
   }
@@ -90,6 +103,9 @@ export function createDocs({ state, h, send, render, toast, icon, ago, allTasks 
         me: { login: me.login, name: me.name, avatar: me.avatarUrl },
         members: () => state.members.map((m) => ({ login: m.login, name: m.name, avatar: m.avatarUrl })),
         tasks: () => allTasks().map(taskView),
+        // Comments (MF-364): threads from the feed; commands go straight to the socket.
+        threads: () => state.docThreads?.[id] ?? [],
+        sendThreadCommand: (cmd) => { if (!send(cmd)) toast("Not connected; try again in a moment."); },
         onEvent: (name, data) => {
           if (open?.id !== id) return;
           if (name === "status") open.status = data.status;
@@ -100,6 +116,7 @@ export function createDocs({ state, h, send, render, toast, icon, ago, allTasks 
         },
       });
       window.__mapleDoc = open.handle; // for poking at it from devtools
+      send({ type: "doc.threads", doc: id });
     }, (e) => { open.error = `Couldn't load the editor: ${e.message}`; drawChrome(); });
   }
 

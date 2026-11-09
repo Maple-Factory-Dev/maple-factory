@@ -5,6 +5,10 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.108.0 — 2026-11-09
+
+The runner understands the new shared planning docs messages, so it stays in step with servers that have Docs.
+
 ## 0.107.0 — 2026-11-08
 
 Understands plan diagrams and the Langfuse integration, and moves to toml 1.2 and uuid 1.29.2 in the weekly dependency refresh; nothing changes in how tasks run.

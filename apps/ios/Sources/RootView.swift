@@ -80,7 +80,8 @@ struct RootView: View {
                 tab = .machines
                 machinesPath = NavigationPath([SessionRoute(machine: machine, session: id)])
             case .doc:
-                break // Planning docs (MF-362) have no iPhone view yet; the link just opens the app.
+                // The iPhone app has no Docs screen yet, so a maplefactory://doc link is ignored.
+                break
             }
         }
         // Live, who you are arrives with the snapshot, after the first appearance.

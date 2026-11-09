@@ -13,8 +13,9 @@ import { schema as docSchema, schemaExtensions, TASK_ID } from "./schema.js";
 import { markdownPasteSlice, toMarkdown, fromMarkdown, taskResolver } from "./markdown.js";
 import { SlashMenu, mentionSuggestions, bubbleMenuElement } from "./menus.js";
 import { nodeForUpload } from "./nodes.js";
+import { commentHighlights, createCommentRail, anchorFromRange, resolveAnchor, mappingOf } from "./comments.js";
 
-export { toMarkdown, fromMarkdown, taskResolver, nodeForUpload };
+export { toMarkdown, fromMarkdown, taskResolver, nodeForUpload, anchorFromRange, resolveAnchor, mappingOf };
 
 export const SHARED_TYPE = "prosemirror";
 
@@ -67,8 +68,11 @@ function localProvider(ydoc) {
  * demo: { markdown } opens a local-only doc seeded from Markdown, with no socket (the Mac app's signed-out mockup).
  * Planning visuals (MF-363): tasks() returns full tasks {id, title, state, pr, assignee, goal} for live
  * embeds; upload(file) → {path, name, mime, size} (default: POST /api/attachments); mermaidPage: the diagram page.
+ * Comments (MF-364): threads() → DocThread[]; sendThreadCommand(cmd) relays doc.comment / doc.resolve /
+ * doc.reopen to the server (no rail without it); call handle.threadsChanged() when threads() changes.
+ * onEvent also gets threads {open} for badges.
  */
-export function createDocEditor({ el, docId, me, members = () => [], tasks = () => [], upload = null, mermaidPage = "/app/mermaid/diagram.html", theme, token, origin = location.origin, onEvent = () => {}, demo = null }) {
+export function createDocEditor({ el, docId, me, members = () => [], tasks = () => [], threads = () => [], sendThreadCommand = null, upload = null, mermaidPage = "/app/mermaid/diagram.html", theme, token, origin = location.origin, onEvent = () => {}, demo = null }) {
   const ydoc = new Y.Doc();
   let provider;
   if (demo) {
@@ -85,9 +89,13 @@ export function createDocEditor({ el, docId, me, members = () => [], tasks = () 
   const resolver = () => taskResolver(tasks());
   const ctx = () => ({ members: members(), tasks: resolver() });
 
+  const shell = document.createElement("div");
+  shell.className = "doc-editor-shell" + (sendThreadCommand ? " with-rail" : "");
   const root = document.createElement("div");
   root.className = "doc-editor";
-  el.append(root);
+  shell.append(root);
+  el.append(shell);
+  let rail = null;
   const bubble = document.createElement("div");
 
   const send = upload ?? (async (file) => {
@@ -132,6 +140,7 @@ export function createDocEditor({ el, docId, me, members = () => [], tasks = () 
       CollaborationCaret.configure({ provider, user }),
       SlashMenu,
       TaskRefTyping(resolver),
+      Extension.create({ name: "docComments", addProseMirrorPlugins: () => [commentHighlights(() => ({ threads: sendThreadCommand ? threads() : [], active: rail?.active(), ydoc }))] }),
       BubbleMenu.configure({ element: bubble, shouldShow: ({ editor, from, to }) => (from !== to || editor.isActive("table")) && !editor.isActive("codeBlock") }),
       Extension.create({
         name: "markdownPaste",
@@ -169,7 +178,11 @@ export function createDocEditor({ el, docId, me, members = () => [], tasks = () 
     ],
     editorProps: { attributes: { class: "doc-prose", spellcheck: "true" } },
   });
-  bubble.append(bubbleMenuElement(editor));
+  if (sendThreadCommand) {
+    rail = createCommentRail({ editor, ydoc, docId, threads, members, send: sendThreadCommand, onCount: (open) => onEvent("threads", { open }) });
+    shell.append(rail.rail);
+  }
+  bubble.append(bubbleMenuElement(editor, rail ? () => rail.startThread() : null));
 
   const peers = () => {
     const out = new Map();
@@ -195,6 +208,10 @@ export function createDocEditor({ el, docId, me, members = () => [], tasks = () 
     exportMarkdown: () => toMarkdown(editor.state.doc, { tasks: resolver() }),
     /** The host's tasks changed (a feed update): task embeds redraw, the selection stays. */
     tasksChanged: () => host.listeners.forEach((f) => f()),
+    /** The host's threads changed (doc.threads / doc.thread.updated): highlights and the rail redraw. */
+    threadsChanged: () => rail?.refresh(),
+    /** Comment on the current selection (the bubble menu's Comment). */
+    startThread: () => rail?.startThread(),
     insertFiles,
     setTheme,
     setEditable: (on) => editor.setEditable(on),
@@ -204,7 +221,7 @@ export function createDocEditor({ el, docId, me, members = () => [], tasks = () 
       editor.destroy();
       provider.destroy();
       ydoc.destroy();
-      root.remove();
+      shell.remove();
     },
   };
 }
