@@ -149,7 +149,7 @@
    blocks get no token spans, so they look as they always did. */
 .doc-codeblock { position: relative; }
 .doc-codeblock + * { margin-top: 0.6em; }
-.doc-code-head { position: absolute; top: 6px; right: 8px; z-index: 1; opacity: .55; transition: opacity .12s; }
+.doc-code-head { position: absolute; top: 4px; right: 8px; z-index: 1; opacity: .7; transition: opacity .12s; }
 .doc-codeblock:hover .doc-code-head, .doc-code-head:focus-within, .doc-code-head:has(.doc-code-pop:not([hidden])) { opacity: 1; }
 .doc-code-lang { border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--muted); font: 500 11px/1.4 system-ui, sans-serif; padding: 2px 6px; cursor: pointer; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .doc-code-lang::after { content: " \25BE"; }
@@ -163,7 +163,7 @@
 .doc-code-item.on { background: var(--fill); }
 .doc-code-item.current { font-weight: 600; color: var(--accent); }
 .doc-code-empty { padding: 5px 8px; color: var(--faint); }
-.doc-codeblock pre { padding-right: 24px; }
+.doc-codeblock pre { padding-top: 28px; }
 /* Token colors: highlight.js's GitHub theme, and GitHub Dark when the editor is dark (data-theme from the
    embed, or the system setting in /app, which doesn't set data-theme). */
 .doc-editor { --hl-keyword: #d73a49; --hl-title: #6f42c1; --hl-const: #005cc5; --hl-string: #032f62; --hl-builtin: #e36209; --hl-comment: #6a737d; --hl-name: #22863a; --hl-subst: #24292e; --hl-bullet: #735c0f; --hl-add: #22863a; --hl-add-bg: #f0fff4; --hl-del: #b31d28; --hl-del-bg: #ffeef0; }
