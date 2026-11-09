@@ -2789,6 +2789,11 @@ final class AppState {
             case "banner": Notifier.shared.opening = (parts[1], false, true)
             // `type:<text>` types into a Markdown editor; `pickerkey:down|up|pick|close` presses a key in the
             // open @/# picker; `post:1` sends the task composer; `openref:<id>` clicks a rendered task reference.
+            case "docpeer" where parts.count > 2:
+                let login = parts[1]
+                NotificationCenter.default.post(name: DocPage.demoPeer, object: nil, userInfo: [
+                    "login": login, "name": login.capitalized, "color": "#" + parts[2],
+                    "avatar": parts.count > 3 ? "https://github.com/\(login).png" : ""])
             case "type": NotificationCenter.default.post(name: MarkdownEditor.demoType, object: nil, userInfo: ["text": parts.dropFirst().joined(separator: ":")])
             case "pickerkey":
                 let key: MentionKey? = switch parts[1] { case "up": .up; case "down": .down; case "pick": .pick; case "close": .close; default: nil }

@@ -240,6 +240,9 @@ struct NewDocSheet: View {
 
 /// One doc, open in the shared editor, under a native title bar: title, sync dot, who's editing.
 struct DocPage: View {
+    /// A headless run's `docpeer:<login>:<rrggbb>[:avatar]` action: someone else joins the open doc, with
+    /// their GitHub avatar (github.com/<login>.png) when `avatar` is given.
+    static let demoPeer = Notification.Name("DocPage.demoPeer")
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
     @Environment(\.colorScheme) private var scheme
@@ -273,6 +276,9 @@ struct DocPage: View {
         }
         .background(Theme.editorBG)
         .task(id: "\(id)-\(client.isSignedIn)") { if client.isSignedIn { client.askDocThreads(id) } }
+        .onReceive(NotificationCenter.default.publisher(for: Self.demoPeer)) { note in
+            if let peer = (note.userInfo as? [String: Any]).flatMap(DocEditorStatus.Peer.parse) { status.peers.append(peer) }
+        }
     }
 
     /// The doc's threads as JSON for `mapleDocs.updateThreads` (MF-364).
