@@ -485,6 +485,8 @@ function render() {
     document.querySelector(`[data-nav="${nav}"]`)?.setAttribute("aria-label", label);
   document.title = `${waiting ? `(${waiting}) ` : ""}Maple Factory`;
   const next = { task: () => taskView(r.id, r.artifact), tasks: tasksView, new: () => newTaskView(r), notes: notesView, docs: () => docs.listView(r), doc: () => docs.docView(r.id), machines: machinesView, note: () => noteView(r.id), settings: () => settings.view(r.section) }[r.name]?.() ?? inboxView();
+  // The open doc's editor never leaves the page: redraw only around it, or ProseMirror loses focus and typing.
+  if (r.name === "doc" && docs.patch($("main"), next)) return;
   // Keep what someone's typing: re-render only around the boxes being typed in.
   mount(next, !!document.activeElement?.closest?.("[data-keep]"));
 }
@@ -951,7 +953,8 @@ function taskView(id, artifact = null) {
       h("span", { class: `pill s-${t.state}` }, stateLabel(t)),
       t.risk && riskPill(t.risk.level),
       ownerControl(t),
-      h("span", { class: "muted" }, `${goal?.name ?? ""}${(goal?.repos?.length ?? 0) > 1 ? ` · ${t.repo ?? goal.repo}` : ""} · updated ${ago(t.updatedAt)}`)),
+      h("span", { class: "muted" }, `${goal?.name ?? ""}${(goal?.repos?.length ?? 0) > 1 ? ` · ${t.repo ?? goal.repo}` : ""} · updated ${ago(t.updatedAt)}`),
+      goal && docs.goalLink(goal.id)),
     (t.after ?? []).length > 0 && h("div", { class: "muted", style: "font-size:13px;margin-top:4px" }, "Builds on ",
       t.after.map((id, i) => [i ? ", " : "", h("a", { href: `#/t/${id}` }, id)])),
     effortLine(t),

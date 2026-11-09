@@ -141,7 +141,39 @@ export function createDocs({ state, h, send, render, toast, icon, ago, allTasks 
       h("div", { class: "sub muted" }, doc.goal ? `${goalName(doc.goal) ?? doc.goal} · ` : "", `Created by ${memberOf(doc.createdBy)?.name || doc.createdBy} · edited ${ago(doc.updatedAt)}`),
       doc.archived
         ? h("div", { class: "card empty", "data-archived": "" }, "This doc is archived and read-only. Unarchive it to edit.")
-        : host);
+        // Building this tree must not pull a live editor out of the page: a placeholder stands in, and patch() keeps it.
+        : host?.isConnected ? h("div", { "data-doc-slot": id }) : host);
+  }
+
+  /**
+   * Updates the open doc page in place around the editor host, so a feed message never detaches the
+   * contenteditable (that blurs it and drops its selection). Returns false when a full mount is needed.
+   */
+  function patch(main, next) {
+    const slot = next.querySelector("[data-doc-slot]");
+    if (!slot) return false;
+    const host = open?.host;
+    const page = main.firstElementChild;
+    if (!host || host.parentNode !== page || slot.parentNode !== next) { if (host) slot.replaceWith(host); return false; }
+    const active = document.activeElement;
+    const keepTitle = active?.classList?.contains("doc-title") && page.contains(active) ? active : null;
+    for (const el of [...page.children]) if (el !== host && el !== keepTitle) el.remove();
+    // Neither the host nor a title being typed in moves: everything else goes in around them, in order.
+    const anchors = [keepTitle, host].filter(Boolean);
+    let i = 0;
+    for (const el of [...next.children]) {
+      const at = el === slot ? host : keepTitle && el.classList.contains("doc-title") ? keepTitle : null;
+      if (at) { i = anchors.indexOf(at) + 1; continue; }
+      anchors[i] ? page.insertBefore(el, anchors[i]) : page.append(el);
+    }
+    page.className = next.className;
+    return true;
+  }
+
+  /** "N docs" next to a goal's name, opening the goal's docs (or a new one's place when there are none). */
+  function goalLink(goal) {
+    const n = listDocs(state.docs, { goal }).length;
+    return h("a", { class: "muted", href: `#/docs?goal=${goal}`, "data-goal-docs": goal }, n === 1 ? "1 doc" : n ? `${n} docs` : "Docs");
   }
 
   function exportMd(doc) {
@@ -154,5 +186,5 @@ export function createDocs({ state, h, send, render, toast, icon, ago, allTasks 
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
-  return { receive, listView, docView, close, isOpen: () => !!open };
+  return { receive, listView, docView, close, patch, goalLink, isOpen: () => !!open };
 }
