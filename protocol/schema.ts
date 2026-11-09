@@ -167,7 +167,7 @@ export const enums: Record<string, Enum> = {
       classifier: "The org's risk classifier: the reviewer graded the built change against the org's prompt.",
     },
   },
-  IntegrationKind: { values: { slack: "Slack's /maple slash command.", linear: "Linear issues with the factory's label.", jira: "Jira issues with the factory's label." } },
+  IntegrationKind: { values: { slack: "Slack's /maple slash command.", linear: "Linear issues with the factory's label.", jira: "Jira issues with the factory's label.", langfuse: "Langfuse: the factory sends it each task as a trace, with its sessions' cost and its review outcomes as scores (outbound only)." } },
   McpTransport: { values: { stdio: "A local command the runner starts.", http: "A server reached by URL (streamable HTTP)." } },
   PromptChoice: { values: { yes: "Allow it once (the menu's 1).", no: "Deny it (Esc: the menu's No isn't always 2)." } },
   RepoSource: { values: { github: "Granted to the GitHub App.", manual: "Added by an admin." } },
@@ -917,7 +917,7 @@ export const structs: Record<string, Struct> = {
     fieldDocs: {
       values: "The fields that have a value, by name. Secret ones are blank, so only that they're set shows.",
       fromEnv: "Fields whose value comes from the Worker's environment variables, not Settings.",
-      webhookUrl: "Where it sends its events: a full URL when the factory has a PUBLIC_URL, otherwise a path on the server the app is signed in to.",
+      webhookUrl: "Where it sends its events: a full URL when the factory has a PUBLIC_URL, otherwise a path on the server the app is signed in to. Empty for an outbound integration (Langfuse), which the factory sends to and nothing sends back.",
       setupUrl: "A link that creates its app on the other side with this factory's URLs filled in (Slack's new-app page with a manifest). None: it has none, or the factory has no PUBLIC_URL.",
       status: "How it's set up on the other side, in a few words (Slack: the channels @Maple is in).",
       lastEventAt: "When it last reached the factory and was verified.",
@@ -1751,6 +1751,10 @@ export const unions: Record<string, Union> = {
       "integrations.save": {
         doc: "Admins only: one integration's settings. A blank secret value keeps the stored one.",
         fields: { kind: "IntegrationKind", enabled: "bool", values: "map<string>" },
+      },
+      "integrations.test": {
+        doc: "Admins only: try an outbound integration with its saved settings (Langfuse: send one test trace). The answer comes back as a toast; a failure also becomes its last error.",
+        fields: { kind: "IntegrationKind" },
       },
       "repos.refresh": { doc: "Read the repos the GitHub App is installed on again." },
       "repos.add": { doc: "Admins only: a repo the GitHub App doesn't list (or there's no app).", fields: { name: "string" } },
