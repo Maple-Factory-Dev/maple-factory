@@ -83,6 +83,17 @@ const TOOLS: Tool[] = [
           ),
           "Pictures of the change: required for UI work.",
         ),
+        diagrams: list(
+          obj(
+            {
+              title: str("e.g. \"How a release flows\"."),
+              source: str("Mermaid source (flowchart, sequenceDiagram, stateDiagram-v2, classDiagram…), at most 20,000 characters. No HTML, no click handlers: it renders offline in strict mode."),
+              notes: list(str(""), "What to look at, in order."),
+            },
+            ["title", "source"],
+          ),
+          "0–6 Mermaid diagrams: a flow, the architecture or a state machine, when a picture explains the change better than prose. A re-plan replaces them.",
+        ),
         otherRepos: list(
           obj(
             {

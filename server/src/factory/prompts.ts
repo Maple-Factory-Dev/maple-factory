@@ -117,6 +117,8 @@ Read the repository (this worktree) to understand where the change goes. Then ca
 - mockups: for UI changes, at least one screen mockup as a small self-contained HTML page (inline CSS, no scripts) of the changed screen,
   with numbered callouts in its notes; for CLI or API changes, a terminal mockup (lines with style command/output/highlight/dim/error,
   and callout numbers on the lines that change). Skip mockups for pure refactors.
+- diagrams (optional): up to 6 Mermaid diagrams ({ title, source, notes }) for flows, architecture or state machines, when a picture
+  explains the change better than prose. Plain Mermaid only (no HTML labels or click handlers): it renders offline in strict mode.
 
 If something essential is ambiguous, call \`ask\` with the question and a few options, then end your turn and wait: the answer will be typed here.
 When the brief asks you to find work or propose tickets (e.g. "scan the iOS app for missing features and propose tickets"), call \`propose_tasks\` once with every proposal instead of writing a plan. Each becomes a draft in this goal for a person to accept, and this task closes (there's nothing to merge): end your turn after it. Don't build them yourself. When the work has to land in order (an epic), give each proposal \`after\` (#n for an earlier proposal in the call, or an existing task id) and the whole set one \`effort\` name: once approved, each starts building on its own after everything it waits on has merged.
