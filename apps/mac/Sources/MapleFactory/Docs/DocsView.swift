@@ -268,6 +268,8 @@ struct DocPage: View {
                 DocEditorView(docId: id, source: source, me: me, members: members, tasks: tasks,
                               threadsJSON: threadsJSON, dark: scheme == .dark,
                               status: status, reloadToken: reload,
+                              focusOnSync: state.focusDoc == id,
+                              onFocused: { if state.focusDoc == id { state.focusDoc = nil } },
                               onCommand: { client.sendDocCommand($0) }) { task in state.openFullView(task) }
             } else {
                 ContentUnavailableView("Doc not found", systemImage: "doc.richtext", description: Text("It may have been removed."))

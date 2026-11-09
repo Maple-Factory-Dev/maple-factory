@@ -4,6 +4,7 @@ import { Editor, Extension, InputRule } from "@tiptap/core";
 import Collaboration from "@tiptap/extension-collaboration";
 import CollaborationCaret from "@tiptap/extension-collaboration-caret";
 import BubbleMenu from "@tiptap/extension-bubble-menu";
+import { Placeholder } from "@tiptap/extensions";
 import { Plugin } from "@tiptap/pm/state";
 import * as Y from "yjs";
 import { WebsocketProvider } from "y-websocket";
@@ -13,11 +14,15 @@ import { schema as docSchema, schemaExtensions, TASK_ID } from "./schema.js";
 import { markdownPasteSlice, toMarkdown, fromMarkdown, taskResolver } from "./markdown.js";
 import { SlashMenu, mentionSuggestions, bubbleMenuElement } from "./menus.js";
 import { nodeForUpload } from "./nodes.js";
+import { ensureStarterBlock, STARTER_ORIGIN } from "./starter.js";
 import { commentHighlights, createCommentRail, anchorFromRange, resolveAnchor, mappingOf } from "./comments.js";
 
+export { ensureStarterBlock, STARTER_ORIGIN };
 export { toMarkdown, fromMarkdown, taskResolver, nodeForUpload, anchorFromRange, resolveAnchor, mappingOf };
 
 export const SHARED_TYPE = "prosemirror";
+/** The empty doc's hint, also in editor.css's `p.is-editor-empty::before`. */
+export const PLACEHOLDER = "Type / for blocks, @ to mention, # for a task";
 
 const PALETTE = ["#d24e26", "#2f6feb", "#14a866", "#7c5ce0", "#c27c0e", "#0e8fa3", "#d9488f", "#5b6b86"];
 /** A member's cursor color: the same for a login everywhere. */
@@ -138,6 +143,8 @@ export function createDocEditor({ el, docId, me, members = () => [], tasks = () 
       Extension.create({ name: "docVisuals", addStorage: () => ({ pick, embedNext: false }) }),
       Collaboration.configure({ document: ydoc, field: SHARED_TYPE }),
       CollaborationCaret.configure({ provider, user }),
+      // The empty doc's hint (MF-382): marks the first empty paragraph `is-editor-empty`; editor.css draws the text.
+      Placeholder.configure({ placeholder: PLACEHOLDER }),
       SlashMenu,
       TaskRefTyping(resolver),
       Extension.create({ name: "docComments", addProseMirrorPlugins: () => [commentHighlights(() => ({ threads: sendThreadCommand ? threads() : [], active: rail?.active(), ydoc }))] }),
@@ -193,10 +200,14 @@ export function createDocEditor({ el, docId, me, members = () => [], tasks = () 
     return [...out.values()];
   };
   provider.on("status", ({ status }) => onEvent("status", { status }));
-  provider.on("sync", (synced) => synced && onEvent("synced", {}));
+  provider.on("sync", (synced) => {
+    if (!synced) return;
+    ensureStarterBlock(ydoc);
+    onEvent("synced", {});
+  });
   provider.on("connection-close", (e) => e && e.code !== 1000 && onEvent("error", { message: e.reason || `closed (${e.code})`, code: e.code }));
   provider.awareness.on("change", () => onEvent("peers", peers()));
-  if (demo) queueMicrotask(() => { onEvent("status", { status: "connected" }); onEvent("synced", {}); });
+  if (demo) queueMicrotask(() => { ensureStarterBlock(ydoc); onEvent("status", { status: "connected" }); onEvent("synced", {}); });
 
   const setTheme = (t) => { root.dataset.theme = t === "dark" ? "dark" : "light"; };
   if (theme) setTheme(theme);
@@ -215,7 +226,8 @@ export function createDocEditor({ el, docId, me, members = () => [], tasks = () 
     insertFiles,
     setTheme,
     setEditable: (on) => editor.setEditable(on),
-    focus: () => editor.commands.focus(),
+    /** Puts the caret at the end of the doc (a just-created doc opens ready to type). */
+    focus: () => editor.commands.focus("end"),
     peers,
     destroy() {
       editor.destroy();
