@@ -2610,6 +2610,16 @@ final class AppState {
             // The About window's Check for Updates… button (`about:check`; with MAPLE_UPDATE_DEMO for an answer).
             case "about": AboutView.checkForUpdates()
             case "toast": showToast(parts.dropFirst().joined(separator: ":"), icon: "number")
+            case "doc" where parts.count > 2:
+                // doc:create:<title> · doc:rename:<title>:<new title> · doc:archive:<title> · doc:open:<title>: what Docs' buttons send.
+                let named = client?.docs.first { $0.title == parts[2] && $0.archived != true }
+                switch parts[1] {
+                case "create": client?.createDoc(title: parts[2], goal: nil)
+                case "rename": if let named, parts.count > 3 { client?.renameDoc(id: named.id, title: parts[3]) }
+                case "archive": if let named { client?.archiveDoc(id: named.id) }
+                case "open": if let named { destination = .doc(named.id) }
+                default: break
+                }
             case "wait": try? await Task.sleep(for: .seconds(Double(parts[1]) ?? 1))
             case "shot": await Headless.shot(parts[1])
             // A live session opened from Machines (`opensession:<machine>:<id>`), and its Share popover (`share:open`).

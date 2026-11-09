@@ -1077,7 +1077,7 @@ import Foundation
     /// the JS bridge. Nothing else gets the token.
     func docEmbed(theme: String) -> (url: URL, token: String)? {
         guard let server, let token,
-              var parts = URLComponents(url: server.appendingPathComponent("app/docs/embed.html"), resolvingAgainstBaseURL: false)
+              var parts = URLComponents(url: server.appendingPathComponent("app/docs/embed"), resolvingAgainstBaseURL: false)
         else { return nil }
         parts.queryItems = [URLQueryItem(name: "theme", value: theme)]
         guard let url = parts.url else { return nil }

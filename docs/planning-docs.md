@@ -96,7 +96,7 @@ opens one. One editor, one sync path, no native CRDT.
   (upsert) and `doc.removed`. `activeDocs` drops archived ones, newest edit first. The sidebar's Docs page lists
   them by goal ("No goal" last); a goal's overview has a Docs section. Create, rename and archive send `doc.create`,
   `doc.rename` and `doc.archive`. There's no command to move a doc to another goal yet.
-- **Native bridge:** `DocEditorView` hosts `<server>/app/docs/embed.html?theme=…` in a WKWebView with a `maple`
+- **Native bridge:** `DocEditorView` hosts `<server>/app/docs/embed?theme=…` (the server redirects `embed.html` there, dropping the query) in a WKWebView with a `maple`
   message handler. On `ready` it calls `mapleDocs.load(args)` through `callAsyncJavaScript` with the token as a
   typed argument, so the token is never in a URL (each load and navigation is logged as `[docs] load|navigate <url>`).
   It calls `setTheme` when the app's appearance changes, opens `openTask` natively, shows `status`/`synced`/`peers`
