@@ -63,6 +63,10 @@ struct SettingsView: View {
                     }
                     .accessibilityIdentifier("settings-\(route.rawValue)")
                 }
+                NavigationLink(value: DayReportRoute()) {
+                    SettingsRow("Day report", icon: "doc.text", color: .indigo)
+                }
+                .accessibilityIdentifier("settings-dayReport")
                 NavigationLink(value: UsageRoute()) {
                     SettingsRow("Usage", icon: "gauge.with.dots.needle.33percent", color: .orange)
                 }
@@ -109,6 +113,7 @@ struct SettingsView: View {
         }
         .navigationDestination(for: StatsRoute.self) { _ in StatisticsView() }
         .navigationDestination(for: UsageRoute.self) { _ in UsageView() }
+        .navigationDestination(for: DayReportRoute.self) { _ in DayReportView() }
         .navigationDestination(for: NotificationsRoute.self) { _ in NotificationSettingsView() }
     }
 

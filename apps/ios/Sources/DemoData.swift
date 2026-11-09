@@ -390,6 +390,52 @@ enum DemoData {
         "warning": .string("Runs the package's install scripts on your machine."),
     ])])
 
+    /// Your `report` for a day: today has something in every section, built from the demo feed's tasks;
+    /// any other day is empty, so the empty state shows a day back.
+    static func dayReport(since: UInt64, until: UInt64) -> Wire.DayReport {
+        let day = Date(timeIntervalSince1970: Double(since) / 1000)
+        let title = "EOD - " + day.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
+        guard Calendar.current.isDateInToday(day) else {
+            return .init(login: me, since: since, until: until, title: title, sections: [],
+                         markdown: "**\(title)**\n\nNothing to report.", slack: "*\(title)*\nNothing to report.")
+        }
+        func item(_ id: String, _ title: String, _ goal: String, pr: UInt32? = nil, repo: String = "acme/app", owner: String = me, note: String? = nil) -> Wire.ReportItem {
+            .init(id: id, url: "https://factory.acme.dev/t/\(id)", title: title, goal: goal, owner: owner, pr: pr,
+                  prUrl: pr.map { "https://github.com/\(repo)/pull/\($0)" }, at: ago(30), note: note)
+        }
+        let sections: [Wire.ReportSection] = [
+            .init(key: "merged", title: "Merged", items: [
+                item("APP-9", "Sign in with GitHub's device flow", "Mobile app", pr: 88),
+                item("APP-11", "Queue actions taken offline", "Mobile app", pr: 91),
+            ]),
+            .init(key: "reviewed", title: "Reviewed", items: [
+                item("API-31", "Rate limit API tokens per org", "Public API", pr: 412, repo: "acme/api", owner: "kit", note: "review"),
+                item("APP-14", "Push notifications when a plan needs your approval", "Mobile app", owner: "sam", note: "approved the plan"),
+            ]),
+            .init(key: "pendingReview", title: "Waiting on review", items: [
+                item("API-29", "Token scopes: read, write and admin", "Public API", pr: 409, repo: "acme/api"),
+            ]),
+            .init(key: "inProgress", title: "In progress", items: [
+                item("APP-12", "Offline cache for the inbox", "Mobile app", note: "building"),
+                item("APP-16", "Crash reports with Sentry", "Mobile app", note: "building"),
+            ]),
+        ]
+        var markdown = "**\(title)**\n"
+        var slack = "*\(title)*\n"
+        for section in sections {
+            markdown += "\n**\(section.title)**\n"
+            slack += "\n*\(section.title)*\n"
+            for i in section.items {
+                let pr = i.pr.map { " ([PR #\($0)](\(i.prUrl ?? "")))" } ?? ""
+                let slackPr = i.pr.map { " (<\(i.prUrl ?? "")|PR #\($0)>)" } ?? ""
+                let note = i.note.map { " - \($0)" } ?? ""
+                markdown += "- [\(i.id)](\(i.url)) \(i.title)\(note)\(pr)\n"
+                slack += "• <\(i.url)|\(i.id)> \(i.title)\(note)\(slackPr)\n"
+            }
+        }
+        return .init(login: me, since: since, until: until, title: title, sections: sections, markdown: markdown, slack: slack)
+    }
+
     /// A compact `stats` reply for Statistics; its counts scale with the range, so 24h reads smaller than 90d.
     static func stats(days: Int) -> Wire.StatsSummary {
         let scale = Double(days) / 30
