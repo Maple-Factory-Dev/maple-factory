@@ -14,6 +14,18 @@ import m7 from "../migrations/0007_slack_links.sql";
 import m8 from "../migrations/0008_machine_capabilities.sql";
 
 export { OrgHub, MachineHub, DocHub };
+import { DurableObject } from "cloudflare:workers";
+
+/** Spike only: an alarm that records when it fired, and whether deleteAll() takes the alarm with it. */
+export class AlarmProbe extends DurableObject {
+  async fetch(request: Request): Promise<Response> {
+    const op = new URL(request.url).pathname;
+    if (op === "/set") { await this.ctx.storage.setAlarm(Date.now() + 1000); return Response.json({ alarm: await this.ctx.storage.getAlarm() }); }
+    if (op === "/forget") { await this.ctx.storage.setAlarm(Date.now() + 60_000); await this.ctx.storage.deleteAll(); return Response.json({ alarmAfterDeleteAll: await this.ctx.storage.getAlarm() }); }
+    return Response.json({ fired: (await this.ctx.storage.get("fired")) ?? null, alarm: await this.ctx.storage.getAlarm() });
+  }
+  async alarm() { await this.ctx.storage.put("fired", Date.now()); }
+}
 
 const MIGRATIONS: [string, string][] = [
   ["0001_init.sql", m1], ["0002_ended_by.sql", m2], ["0003_settings.sql", m3], ["0004_admin_grants.sql", m4],
@@ -46,6 +58,8 @@ export default {
         return Response.json({ error: String((e as Error)?.stack ?? e) }, { status: 500 });
       }
     }
+    const ap = /^\/__celld\/alarm\/(\w+)\/(set|forget|state)$/.exec(url.pathname);
+    if (ap) return env.ALARM_PROBE.get(env.ALARM_PROBE.idFromName(ap[1])).fetch(`https://probe/${ap[2]}`);
     if (url.pathname === "/__celld/fetch") {
       try {
         const r = await fetch(url.searchParams.get("u")!, { method: "POST", body: "probe" });

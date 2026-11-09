@@ -13,12 +13,14 @@
     "bindings": [
       { "name": "ORG", "class_name": "OrgHub" },
       { "name": "MACHINE", "class_name": "MachineHub" },
-      { "name": "DOC", "class_name": "DocHub" }
+      { "name": "DOC", "class_name": "DocHub" },
+      { "name": "ALARM_PROBE", "class_name": "AlarmProbe" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["OrgHub", "MachineHub"] },
-    { "tag": "v2", "new_sqlite_classes": ["DocHub"] }
+    { "tag": "v2", "new_sqlite_classes": ["DocHub"] },
+    { "tag": "v3", "new_sqlite_classes": ["AlarmProbe"] }
   ],
   "d1_databases": [
     { "binding": "DB", "database_name": "maple", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }
