@@ -338,7 +338,7 @@ private struct PDFArtifact: NSViewRepresentable {
 // MARK: - Demo data
 
 extension FactoryData {
-    /// A chart page, drawn by its own inline script, and an SVG: the demo factory's artifacts.
+    /// A chart page, drawn by its own inline script, an SVG and a Markdown note with a table: the demo factory's artifacts.
     static let seedArtifacts: [String: [TaskArtifact]] = [
         "ATL-152": [
             TaskArtifact(id: "art-chart", title: "Lockout attempts", kind: .html, summary: "Sign-in attempts per minute before and after the lockout, drawn from the load test",
@@ -346,13 +346,36 @@ extension FactoryData {
             TaskArtifact(id: "art-flow", title: "Lockout flow", kind: .svg, summary: "How a fifth wrong password locks the account for 15 minutes",
                          file: demoFlowPath, mime: "image/svg+xml", bytes: UInt64(demoFlow.utf8.count), by: "builder", at: 0, version: 1),
         ],
+        "ATL-136": [
+            TaskArtifact(id: "art-notes", title: "Lockout thresholds", kind: .markdown, summary: "The limits the lockout uses, as a table",
+                         file: demoNotesPath, mime: "text/markdown", bytes: UInt64(demoNotes.utf8.count), by: "builder", at: 0, version: 1),
+        ],
     ]
 
     private static let demoChartPath = "/attachments/00000000-0000-4000-8000-0000000a0001/lockout-chart.html"
     private static let demoFlowPath = "/attachments/00000000-0000-4000-8000-0000000a0002/lockout-flow.svg"
 
-    static let demoArtifactFiles: [String: Data] = [demoChartPath: Data(demoChart.utf8), demoFlowPath: Data(demoFlow.utf8)]
-    static let demoArtifactNames: [String: String] = [demoChartPath: "lockout-chart.html", demoFlowPath: "lockout-flow.svg"]
+    private static let demoNotesPath = "/attachments/00000000-0000-4000-8000-0000000a0003/lockout-thresholds.md"
+
+    static let demoArtifactFiles: [String: Data] = [demoChartPath: Data(demoChart.utf8), demoFlowPath: Data(demoFlow.utf8),
+                                                    demoNotesPath: Data(demoNotes.utf8)]
+    static let demoArtifactNames: [String: String] = [demoChartPath: "lockout-chart.html", demoFlowPath: "lockout-flow.svg",
+                                                      demoNotesPath: "lockout-thresholds.md"]
+
+    private static let demoNotes = """
+    ## Lockout thresholds
+
+    What the sign-in lockout counts, and when it lets people back in.
+
+    | Setting | Limit | Applies to |
+    |:--------|:-----:|-----------:|
+    | `max_attempts` | **5** | each account |
+    | `window` | 10 min | rolling |
+    | `lockout` | **15 min** | after the 5th miss |
+    | `ip_burst` | 30 / min | each IP, any account |
+
+    Unlocking early takes an admin, through `bin/unlock`.
+    """
 
     private static let demoChart = """
     <!doctype html><html><head><style>body{margin:0;font:13px -apple-system,sans-serif;color:#1d2025}h3{margin:16px 20px 4px;font-size:14px}
