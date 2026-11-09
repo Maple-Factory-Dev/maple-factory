@@ -30,6 +30,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         val args = LaunchArgs.from(intent)
+        intent?.extras?.getString("diagramSource")?.takeIf { it.isNotBlank() }?.let { DemoData.diagramSource = it }
         if (savedInstanceState == null) {
             if (args.demo) store.startDemo() else if (!store.isSignedIn) store.restore()
             openLink(intent?.data)
