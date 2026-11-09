@@ -111,7 +111,7 @@
     const text = String((err && (err.message || err.str)) || err || "Unknown error").trim();
     document.querySelector("#error .msg").textContent = "Mermaid couldn't render this diagram.\n" + text;
     document.querySelector("#error pre").textContent = source;
-    notify({ event: "error", message: text });
+    notify({ event: "error", message: text, source: state.mode === "inline" ? source : undefined });
   }
 
   async function render(opts) {
@@ -139,12 +139,14 @@
       el.setAttribute("width", state.w); el.setAttribute("height", state.h);
       el.style.maxWidth = "none";
       state.svg = el;
+      const markup = el.outerHTML;
       fit();
       document.body.classList.add("ready");
       clearSearch();
       const query = opts.query != null ? opts.query : params.get("q");
       if (state.mode === "viewer" && query) { q.value = query; search(query); }
-      notify({ event: "rendered", width: state.w, height: state.h });
+      // The markup lets a host keep showing the drawn SVG as an image without re-rendering (the web's inline cards).
+      notify({ event: "rendered", width: state.w, height: state.h, svg: state.mode === "inline" ? markup : undefined, source: state.mode === "inline" ? source : undefined });
     } catch (err) {
       if (seq === state.seq) fail(err, source);
     }

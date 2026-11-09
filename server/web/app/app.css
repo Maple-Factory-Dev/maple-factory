@@ -767,3 +767,18 @@ details.fold[open] > .card { margin-top: 10px; }
   .check-log-wrap { padding-left: 6px; }
   .pr-branches { flex-wrap: wrap; }
 }
+
+/* Mermaid diagrams (MF-358): a fitted card, and a full-screen viewer over everything. */
+.diagram-card { height: 300px; border: 1px solid var(--stroke); border-radius: 10px; overflow: hidden; cursor: zoom-in; background: var(--card); display: flex; }
+.diagram-card > * { flex: 1; min-width: 0; }
+.diagram-img { width: 100%; height: 100%; object-fit: contain; padding: 10px; box-sizing: border-box; pointer-events: none; }
+.diagram-frame { width: 100%; height: 100%; border: 0; display: block; background: transparent; }
+.diagram-card .diagram-frame { pointer-events: none; }
+.diagram-error { padding: 12px; overflow: auto; cursor: default; }
+.diagram-error .msg { color: #c92a2a; font-weight: 600; white-space: pre-wrap; margin-bottom: 8px; }
+.diagram-error pre { margin: 0; font-size: 12px; white-space: pre; overflow: auto; }
+.diagram-overlay { position: fixed; inset: 0; z-index: 1000; background: rgba(0, 0, 0, .55); display: flex; padding: 3vh 3vw; box-sizing: border-box; }
+.diagram-sheet { flex: 1; display: flex; flex-direction: column; background: var(--bg); border-radius: 12px; overflow: hidden; box-shadow: 0 20px 60px rgba(0, 0, 0, .35); }
+.diagram-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--stroke); flex-wrap: wrap; }
+.diagram-sheet .diagram-frame { flex: 1; }
+@media (max-width: 640px) { .diagram-overlay { padding: 0; } .diagram-sheet { border-radius: 0; } .diagram-head .muted { display: none; } .diagram-card { height: 240px; } }

@@ -1384,7 +1384,8 @@ function overview(t) {
     summary: () => readyStrip(t),
     brief: () => t.brief && !editing && fold("brief", "Brief", firstSentence(t.brief), h("div", { class: "card" }, markdown(t.brief, h, knownTasks()))),
     review: () => h("div", { id: "s-review" }, t.autoReview && t.autoReview.rounds.length > 0 && review(t), t.pr && pull(t)),
-    mockups: () => t.mockups.length > 0 && [h("h2", {}, "Mockups"), t.mockups.map((m) => mockup(t, m))],
+    mockups: () => [t.mockups.length > 0 && [h("h2", {}, "Mockups"), t.mockups.map((m) => mockup(t, m))],
+      (t.diagrams ?? []).length > 0 && h("div", { id: "s-diagrams" }, h("h2", {}, "Diagrams"), t.diagrams.map((d) => diagram(t, d)))],
     artifacts: () => (t.artifacts ?? []).length > 0 && h("div", { id: "s-artifacts" }, h("h2", {}, "Artifacts"), artifacts(t)),
     plan: () => [t.plan.length > 0 && fold("plan", `Plan · v${t.planVersion}`,
       `${t.plan.length} ${t.plan.length === 1 ? "step" : "steps"}${planDone === t.plan.length ? ", all done" : planDone ? `, ${planDone} done` : ""}`,
@@ -1729,6 +1730,63 @@ function mockupChange(t, m) {
   box.lastChild.prepend(h("button", { class: "btn small", onclick: () => { mockupAsking.delete(key); render(); } }, "Cancel"));
   return box;
 }
+
+// ---- Mermaid diagrams (MF-358) ----
+// The planner's Mermaid source renders in /app/mermaid/diagram.html, sandboxed with scripts but no
+// same-origin (so it can't reach the session) and a CSP with no network. The first render's SVG comes
+// back by postMessage and is kept as an <img> (no scripts, no network), so feed updates don't redraw it.
+const DIAGRAM_PAGE = "/app/mermaid/diagram.html";
+const drawn = new Map(); // source → { svg } | { error }
+const diagramTheme = () => (document.documentElement.dataset.theme ?? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+
+function diagramFrame(source, mode, query) {
+  const frame = h("iframe", { class: `diagram-frame ${mode}`, sandbox: "allow-scripts", src: `${DIAGRAM_PAGE}?mode=${mode}`, title: "Diagram", referrerpolicy: "no-referrer" });
+  frame.addEventListener("load", () => frame.contentWindow?.postMessage({ type: "maple.diagram", source, mode, theme: diagramTheme(), query }, "*"));
+  return frame;
+}
+
+window.addEventListener("message", (e) => {
+  const d = e.data;
+  if (!d || d.type !== "maple.diagram.state") return;
+  if (e.source === diagramViewer?.frame.contentWindow) { if (d.event === "close") closeDiagram(); return; }
+  // An inline card's frame (sandboxed, so its origin is "null") hands back what it drew for that source.
+  if (e.origin !== "null" || typeof d.source !== "string" || drawn.has(d.source)) return;
+  if (d.event === "rendered" && typeof d.svg === "string") drawn.set(d.source, { svg: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(d.svg)}` });
+  else if (d.event === "error") drawn.set(d.source, { error: String(d.message ?? "") });
+  else return;
+  render();
+});
+
+function diagram(t, d) {
+  const done = drawn.get(d.source);
+  let body;
+  if (done?.svg) body = h("img", { class: "diagram-img", src: done.svg, alt: d.title, draggable: "false" });
+  else if (done?.error) body = h("div", { class: "diagram-error" }, h("div", { class: "msg" }, `Mermaid couldn't render this diagram.\n${done.error}`), h("pre", {}, d.source));
+  else {
+    body = diagramFrame(d.source, "inline"); // reports back with the SVG, which then stands in for it
+  }
+  return h("div", { class: "diagram", style: "margin-bottom:14px" },
+    h("div", { class: "row", style: "margin-bottom:6px" }, h("b", {}, d.title), h("span", { class: "muted" }, `· ${d.id}`),
+      h("button", { class: "btn small", style: "margin-left:auto", onclick: () => openDiagram(d) }, "Open")),
+    h("div", { class: "diagram-card", role: "button", tabindex: "0", title: "Open the diagram", onclick: () => openDiagram(d), onkeydown: (e) => { if (e.key === "Enter") openDiagram(d); } }, body),
+    d.notes.length > 0 && h("ol", { class: "muted", style: "margin:8px 0 0;padding-left:20px;font-size:14px" }, d.notes.map((n) => h("li", {}, n))));
+}
+
+let diagramViewer = null; // { root, frame }: the open full-screen viewer, outside <main> so feed updates leave it alone
+function openDiagram(d) {
+  closeDiagram();
+  const frame = diagramFrame(d.source, "viewer");
+  frame.addEventListener("load", () => frame.focus());
+  const root = h("div", { class: "diagram-overlay", role: "dialog", "aria-modal": "true", "aria-label": d.title, onclick: (e) => { if (e.target === e.currentTarget) closeDiagram(); } },
+    h("div", { class: "diagram-sheet" },
+      h("div", { class: "diagram-head" }, h("b", {}, d.title), h("span", { class: "muted" }, "Scroll or pinch to zoom · drag to pan · ⌘F to search"),
+        h("button", { class: "btn small", style: "margin-left:auto", onclick: closeDiagram, "aria-label": "Close" }, "Close")),
+      frame));
+  document.body.append(root);
+  diagramViewer = { root, frame };
+}
+function closeDiagram() { diagramViewer?.root.remove(); diagramViewer = null; }
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && diagramViewer) closeDiagram(); });
 
 /** On a phone a mockup renders 800px wide and scales down by --fit to its box (app.css). */
 // A re-render drops the old box, which reports a size of 0 on its way out: let go of it then.
