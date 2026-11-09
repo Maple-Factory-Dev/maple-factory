@@ -40,7 +40,27 @@ struct Session {
     agent: Option<AgentState>,
     /// The task it runs, for `prove` (proof.rs).
     task: Option<TaskTag>,
+    /// It resumed an earlier session's agent conversation (`session.open`'s `resumeFrom`).
+    resumed: bool,
+    /// While a resumed session is young: how to start it afresh if its agent rejects the conversation.
+    fallback: Option<Fallback>,
 }
+
+/// A resumed session's fresh start, used once if its pane dies early with a non-zero exit (a stale
+/// or missing conversation id): the same Maple session, the full prompt, no extra end for the factory.
+struct Fallback {
+    argv: Vec<String>,
+    /// A long prompt, written to its file only when it's needed.
+    prompt_file: Option<String>,
+    /// The task's secrets, written to their one-shot file again (the first start removed it).
+    secrets: Vec<(String, String)>,
+    until: u64,
+}
+
+/// How long after a resume an early non-zero exit counts as the agent rejecting the conversation.
+const RESUME_GRACE_MS: u64 = 20_000;
+/// A resume prompt goes inline (a long full prompt may hold the prompt file); longer ones don't resume.
+const MAX_RESUME_PROMPT: usize = 8 * 1024;
 
 /// Sessions that ended remembered for the next `hello`, at most.
 const MAX_EXITS: usize = 64;
@@ -147,7 +167,7 @@ impl Sessions {
             let Some(id) = existing.name.strip_prefix("maple-").and_then(|s| Uuid::parse_str(s).ok()) else { continue };
             let info = SessionInfo { id, agent: existing.agent, cwd: existing.cwd, pid: existing.pid, started_at: existing.started_at };
             let task = existing.task.as_ref().map(|t| t.id.clone());
-            match sessions.adopt(info, existing.task) {
+            match sessions.adopt(info, existing.task, existing.resumed) {
                 Ok(()) => {
                     if let Some(ports) = existing.ports {
                         sessions.ports.lock().unwrap().insert(id, ports);
@@ -209,7 +229,7 @@ impl Sessions {
             .lock()
             .unwrap()
             .values()
-            .map(|s| wire::LiveSession { session: wire_info(&s.info, s.task.as_ref()), activity: s.agent.as_ref().map(wire_activity), shares: None })
+            .map(|s| wire::LiveSession { session: wire_info(s), activity: s.agent.as_ref().map(wire_activity), shares: None })
             .collect();
         list.sort_by_key(|s| s.session.started_at);
         (list, self.exits.lock().unwrap().iter().cloned().collect())
@@ -217,7 +237,7 @@ impl Sessions {
 
     /// A live session's info as the server sees it.
     pub fn wire_info(&self, id: Uuid) -> Option<wire::SessionInfo> {
-        self.inner.lock().unwrap().get(&id).map(|s| wire_info(&s.info, s.task.as_ref()))
+        self.inner.lock().unwrap().get(&id).map(wire_info)
     }
 
     // One call site (main.rs) passes the hub's session.open straight through; a struct would only repeat it.
@@ -233,6 +253,7 @@ impl Sessions {
         images: &[String],
         prompt: Option<&str>,
         resume: bool,
+        resume_from: Option<&wire::ResumeFrom>,
         cols: u16,
         rows: u16,
         task: Option<TaskTag>,
@@ -245,6 +266,16 @@ impl Sessions {
         }
         let name = format!("maple-{id}");
         let started_at = now_ms();
+        // A restarted task session picks its earlier conversation up, if that one was saved for this agent and folder.
+        let resume_id = resume_from.filter(|r| agent.hooks && r.prompt.len() <= MAX_RESUME_PROMPT && !r.prompt.trim().is_empty()).and_then(|r| {
+            match crate::agent_sessions::resumable(r.session, agent_name, cwd) {
+                Some(conversation) => Some((conversation, r.prompt.as_str())),
+                None => {
+                    info!("session {id}: no saved {agent_name} conversation for {} in {cwd}; starting afresh", r.session);
+                    None
+                }
+            }
+        });
         let ports = self.claim_ports(id);
 
         let mut args: Vec<String> = vec![
@@ -276,6 +307,9 @@ impl Sessions {
         if let Some(t) = &task {
             meta.push(("@maple_task", t.to_meta()));
         }
+        if resume_id.is_some() {
+            meta.push(("@maple_resumed", "1".into()));
+        }
         // A task's repo secrets: in a one-shot file outside its worktree that the pane's shell reads
         // and removes, so they're only ever in the pane's processes, not tmux's session environment.
         // Codex's connector secrets go the same way (`agents::connector_args` only names them).
@@ -296,8 +330,9 @@ impl Sessions {
             meta.push((crate::secrets::REPO_OPTION, repo.to_string()));
         }
         // A long prompt goes through a file the shell reads (and removes): tmux refuses a long command.
+        // A resumed session's full prompt waits in memory for its fallback instead.
         let long = prompt.filter(|p| !p.trim().is_empty() && p.len() > PROMPT_IN_FILE && agent.takes_prompt());
-        if let Some(p) = long {
+        if let Some(p) = long.filter(|_| resume_id.is_none()) {
             let file = prompt_file(id, p)?;
             args.extend(["-e".into(), format!("{}={}", agents::PROMPT_FILE_ENV, file.display())]);
         }
@@ -315,12 +350,29 @@ impl Sessions {
             };
             hook_args.extend(agents::connector_args(agent_name, config.as_deref(), connectors));
         }
-        let argv = if long.is_some() {
-            agents::argv_with_prompt_file(&agents::login_shell(), &agent, resume, hook_args, model, unattended, images)
+        let shell = agents::login_shell();
+        let wrap = |argv: Vec<String>| if sourced { crate::secrets::source_first(argv) } else { argv };
+        let fresh = if long.is_some() {
+            agents::argv_with_prompt_file(&shell, &agent, resume, hook_args.clone(), model, unattended, images)
         } else {
-            agents::argv(&agents::login_shell(), &agent, resume, hook_args, model, unattended, images, prompt)
+            agents::argv(&shell, &agent, resume, hook_args.clone(), model, unattended, images, prompt)
         };
-        args.extend(if sourced { crate::secrets::source_first(argv) } else { argv });
+        let (argv, fallback) = match &resume_id {
+            Some((conversation, short)) => {
+                info!("session {id}: resuming {agent_name} conversation {conversation}");
+                // The card's images went in with the first start; the conversation still has them.
+                let argv = agents::argv(&shell, &agent, agents::Resume::Id(conversation.clone()), hook_args, model, unattended, &[], Some(short));
+                let fallback = Fallback {
+                    argv: wrap(fresh),
+                    prompt_file: long.map(str::to_string),
+                    secrets: if sourced { env.clone() } else { vec![] },
+                    until: started_at + RESUME_GRACE_MS,
+                };
+                (argv, Some(fallback))
+            }
+            None => (fresh, None),
+        };
+        args.extend(wrap(argv));
         // The browser decides the size; an SSH client attaching later doesn't resize it.
         // (Set per window: `window-size manual` in the startup config crashes tmux 3.6a.)
         args.extend([";".into(), "set-option".into(), "-w".into(), "-t".into(), name.clone(), "window-size".into(), "manual".into()]);
@@ -340,13 +392,16 @@ impl Sessions {
 
         let info =
             SessionInfo { id, agent: agent_name.to_string(), cwd: cwd.to_string(), pid: out.lines().next().and_then(|l| l.trim().parse().ok()), started_at };
-        if let Err(e) = self.adopt(info.clone(), task) {
+        if let Err(e) = self.adopt(info.clone(), task, resume_id.is_some()) {
             // Untracked, it would run with nobody to end it (or remove its files): stop it now.
             let _ = self.tmux.run(&["kill-session", "-t", &name]).await;
             self.ports.lock().unwrap().remove(&id);
             remove_secrets_file(id);
             self.hooks.remove_session_mcp_config(id);
             return Err(e);
+        }
+        if let Some(s) = self.inner.lock().unwrap().get_mut(&id) {
+            s.fallback = fallback;
         }
         Ok(info)
     }
@@ -375,7 +430,7 @@ impl Sessions {
         pick_ports(&taken, || Ok(std::net::TcpListener::bind(("127.0.0.1", 0))?.local_addr()?.port()))
     }
 
-    fn adopt(&self, info: SessionInfo, task: Option<TaskTag>) -> Result<()> {
+    fn adopt(&self, info: SessionInfo, task: Option<TaskTag>, resumed: bool) -> Result<()> {
         let id = info.id;
         let name = format!("maple-{id}");
         let outbox = self.outbox.clone();
@@ -423,7 +478,7 @@ impl Sessions {
                 }
             }
         })?;
-        self.inner.lock().unwrap().insert(id, Session { info, name, control, output, agent: None, task });
+        self.inner.lock().unwrap().insert(id, Session { info, name, control, output, agent: None, task, resumed, fallback: None });
         Ok(())
     }
 
@@ -619,7 +674,9 @@ impl Sessions {
                 match panes.get(&name) {
                     Some(p) if !p.dead => {
                         missing.remove(&id);
+                        self.expire_fallback(id);
                     }
+                    Some(p) if !requested && p.status.is_some_and(|s| s != 0) && self.restart_fresh(id, &name, p.status).await => {}
                     Some(p) => {
                         let last = self.tmux.last_lines(&name, END_LINES).await;
                         let seen =
@@ -637,6 +694,56 @@ impl Sessions {
                 }
             }
         }
+    }
+
+    /// Lets a resumed session's fallback (and the secrets it holds) go once the session has lasted.
+    fn expire_fallback(&self, id: Uuid) {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(s) = inner.get_mut(&id).filter(|s| s.fallback.as_ref().is_some_and(|f| now_ms() > f.until)) {
+            s.fallback = None;
+        }
+    }
+
+    /// A resumed session whose agent exited early with an error (it couldn't find or load the
+    /// conversation): starts it afresh in the same pane with the full prompt, once. Whether it did.
+    async fn restart_fresh(&self, id: Uuid, name: &str, status: Option<u32>) -> bool {
+        let fallback = {
+            let mut inner = self.inner.lock().unwrap();
+            let Some(s) = inner.get_mut(&id) else { return false };
+            match s.fallback.take() {
+                Some(f) if now_ms() <= f.until => f,
+                _ => return false,
+            }
+        };
+        let files = || -> Result<Vec<String>> {
+            let mut env = vec![];
+            if let Some(p) = &fallback.prompt_file {
+                env.extend(["-e".into(), format!("{}={}", agents::PROMPT_FILE_ENV, prompt_file(id, p)?.display())]);
+            }
+            if !fallback.secrets.is_empty() {
+                env.extend(["-e".into(), format!("{}={}", crate::secrets::FILE_ENV, crate::secrets::env_file(id, &fallback.secrets)?.display())]);
+            }
+            Ok(env)
+        };
+        let run = async {
+            let mut args: Vec<String> = vec!["respawn-pane".into(), "-k".into(), "-t".into(), name.into()];
+            args.extend(files()?);
+            args.push("--".into());
+            args.extend(fallback.argv.iter().cloned());
+            args.extend([";".into(), "set-option".into(), "-t".into(), name.into(), "@maple_resumed".into(), "0".into()]);
+            self.tmux.run(&args).await
+        };
+        if let Err(e) = run.await {
+            warn!("session {id}: could not start afresh: {e:#}");
+            return false;
+        }
+        let pid = self.tmux.run(&["display-message", "-p", "-t", name, "#{pane_pid}"]).await.ok().and_then(|o| o.trim().parse().ok());
+        if let Some(s) = self.inner.lock().unwrap().get_mut(&id) {
+            s.resumed = false;
+            s.info.pid = pid.or(s.info.pid);
+        }
+        info!("session {id}: its resumed conversation exited with status {}; started afresh with the full prompt", status.unwrap_or_default());
+        true
     }
 
     /// Records why a session ended, tells the server, and cleans up its tmux session.
@@ -709,8 +816,10 @@ fn remove_secrets_file(id: Uuid) {
     }
 }
 
-fn wire_info(info: &SessionInfo, task: Option<&TaskTag>) -> wire::SessionInfo {
+fn wire_info(s: &Session) -> wire::SessionInfo {
+    let (info, task) = (&s.info, s.task.as_ref());
     wire::SessionInfo {
+        resumed: s.resumed.then_some(true),
         id: info.id,
         agent: info.agent.clone(),
         cwd: info.cwd.clone(),
@@ -831,7 +940,7 @@ mod tests {
         };
         // As `open` writes it for a Claude Code session; a plain shell stands in for the agent.
         let file = sessions.hooks.write_session_mcp_config(id, std::slice::from_ref(&jira)).unwrap().unwrap();
-        sessions.open(id, "shell", dir.to_str().unwrap(), None, None, &[jira], &[], None, false, 80, 24, None, None).await.unwrap();
+        sessions.open(id, "shell", dir.to_str().unwrap(), None, None, &[jira], &[], None, false, None, 80, 24, None, None).await.unwrap();
         assert!(file.exists() && sessions.is_live(id));
         sessions.kill(id).await;
         assert!(!sessions.is_live(id));

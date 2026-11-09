@@ -15,7 +15,7 @@ import { audit, machineHub } from "../util.ts";
 import { cleanTags, TAG } from "../machines.ts";
 import { isAttachmentKey, pullAttachments } from "../attachments.ts";
 import { byRank, needsSession, Store, type TaskSession } from "./store.ts";
-import { builderPrompt, cleanPrompts, MERGE_ANCHOR, type Moving, plannerPrompt, reviewerPrompt } from "./prompts.ts";
+import { builderPrompt, cleanPrompts, MERGE_ANCHOR, type Moving, plannerPrompt, resumePrompt, reviewerPrompt } from "./prompts.ts";
 import { goalRepos, OWNER, REPO, taskRepo } from "./repos.ts";
 import { affectedBy, emptyForecast, inFlight, refreshOverlaps, type Lane } from "./forecast.ts";
 import { allowed, isPersonalTool, personalTools, toolsFor } from "./tools.ts";
@@ -1772,6 +1772,11 @@ export class Engine {
       machines: machines.filter((m) => m.owner === task.owner).map((m) => ({ name: m.name, tags: m.tags ?? [], online: m.online })),
     }) : role === "builder" ? builderPrompt(task, goal, resumed, org, others, repoPrompts, checksFor(this.store.scriptsFor(taskRepo(task, goal)), machine.tags ?? []), this.budget(task)) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main", org, repoPrompts, this.budget(task), this.store.policy().classifier ?? null);
     const existing = Boolean(priv.worktree && task.machine === machine.id);
+    // A restart on the same machine and worktree picks the agent's own conversation up; elsewhere it starts afresh.
+    const from = priv.resumeFrom;
+    const resumeFrom = existing && from && from.role === role && from.machine === machine.id && !priv.movedFrom
+      ? { session: from.session, prompt: resumePrompt(task, from.reason) }
+      : null;
     const command: ServerToRunner = {
       type: "session.open",
       id,
@@ -1788,6 +1793,7 @@ export class Engine {
       unattended: { mode: this.store.get("unattended") ?? "project", commands: [] },
       model: task.model ?? null,
       connectors: this.connectors(),
+      ...(resumeFrom ? { resumeFrom } : {}),
     };
     if (!(await this.toRunner(machine.id, command))) return `Couldn't reach ${machine.name}.`;
     const now_ = this.store.task(task.id);
@@ -1798,7 +1804,7 @@ export class Engine {
     }
     Object.assign(task, now_);
     this.store.addSession({ id, task: task.id, role, machine: machine.id, agent: task.agent, started: now(), ended: null, cause: null, kind });
-    if (priv.movedFrom) this.store.savePrivate(task.id, { ...this.store.private(task.id), movedFrom: null });
+    if (priv.movedFrom || priv.resumeFrom) this.store.savePrivate(task.id, { ...this.store.private(task.id), movedFrom: null, resumeFrom: null });
     task.worker = { role, agent: task.agent, machine: machine.id, session: id, startedAt: now() };
     task.startAt = null;
     task.force = null;
@@ -1881,6 +1887,10 @@ export class Engine {
         const priv = this.store.private(task.id);
         // The planner's session opens in the worktree it made.
         if (!priv.worktree || task.machine !== machine) this.store.savePrivate(task.id, { ...priv, worktree: msg.session.cwd });
+        if (msg.session.resumed) {
+          this.event(task, "factory", `its ${s.role} resumed its ${s.agent} conversation`);
+          this.save(task);
+        }
         return null;
       }
       case "session.error": {
@@ -2109,7 +2119,7 @@ export class Engine {
       case "signaled":
       case "outOfMemory":
         if (priv.restarts < MAX_RESTARTS) {
-          this.store.savePrivate(task.id, { ...priv, restarts: priv.restarts + 1 });
+          this.store.savePrivate(task.id, { ...priv, restarts: priv.restarts + 1, resumeFrom: { session: end.id, role: s.role, machine: s.machine, reason: describeCause(end) } });
           this.event(task, "factory", `its ${s.role} ended (${describeCause(end)}); starting it again`);
           this.stat(task, "session.restarted", { cause: end.cause }, null, s.role);
           this.save(task);

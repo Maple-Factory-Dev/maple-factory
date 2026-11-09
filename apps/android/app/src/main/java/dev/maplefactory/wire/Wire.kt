@@ -851,6 +851,8 @@ data class SessionInfo(
     val startedAt: Long,
     /** The task this session works on, when it's a factory session. */
     val taskId: String? = null,
+    /** It picked up the agent conversation of the session `session.open`'s `resumeFrom` named (true), rather than starting afresh. */
+    val resumed: Boolean? = null,
 )
 
 /** An agent's latest state. `at` is the runner's clock, strictly increasing per session. */
@@ -1931,6 +1933,15 @@ data class ReviewThread(
     val resolved: Boolean,
     val outdated: Boolean,
     val comments: List<ReviewThreadComment> = emptyList(),
+)
+
+/** Pick up an earlier Maple session's agent conversation (the id the runner saved for it), with a short prompt. Without a saved id, or if the agent rejects it, the session starts afresh with `session.open`'s full `prompt`. */
+@Serializable
+data class ResumeFrom(
+    /** The earlier Maple session's id. */
+    val session: String,
+    /** What to tell the resumed conversation. */
+    val prompt: String,
 )
 
 /** A factory session's worktree: made fresh from `origin/<base>` on branch `agent/<name>`, or reopened. */
@@ -3066,6 +3077,8 @@ sealed class ServerToRunner {
         val model: String? = null,
         /** The factory's enabled MCP connectors, secrets included. */
         val connectors: List<dev.maplefactory.wire.McpConnector>? = null,
+        /** Restarting a task's session on the same machine and worktree: resume that session's own agent conversation. */
+        val resumeFrom: dev.maplefactory.wire.ResumeFrom? = null,
     ) : ServerToRunner()
     @Serializable
     data class SessionResize(

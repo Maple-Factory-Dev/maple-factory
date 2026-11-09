@@ -529,6 +529,7 @@ pub async fn listen(socket: PathBuf, sessions: Sessions) -> Result<()> {
             if let Some(path) = payload.get("transcript_path").and_then(Value::as_str).filter(|p| !p.is_empty()) {
                 sessions.set_transcript(id, agent, PathBuf::from(path));
             }
+            remember_conversation(&sessions, id, agent, payload);
             let native = native_hooks(agent, payload, classify(agent, payload).as_ref());
             if !native.is_empty() {
                 let sessions = sessions.clone();
@@ -548,6 +549,31 @@ pub async fn listen(socket: PathBuf, sessions: Sessions) -> Result<()> {
             }
         });
     }
+}
+
+/// Saves the agent conversation a Maple session is in (agent_sessions.rs), so a restart after tmux
+/// or the machine dies can resume it. Claude Code's hooks carry `session_id` (a new one after
+/// /clear, which then wins); Codex's may not, so its rollout file's name gives the id instead.
+fn remember_conversation(sessions: &Sessions, id: Uuid, agent: &str, payload: &Value) {
+    if !matches!(agent, "claude" | "codex") {
+        return;
+    }
+    let Some(info) = sessions.wire_info(id) else { return };
+    let hooked = ["session_id", "thread-id", "thread_id"].iter().find_map(|k| payload.get(*k).and_then(Value::as_str)).map(str::to_string);
+    let agent = agent.to_string();
+    tokio::task::spawn_blocking(move || {
+        let conversation = hooked.and_then(|h| crate::agent_sessions::valid_id(&h)).or_else(|| {
+            // Look for the rollout only until one is saved: the scan isn't free.
+            if agent != "codex" || crate::agent_sessions::resumable(id, &agent, &info.cwd).is_some() {
+                return None;
+            }
+            let cwd = crate::sessions::expand_home(&info.cwd);
+            crate::costs::find_rollout(&crate::usage::codex_sessions_dir(), &cwd, info.started_at).and_then(|p| crate::agent_sessions::rollout_id(&p))
+        });
+        if let Some(conversation) = conversation {
+            crate::agent_sessions::save(id, &agent, &conversation, &info.cwd);
+        }
+    });
 }
 
 /// The longest lock name taken: names show on task cards.

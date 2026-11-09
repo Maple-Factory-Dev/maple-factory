@@ -250,8 +250,11 @@ export const structs: Record<string, Struct> = {
     fieldDocs: { inputTokens: "The whole turn, every model call in it (Codex: the sum of the turn's `token_count` `last_token_usage`), not just the last call." },
   },
   SessionInfo: {
-    fields: { id: "uuid", agent: "string", cwd: "string", pid: "u32?", startedAt: "u64", taskId: "string?" },
-    fieldDocs: { taskId: "The task this session works on, when it's a factory session." },
+    fields: { id: "uuid", agent: "string", cwd: "string", pid: "u32?", startedAt: "u64", taskId: "string?", resumed: "bool?" },
+    fieldDocs: {
+      taskId: "The task this session works on, when it's a factory session.",
+      resumed: "It picked up the agent conversation of the session `session.open`'s `resumeFrom` named (true), rather than starting afresh.",
+    },
   },
   Activity: {
     doc: "An agent's latest state. `at` is the runner's clock, strictly increasing per session.",
@@ -988,6 +991,11 @@ export const structs: Record<string, Struct> = {
     fields: { id: "string", path: "string", line: "u32?", startLine: "u32?", side: "DiffSide", resolved: "bool", outdated: "bool", comments: "ReviewThreadComment[]" },
     fieldDocs: { line: "The line it ends on; none once the code it was on is gone.", startLine: "Where a multi-line thread starts." },
   },
+  ResumeFrom: {
+    doc: "Pick up an earlier Maple session's agent conversation (the id the runner saved for it), with a short prompt. Without a saved id, or if the agent rejects it, the session starts afresh with `session.open`'s full `prompt`.",
+    fields: { session: "uuid", prompt: "string" },
+    fieldDocs: { session: "The earlier Maple session's id.", prompt: "What to tell the resumed conversation." },
+  },
   WorktreeSpec: {
     doc: "A factory session's worktree: made fresh from `origin/<base>` on branch `agent/<name>`, or reopened.",
     fields: { name: "string", base: "string?", existing: "bool" },
@@ -1576,8 +1584,13 @@ export const unions: Record<string, Union> = {
           unattended: "Unattended?",
           model: "string?",
           connectors: "McpConnector[]?",
+          resumeFrom: "ResumeFrom?",
         },
-        fieldDocs: { connectors: "The factory's enabled MCP connectors, secrets included.", resume: "Continue the agent's last conversation in `cwd` (claude --resume / codex resume)." },
+        fieldDocs: {
+          connectors: "The factory's enabled MCP connectors, secrets included.",
+          resume: "Continue the agent's last conversation in `cwd` (claude --resume / codex resume).",
+          resumeFrom: "Restarting a task's session on the same machine and worktree: resume that session's own agent conversation.",
+        },
       },
       "session.resize": { fields: { id: "uuid", cols: "u16", rows: "u16" } },
       "session.kill": { fields: { id: "uuid" } },

@@ -2164,14 +2164,17 @@ public enum Wire {
         public var startedAt: UInt64
         /// The task this session works on, when it's a factory session.
         public var taskId: String?
+        /// It picked up the agent conversation of the session `session.open`'s `resumeFrom` named (true), rather than starting afresh.
+        public var resumed: Bool?
 
-        public init(id: String, agent: String, cwd: String, pid: UInt32? = nil, startedAt: UInt64, taskId: String? = nil) {
+        public init(id: String, agent: String, cwd: String, pid: UInt32? = nil, startedAt: UInt64, taskId: String? = nil, resumed: Bool? = nil) {
             self.id = id
             self.agent = agent
             self.cwd = cwd
             self.pid = pid
             self.startedAt = startedAt
             self.taskId = taskId
+            self.resumed = resumed
         }
     }
 
@@ -4286,6 +4289,19 @@ public enum Wire {
             resolved = try c.decode(Bool.self, forKey: .resolved)
             outdated = try c.decode(Bool.self, forKey: .outdated)
             comments = try c.decodeIfPresent([ReviewThreadComment].self, forKey: .comments) ?? []
+        }
+    }
+
+    /// Pick up an earlier Maple session's agent conversation (the id the runner saved for it), with a short prompt. Without a saved id, or if the agent rejects it, the session starts afresh with `session.open`'s full `prompt`.
+    public struct ResumeFrom: Codable, Hashable, Sendable {
+        /// The earlier Maple session's id.
+        public var session: String
+        /// What to tell the resumed conversation.
+        public var prompt: String
+
+        public init(session: String, prompt: String) {
+            self.session = session
+            self.prompt = prompt
         }
     }
 
@@ -6469,8 +6485,10 @@ public enum Wire {
         public var model: String?
         /// The factory's enabled MCP connectors, secrets included.
         public var connectors: [McpConnector]?
+        /// Restarting a task's session on the same machine and worktree: resume that session's own agent conversation.
+        public var resumeFrom: ResumeFrom?
 
-        public init(id: String, agent: String, cwd: String, cols: UInt16, rows: UInt16, prompt: String? = nil, resume: Bool, taskId: String? = nil, worktree: WorktreeSpec? = nil, task: TaskStart? = nil, unattended: Unattended? = nil, model: String? = nil, connectors: [McpConnector]? = nil) {
+        public init(id: String, agent: String, cwd: String, cols: UInt16, rows: UInt16, prompt: String? = nil, resume: Bool, taskId: String? = nil, worktree: WorktreeSpec? = nil, task: TaskStart? = nil, unattended: Unattended? = nil, model: String? = nil, connectors: [McpConnector]? = nil, resumeFrom: ResumeFrom? = nil) {
             self.id = id
             self.agent = agent
             self.cwd = cwd
@@ -6484,6 +6502,7 @@ public enum Wire {
             self.unattended = unattended
             self.model = model
             self.connectors = connectors
+            self.resumeFrom = resumeFrom
         }
     }
 

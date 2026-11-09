@@ -769,6 +769,9 @@ pub struct SessionInfo {
     /// The task this session works on, when it's a factory session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_id: Option<String>,
+    /// It picked up the agent conversation of the session `session.open`'s `resumeFrom` named (true), rather than starting afresh.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resumed: Option<bool>,
 }
 
 /// An agent's latest state. `at` is the runner's clock, strictly increasing per session.
@@ -2171,6 +2174,16 @@ pub struct ReviewThread {
     pub comments: Vec<ReviewThreadComment>,
 }
 
+/// Pick up an earlier Maple session's agent conversation (the id the runner saved for it), with a short prompt. Without a saved id, or if the agent rejects it, the session starts afresh with `session.open`'s full `prompt`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeFrom {
+    /// The earlier Maple session's id.
+    pub session: Uuid,
+    /// What to tell the resumed conversation.
+    pub prompt: String,
+}
+
 /// A factory session's worktree: made fresh from `origin/<base>` on branch `agent/<name>`, or reopened.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -3400,6 +3413,9 @@ pub enum ServerToRunner {
         /// The factory's enabled MCP connectors, secrets included.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         connectors: Option<Vec<McpConnector>>,
+        /// Restarting a task's session on the same machine and worktree: resume that session's own agent conversation.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resume_from: Option<ResumeFrom>,
     },
     #[serde(rename = "session.resize")]
     SessionResize {

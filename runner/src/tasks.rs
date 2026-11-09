@@ -502,7 +502,9 @@ async fn cleanup_scripts(emit: Emit<'_>, cwds: &[String], c: &Cleanup, dir: &Pat
 }
 
 /// Its evidence was uploaded long ago: the proof folder goes with the worktree.
+/// The task's worktree is gone: so are its proof folder and its sessions' saved conversations.
 fn forget_proof(c: &Cleanup) {
+    crate::agent_sessions::sweep(Some(&c.cwd));
     if let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
         match crate::proof::forget_folder(&home, &c.branch) {
             Ok(true) => tracing::info!("task {}: removed its proof folder", c.task_id),
