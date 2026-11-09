@@ -257,7 +257,7 @@ struct DocPage: View {
 
     private var source: DocEditorView.Source? {
         if client.isSignedIn {
-            guard let embed = client.docEmbed(theme: scheme == .dark ? "dark" : "light") else { return nil }
+            guard let embed = client.docEmbed() else { return nil }
             return .live(url: embed.url, token: embed.token)
         }
         return id == DemoDoc.id ? .demo(markdown: DemoDoc.markdown) : nil

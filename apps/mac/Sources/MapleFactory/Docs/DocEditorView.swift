@@ -14,7 +14,7 @@ import MapleKit
 
 /// Hosts the shared docs editor (`/app/docs/embed.html`, MF-361) in a WKWebView and drives it through its JS
 /// bridge (docs/planning-docs.md). The page URL carries only `?theme=`; the token goes over `mapleDocs.load`
-/// as a typed argument. `openTask` opens the task natively; any link off the embed's origin opens in the browser.
+/// as a typed argument. `openTask` opens the task natively; other server pages open natively (task links) or in the browser.
 struct DocEditorView: NSViewRepresentable {
     /// Where the page comes from and what `load` gets.
     enum Source: Equatable {
@@ -79,16 +79,29 @@ struct DocEditorView: NSViewRepresentable {
         }
     }
 
+    enum Route: Equatable { case allow, task(String), external }
+
+    /// The navigation policy: only the embed page itself (and frames on its origin) load in the view. Any other
+    /// page on the server goes native when it names a task (`/app/#/task/MF-1`) and to the browser otherwise.
+    static func route(_ url: URL, embed: URL?, isMainFrame: Bool) -> Route {
+        guard let embed, url.scheme == embed.scheme, url.host() == embed.host(), url.port == embed.port else { return .external }
+        if url.path == embed.path || !isMainFrame { return .allow }
+        if let fragment = url.fragment, let match = fragment.firstMatch(of: /^\/?task\/([A-Za-z]+-\d+)$/) {
+            return .task(String(match.1))
+        }
+        return .external
+    }
+
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         weak var web: WKWebView?
         var view: DocEditorView?
-        private var origin: (scheme: String?, host: String?, port: Int?)?
+        private var embedURL: URL?
 
         func update(_ view: DocEditorView) { self.view = view }
 
         func loadPage() {
             guard let view, let web, let url = DocEditorView.pageURL(view.source, dark: view.dark) else { return }
-            origin = (url.scheme, url.host(), url.port)
+            embedURL = url
             view.status.error = nil
             view.status.synced = false
             view.status.peers = []
@@ -138,8 +151,10 @@ struct DocEditorView: NSViewRepresentable {
                      decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
             guard let url = action.request.url else { return decisionHandler(.cancel) }
             print("[docs] navigate \(url.absoluteString)")
-            if let origin, url.scheme == origin.scheme, url.host() == origin.host, url.port == origin.port {
-                return decisionHandler(.allow)
+            switch DocEditorView.route(url, embed: embedURL, isMainFrame: action.targetFrame?.isMainFrame ?? true) {
+            case .allow: return decisionHandler(.allow)
+            case .task(let id): view?.openTask(id); return decisionHandler(.cancel)
+            case .external: break
             }
             if url.scheme == "maplefactory" || url.scheme == "http" || url.scheme == "https" || url.scheme == "mailto" {
                 NSWorkspace.shared.open(url)

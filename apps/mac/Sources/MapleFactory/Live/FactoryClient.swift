@@ -1073,15 +1073,12 @@ import Foundation
     func renameDoc(id: String, title: String) { send(.docRename(.init(id: id, title: title))) }
     func archiveDoc(id: String, archived: Bool = true) { send(.docArchive(.init(id: id, archived: archived))) }
 
-    /// What the docs editor host needs: the embed page (no token in it) and the token it hands over through
-    /// the JS bridge. Nothing else gets the token.
-    func docEmbed(theme: String) -> (url: URL, token: String)? {
-        guard let server, let token,
-              var parts = URLComponents(url: server.appendingPathComponent("app/docs/embed"), resolvingAgainstBaseURL: false)
-        else { return nil }
-        parts.queryItems = [URLQueryItem(name: "theme", value: theme)]
-        guard let url = parts.url else { return nil }
-        return (url, token)
+    /// What the docs editor host needs: the bare embed page (no token, no theme: the host adds `?theme=` so a
+    /// theme switch doesn't look like a new page) and the token it hands over through the JS bridge. Nothing
+    /// else gets the token.
+    func docEmbed() -> (url: URL, token: String)? {
+        guard let server, let token else { return nil }
+        return (server.appendingPathComponent("app/docs/embed"), token)
     }
 
     func openSession(machine: String, agent: String, cwd: String) {
