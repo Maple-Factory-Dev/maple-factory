@@ -20,19 +20,27 @@ export const COMPACT_AFTER_MS = 3 * 60_000;
 export const TOUCH_EVERY_MS = 30_000;
 /** A message bigger than this closes the socket. */
 export const MAX_MESSAGE_BYTES = 2_000_000;
+/** The doc (snapshot plus pending updates) can't grow past this; an edit that would closes its socket. */
+export const MAX_DOC_BYTES = 20_000_000;
+/** A socket speaks for at most this many awareness clients (y-websocket uses one), */
+export const MAX_AWARE_CLIENTS = 4;
+/** and its attachment (as JSON) stays this short, well inside Workers' 2 KB limit even for two-byte strings. */
+export const MAX_ATTACHMENT_CHARS = 900;
 
-/** What each socket carries across hibernation: who it is, and the awareness clients it spoke for. */
+/** What each socket carries across hibernation: who it is, and the awareness clients it speaks for. */
 interface Peer {
   login: string;
-  /** Awareness client id → its last clock, so closing can say they left. */
-  aware: Record<string, number>;
+  /** Awareness client id → its last clock and JSON state: latecomers hear it, closing says they left. */
+  aware: Record<string, [number, string]>;
 }
 
 export class DocHub extends DurableObject<Env> {
   private sql: SqlStorage;
   private doc = new Y.Doc();
-  /** Awareness states as last relayed (client id → clock and JSON state), for sockets that join later. */
-  private awareness = new Map<number, { clock: number; state: string }>();
+  /** Bytes the doc takes in SQLite (snapshot plus update rows), against MAX_DOC_BYTES. */
+  private bytes = 0;
+  /** Whether the compaction alarm is already set (false after a wake, which only costs one extra setAlarm). */
+  private alarmSet = false;
   private lastTouch = 0;
   private editedSinceTouch = false;
   now = () => Date.now();
@@ -46,14 +54,30 @@ export class DocHub extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     `);
     const snap = this.sql.exec<{ data: ArrayBuffer }>("SELECT data FROM snapshot WHERE id = 1").toArray()[0];
-    if (snap) Y.applyUpdate(this.doc, new Uint8Array(snap.data));
-    for (const row of this.sql.exec<{ data: ArrayBuffer }>("SELECT data FROM updates ORDER BY seq").toArray()) Y.applyUpdate(this.doc, new Uint8Array(row.data));
+    if (snap) {
+      Y.applyUpdate(this.doc, new Uint8Array(snap.data));
+      this.bytes = snap.data.byteLength;
+    }
+    for (const row of this.sql.exec<{ data: ArrayBuffer }>("SELECT data FROM updates ORDER BY seq").toArray()) {
+      Y.applyUpdate(this.doc, new Uint8Array(row.data));
+      this.bytes += row.data.byteLength;
+    }
     // Anything that changes the doc is kept and passed on to the other sockets (`origin` is the sender).
     this.doc.on("update", (update: Uint8Array, origin: unknown) => this.onUpdate(update, origin as WebSocket | null));
   }
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    // From OrgHub: the doc was archived (read-only now), or someone lost access; their sockets close.
+    if (url.pathname === "/close" && request.method === "POST") {
+      const login = url.searchParams.get("login");
+      for (const ws of this.ctx.getWebSockets()) {
+        if (login && (ws.deserializeAttachment() as Peer).login !== login) continue;
+        this.leave(ws);
+        ws.close(4003, login ? "access revoked" : "doc archived");
+      }
+      return new Response(null, { status: 204 });
+    }
     if (url.pathname !== "/sync") return new Response("Not found.", { status: 404 });
     const login = request.headers.get("x-member-login");
     const docId = request.headers.get("x-doc-id");
@@ -68,7 +92,9 @@ export class DocHub extends DurableObject<Env> {
     encoding.writeVarUint(encoder, MESSAGE_SYNC);
     syncProtocol.writeSyncStep1(encoder, this.doc);
     ws.send(encoding.toUint8Array(encoder));
-    if (this.awareness.size) ws.send(this.awarenessMessage([...this.awareness].map(([id, a]) => [id, a.clock, a.state])));
+    const here = this.ctx.getWebSockets().filter((o) => o !== ws).flatMap((o) =>
+      Object.entries((o.deserializeAttachment() as Peer).aware).map(([id, [clock, state]]) => [Number(id), clock, state] as [number, number, string]));
+    if (here.length) ws.send(this.awarenessMessage(here));
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
 
@@ -80,6 +106,8 @@ export class DocHub extends DurableObject<Env> {
       const decoder = decoding.createDecoder(data);
       const type = decoding.readVarUint(decoder);
       if (type === MESSAGE_SYNC) {
+        // Updates only ever add bytes, so a message that would push the doc past the cap is refused before it lands.
+        if (this.bytes + data.byteLength > MAX_DOC_BYTES) return ws.close(1009, "This doc is full.");
         const encoder = encoding.createEncoder();
         encoding.writeVarUint(encoder, MESSAGE_SYNC);
         // Step 1 writes our step 2 into `encoder`; step 2 and updates apply to the doc with this socket as origin.
@@ -102,6 +130,7 @@ export class DocHub extends DurableObject<Env> {
   }
 
   async alarm() {
+    this.alarmSet = false;
     this.compact();
     if (this.editedSinceTouch) await this.touch();
   }
@@ -115,6 +144,7 @@ export class DocHub extends DurableObject<Env> {
       Y.encodeStateAsUpdate(this.doc), last,
     );
     this.sql.exec("DELETE FROM updates WHERE seq <= ?", last);
+    this.bytes = this.sql.exec<{ n: number }>("SELECT LENGTH(data) AS n FROM snapshot WHERE id = 1").toArray()[0].n;
   }
 
   /** For tests and the editor's first paint: the whole doc as one update. */
@@ -125,6 +155,7 @@ export class DocHub extends DurableObject<Env> {
   private onUpdate(update: Uint8Array, origin: WebSocket | null) {
     const by = origin ? (origin.deserializeAttachment() as Peer).login : null;
     this.sql.exec("INSERT INTO updates (at, by, data) VALUES (?, ?, ?)", this.now(), by, update);
+    this.bytes += update.byteLength;
     const encoder = encoding.createEncoder();
     encoding.writeVarUint(encoder, MESSAGE_SYNC);
     syncProtocol.writeUpdate(encoder, update);
@@ -133,7 +164,10 @@ export class DocHub extends DurableObject<Env> {
 
     const pending = this.sql.exec<{ n: number; bytes: number | null }>("SELECT COUNT(*) AS n, SUM(LENGTH(data)) AS bytes FROM updates").toArray()[0];
     if (pending.n > COMPACT_ROWS || (pending.bytes ?? 0) > COMPACT_BYTES) this.compact();
-    this.ctx.waitUntil(this.ctx.storage.setAlarm(this.now() + COMPACT_AFTER_MS));
+    if (!this.alarmSet) {
+      this.alarmSet = true;
+      this.ctx.waitUntil(this.ctx.storage.setAlarm(this.now() + COMPACT_AFTER_MS));
+    }
     this.editedSinceTouch = true;
     if (this.now() - this.lastTouch >= TOUCH_EVERY_MS) this.ctx.waitUntil(this.touch());
   }
@@ -151,37 +185,49 @@ export class DocHub extends DurableObject<Env> {
     }
   }
 
-  /** Relays an awareness update to the other sockets, noting which clients this socket speaks for. */
+  /**
+   * Relays an awareness update to the other sockets. A socket speaks only for the client ids it claimed (the first
+   * time it sent them, if no other socket had); states for anyone else's ids, or past the caps, are dropped.
+   */
   private onAwareness(ws: WebSocket, update: Uint8Array) {
     const decoder = decoding.createDecoder(update);
     const peer = ws.deserializeAttachment() as Peer;
+    const others = this.ctx.getWebSockets().filter((o) => o !== ws);
+    const theirs = new Set(others.flatMap((o) => Object.keys((o.deserializeAttachment() as Peer).aware)));
+    const passed: [number, number, string][] = [];
     const count = decoding.readVarUint(decoder);
     for (let i = 0; i < count; i++) {
       const id = decoding.readVarUint(decoder);
       const clock = decoding.readVarUint(decoder);
       const state = decoding.readVarString(decoder);
+      if (theirs.has(String(id))) continue;
       if (state === "null") {
-        this.awareness.delete(id);
+        if (!(id in peer.aware)) continue;
         delete peer.aware[id];
       } else {
-        this.awareness.set(id, { clock, state });
-        peer.aware[id] = clock;
+        if (!(id in peer.aware) && Object.keys(peer.aware).length >= MAX_AWARE_CLIENTS) continue;
+        const before = peer.aware[id];
+        peer.aware[id] = [clock, state];
+        if (JSON.stringify(peer).length > MAX_ATTACHMENT_CHARS) {
+          if (before) peer.aware[id] = before;
+          else delete peer.aware[id];
+          continue;
+        }
       }
+      passed.push([id, clock, state]);
     }
+    if (!passed.length) return;
     ws.serializeAttachment(peer);
-    const encoder = encoding.createEncoder();
-    encoding.writeVarUint(encoder, MESSAGE_AWARENESS);
-    encoding.writeVarUint8Array(encoder, update);
-    const message = encoding.toUint8Array(encoder);
-    for (const other of this.ctx.getWebSockets()) if (other !== ws) this.send(other, message);
+    const message = this.awarenessMessage(passed);
+    for (const other of others) this.send(other, message);
   }
 
   /** A socket went: its awareness clients are gone, which the others hear as a null state. */
   private leave(ws: WebSocket) {
     const peer = ws.deserializeAttachment() as Peer | null;
-    const gone = Object.entries(peer?.aware ?? {}).map(([id, clock]) => [Number(id), clock + 1, "null"] as [number, number, string]);
+    const gone = Object.entries(peer?.aware ?? {}).map(([id, [clock]]) => [Number(id), clock + 1, "null"] as [number, number, string]);
     if (!gone.length) return;
-    for (const [id] of gone) this.awareness.delete(id);
+    ws.serializeAttachment({ ...peer!, aware: {} });
     const message = this.awarenessMessage(gone);
     for (const other of this.ctx.getWebSockets()) if (other !== ws) this.send(other, message);
   }

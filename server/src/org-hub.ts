@@ -8,6 +8,7 @@ import type { Env } from "./env.ts";
 import { PROTOCOL_VERSION, IntegrationKindValues, type ClientMessage, type IntegrationKind, type Presence, type Machine, type MachineUpdate, type AgentLoginStatus, type Member, type RunnerRelease, type RunnerMessage, type ServerToClient, type ServerToRunner, type SessionEnd, type SessionShare, type EndedSession, type GitHubStatus, type PushDevice, type Task, type RunnerMessage_SessionEvents } from "./wire.ts";
 import { effectiveTags, machineRows, offlineMachine, parseCapabilities } from "./machines.ts";
 import { audit, machineHub } from "./util.ts";
+import { docHub } from "./doc-routes.ts";
 import { maySignIn, recheckEvery, revoked, revokeMember, stillMember, toMember, userToken, type MemberRow } from "./auth.ts";
 import { Store } from "./factory/store.ts";
 import { Secrets } from "./secrets.ts";
@@ -647,7 +648,14 @@ export class OrgHub extends DurableObject<Env> {
       if ((ws.deserializeAttachment() as Client).member.login === login) ws.close(4003, "access revoked");
     }
     await this.dropViewers(login);
+    await Promise.all(this.store.docs().filter((d) => !d.archived).map((d) => this.closeDocSockets(d.id, login).catch(() => {})));
     this.broadcast({ type: "members.updated", members: await this.members() });
+  }
+
+  /** Closes the sync sockets open on a doc's DocHub: all of them, or only `login`'s. */
+  private async closeDocSockets(id: string, login?: string) {
+    const query = login ? `?${new URLSearchParams({ login })}` : "";
+    await docHub(this.env, id).fetch(`https://doc/close${query}`, { method: "POST" });
   }
 
   /** Asks every machine to close `login`'s terminals (with `role`, only those they opened with that role). */
@@ -1047,6 +1055,8 @@ export class OrgHub extends DurableObject<Env> {
         this.store.saveDoc(doc);
         // Org-visible, unlike notes: every member's apps hear about it.
         this.broadcast({ type: "doc.updated", doc });
+        // Archived docs are read-only: whoever has it open is cut off (the route refuses new sockets).
+        if (doc.archived) this.ctx.waitUntil(this.closeDocSockets(doc.id).catch(() => {}));
         return;
       }
       case "note.delete": {

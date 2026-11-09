@@ -66,7 +66,7 @@ class FakeSocket {
   }
 };
 
-const { DocHub, COMPACT_ROWS } = await import("../src/doc-hub.ts");
+const { DocHub, COMPACT_ROWS, MAX_DOC_BYTES } = await import("../src/doc-hub.ts");
 const { OrgHub } = await import("../src/org-hub.ts");
 const { docSync } = await import("../src/doc-routes.ts");
 const { currentMember } = await import("../src/auth.ts");
@@ -94,15 +94,16 @@ function docHub(db = new DatabaseSync(":memory:")) {
   const sockets: FakeSocket[] = [];
   const touched: string[] = [];
   let alarm: number | null = null;
+  let alarms = 0;
   const ctx = {
-    storage: { sql: sqlStorage(db), setAlarm: async (at: number) => { alarm = at; } },
+    storage: { sql: sqlStorage(db), setAlarm: async (at: number) => { alarm = at; alarms++; } },
     acceptWebSocket: (ws: FakeSocket) => { sockets.push(ws); },
     getWebSockets: () => sockets.filter((s) => s.closed === null),
     waitUntil: (p: Promise<unknown>) => { p.catch(() => {}); },
   };
   const env = { ORG: { idFromName: (n: string) => n, get: () => ({ fetch: async (url: string) => { touched.push(url); return new Response(null, { status: 204 }); } }) } };
   const hub = new DocHub(ctx as never, env as never);
-  return { hub, db, sockets, touched, alarm: () => alarm };
+  return { hub, db, sockets, touched, alarm: () => alarm, alarms: () => alarms, ctx, env };
 }
 
 type Hub = ReturnType<typeof docHub>;
@@ -167,6 +168,30 @@ async function settle(h: Hub, ...clients: Client[]) {
 }
 
 const sv = (doc: Y.Doc) => Buffer.from(Y.encodeStateVector(doc)).toString("hex");
+/** An awareness message for `states` ([client id, clock, JSON state]), as y-protocols/awareness writes it. */
+function awarenessMsg(states: [number, number, string][]): ArrayBuffer {
+  const inner = encoding.createEncoder();
+  encoding.writeVarUint(inner, states.length);
+  for (const [id, clock, state] of states) {
+    encoding.writeVarUint(inner, id);
+    encoding.writeVarUint(inner, clock);
+    encoding.writeVarString(inner, state);
+  }
+  const msg = encoding.createEncoder();
+  encoding.writeVarUint(msg, 1);
+  encoding.writeVarUint8Array(msg, encoding.toUint8Array(inner));
+  return encoding.toUint8Array(msg).buffer as ArrayBuffer;
+}
+/** The awareness states in a message from the server, or null for a sync message. */
+function readAwareness(raw: ArrayBuffer): [number, number, string][] | null {
+  const d = decoding.createDecoder(new Uint8Array(raw));
+  if (decoding.readVarUint(d) !== 1) return null;
+  const u = decoding.createDecoder(decoding.readVarUint8Array(d));
+  const n = decoding.readVarUint(u);
+  return Array.from({ length: n }, () => [decoding.readVarUint(u), decoding.readVarUint(u), decoding.readVarString(u)]);
+}
+const awarenessIn = (inbox: (string | ArrayBuffer)[]) => inbox.map((m) => readAwareness(m as ArrayBuffer)).filter(Boolean);
+
 const rows = (db: DatabaseSync, table: string) => (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
 
 test("two clients editing through DocHub converge to the same text and state vector", async () => {
@@ -255,6 +280,72 @@ test("awareness is relayed to the others and dropped when its socket closes", as
   assert.deepEqual(awareness(cara.ws.inbox[1] as ArrayBuffer), [[42, 3, '{"user":"ann"}']]);
   await ann.disconnect(h);
   assert.deepEqual(awareness(bob.ws.inbox.shift() as ArrayBuffer), [[42, 4, "null"]]);
+});
+
+test("a socket speaks only for the awareness ids it claimed, and cursors survive hibernation", async () => {
+  const h = docHub();
+  const ann = new Client("ann");
+  const bob = new Client("bob");
+  await ann.connect(h);
+  await bob.connect(h);
+  await settle(h, ann, bob);
+  ann.ws.inbox.length = 0;
+  bob.ws.inbox.length = 0;
+  await h.hub.webSocketMessage(ann.server as never, awarenessMsg([[42, 1, '{"user":"ann"}']]));
+  assert.deepEqual(awarenessIn(bob.ws.inbox.splice(0)), [[[42, 1, '{"user":"ann"}']]]);
+  // Bob can't overwrite or clear ann's cursor; his own id goes through.
+  await h.hub.webSocketMessage(bob.server as never, awarenessMsg([[42, 2, '{"user":"mallory"}']]));
+  await h.hub.webSocketMessage(bob.server as never, awarenessMsg([[42, 3, "null"]]));
+  assert.deepEqual(awarenessIn(ann.ws.inbox.splice(0)), []);
+  await h.hub.webSocketMessage(bob.server as never, awarenessMsg([[42, 4, "null"], [7, 1, '{"user":"bob"}']]));
+  assert.deepEqual(awarenessIn(ann.ws.inbox.splice(0)), [[[7, 1, '{"user":"bob"}']]]);
+  // A state too big for the socket's attachment is dropped.
+  await h.hub.webSocketMessage(bob.server as never, awarenessMsg([[8, 1, JSON.stringify({ blob: "x".repeat(2000) })]]));
+  assert.deepEqual(awarenessIn(ann.ws.inbox.splice(0)), []);
+
+  // The DO hibernates (a fresh instance on the same sockets and storage); a latecomer still hears both cursors.
+  const woke = new DocHub(h.ctx as never, h.env as never);
+  const cara = new Client("cara");
+  await cara.connect({ ...h, hub: woke });
+  assert.deepEqual(awarenessIn(cara.ws.inbox), [[[42, 1, '{"user":"ann"}'], [7, 1, '{"user":"bob"}']]]);
+});
+
+test("archiving closes every sync socket; revoking closes only that member's, and the others hear their cursor go", async () => {
+  const h = docHub();
+  const ann = new Client("ann");
+  const bob = new Client("bob");
+  await ann.connect(h);
+  await bob.connect(h);
+  await settle(h, ann, bob);
+  await h.hub.webSocketMessage(bob.server as never, awarenessMsg([[7, 1, '{"user":"bob"}']]));
+  ann.ws.inbox.length = 0;
+  assert.equal((await h.hub.fetch(new Request("https://doc/close?login=bob", { method: "POST" }))).status, 204);
+  assert.equal(bob.server.closed, 4003);
+  assert.equal(ann.server.closed, null);
+  assert.deepEqual(awarenessIn(ann.ws.inbox.splice(0)), [[[7, 2, "null"]]]);
+  await h.hub.fetch(new Request("https://doc/close", { method: "POST" }));
+  assert.equal(ann.server.closed, 4003);
+});
+
+test("the compaction alarm is set once per burst of edits, and an edit past the doc cap is refused", async () => {
+  const h = docHub();
+  const ann = new Client("ann");
+  await ann.connect(h);
+  await settle(h, ann);
+  for (let i = 0; i < 20; i++) ann.text.insert(0, "x");
+  await settle(h, ann);
+  assert.equal(h.alarms(), 1);
+  await h.hub.alarm();
+  ann.text.insert(0, "y");
+  await settle(h, ann);
+  assert.equal(h.alarms(), 2);
+
+  (h.hub as unknown as { bytes: number }).bytes = MAX_DOC_BYTES - 5;
+  const before = rows(h.db, "updates");
+  ann.text.insert(0, "this edit doesn't fit");
+  await settle(h, ann);
+  assert.equal(ann.server.closed, 1009);
+  assert.equal(rows(h.db, "updates"), before);
 });
 
 test("compaction folds the updates into one snapshot; a reload reproduces the doc and takes later updates", async () => {
@@ -356,7 +447,11 @@ function orgHub() {
     waitUntil: () => {},
     getWebSockets: () => sockets,
   };
-  const env = { DB: { prepare: () => ({ all: async () => ({ results: [] }), bind: () => ({ all: async () => ({ results: [] }), first: async () => null }) }) } };
+  const docCalls: string[] = [];
+  const env = {
+    DB: { prepare: () => ({ all: async () => ({ results: [] }), bind: () => ({ all: async () => ({ results: [] }), first: async () => null }) }) },
+    DOC: { idFromName: (n: string) => n, get: (id: string) => ({ fetch: async (url: string) => { docCalls.push(`${id} ${url}`); return new Response(null, { status: 204 }); } }) },
+  };
   const org = new OrgHub(ctx as never, env as never);
   const client = (login: string) => {
     const ws = new FakeSocket();
@@ -368,11 +463,11 @@ function orgHub() {
     return { ws, said, say };
   };
   const store = (org as unknown as { store: { docs(): { id: string; title: string; archived?: boolean | null }[]; saveGoal?: unknown } }).store;
-  return { org, client, store };
+  return { org, client, store, docCalls };
 }
 
 test("OrgHub: doc.create is in the index the snapshot sends and doc.updated reaches every member; rename, archive and touched follow", async () => {
-  const { org, client, store } = orgHub();
+  const { org, client, store, docCalls } = orgHub();
   const ann = client("ann");
   const bob = client("bob");
   await ann.say({ type: "doc.create", title: "  Research: CRDTs  " });
@@ -407,7 +502,14 @@ test("OrgHub: doc.create is in the index the snapshot sends and doc.updated reac
   assert.equal((await org.fetch(new Request(`https://org/docs/${id}/touched`, { method: "POST" }))).status, 204);
   assert.equal(ann.said()[0].type, "doc.updated");
 
+  // Revoking someone closes their sockets on every live doc.
+  await (org as unknown as { cutOff(login: string): Promise<void> }).cutOff("bob");
+  assert.deepEqual(docCalls.splice(0), [`${id} https://doc/close?login=bob`]);
+
   await ann.say({ type: "doc.archive", id, archived: true });
-  assert.equal(bob.said().at(-1).doc.archived, true);
+  assert.equal(ann.said().filter((m) => m.type === "doc.updated").at(-1).doc.archived, true);
   assert.equal(store.docs()[0].archived, true);
+  // Archiving closes everyone's sockets on it.
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(docCalls, [`${id} https://doc/close`]);
 });

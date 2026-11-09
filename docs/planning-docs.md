@@ -25,7 +25,8 @@ Shared, multiplayer planning and research documents, inspired by GitHub Next's
   - `snapshot(id = 1, data, upto_seq)`: `Y.encodeStateAsUpdate` of everything up to `upto_seq`.
   - On load it applies the snapshot and then each later update. `compact()` folds the update rows
     into a new snapshot once there are more than 200 of them (or 1 MB), and from an alarm a few
-    minutes after the last edit.
+    minutes after the first edit since the last compaction. A doc is capped at 20 MB in total; an
+    edit that would go past that closes its socket.
   - When an edit lands it tells OrgHub (`POST /docs/<id>/touched`, at most every 30 s), which bumps
     `updatedAt` and broadcasts `doc.updated`.
 - The document's content lives in the Y.Doc. The editor task picks the shared types (a
@@ -44,13 +45,16 @@ Shared, multiplayer planning and research documents, inspired by GitHub Next's
 
 `GET /docs/<id>/sync` upgrades to a WebSocket, authed exactly like `/client/connect` (the session
 cookie or bearer token from `src/auth.ts`, same-origin check, signed-in and not revoked; org members
-only). Unknown docs are 404; archived docs are refused. Binary messages are the standard
+only). Unknown docs are 404; archived docs are refused. Archiving a doc closes its open sockets,
+and revoking a member closes theirs on every doc (OrgHub POSTs DocHub's internal `/close`). Binary messages are the standard
 `y-websocket` framing:
 
 - `0` sync, from `y-protocols/sync`: step 1 (state vector), step 2 (missing updates), update. The
   server sends step 1 on connect and answers the client's step 1 with step 2.
 - `1` awareness, from `y-protocols/awareness`: cursors and who's here, relayed to the other sockets
-  and dropped when a socket closes.
+  and dropped when a socket closes. A socket speaks only for the client ids it claimed first (it
+  can't rewrite someone else's cursor). States live in socket attachments so they survive
+  hibernation, which keeps them small (a few clients, under 900 characters per socket).
 
 So any `y-websocket`-compatible provider can talk to it.
 
