@@ -13,13 +13,14 @@ import { loadCollapsed, sectionOrder, toggleCollapsed } from "./sections.js";
 import { extend, linesLabel, pick, pickable, picked, relocate, rowsOf, selected, toNote } from "./review.js";
 import { bundleStale } from "./update.js";
 import { createSettings } from "./settings.js";
+import { createDocs, DOC_ROUTE } from "./docs.js";
 import { inQuietHours } from "./quiet-hours.js";
 import { canManage, machineStatus, meters, pauseSettings, pauseUntil, resumeSettings, sortMachines, teammatesTasks, usageRows } from "./machines.js";
 import { fillIcons, icon } from "./icons.js";
 import { riskBadge, riskDetails } from "./risk.js";
 import { canRerun, checkHref, checkStatusText, checkSummary, octicon, prStateLabel, taskFinished } from "./pull.js";
 
-const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], live: false, diffs: new Map(), machines: [], checkLogs: new Map(), older: older() };
+const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], docs: [], live: false, diffs: new Map(), machines: [], checkLogs: new Map(), older: older() };
 
 /**
  * The finished tasks the snapshot left out (it sends those of the last 14 days) and not loaded since:
@@ -179,6 +180,8 @@ function send(msg) {
 
 function receive(m) {
   settings.receive(m);
+  // Docs (MF-361): state.docs from the snapshot, doc.updated and doc.removed.
+  if (docs.receive(m) && m.type !== "snapshot") return render();
   switch (m.type) {
     case "snapshot":
       Object.assign(state, { me: m.me, org: m.org, members: m.members, goals: m.goals, live: true });
@@ -382,7 +385,7 @@ async function signOut() {
   if (!ok) return toast("Couldn't sign out; try again.");
   signingOut = true;
   socket?.close();
-  Object.assign(state, { me: null, members: [], tasks: new Map(), notes: [], machines: [], goals: [], live: false, diffs: new Map(), checkLogs: new Map(), older: older() });
+  Object.assign(state, { me: null, members: [], tasks: new Map(), notes: [], docs: [], machines: [], goals: [], live: false, diffs: new Map(), checkLogs: new Map(), older: older() });
   account();
   $("nav-settings").hidden = true;
   for (const id of ["inbox-count", "machines-count"]) $(id).textContent = "";
@@ -455,6 +458,9 @@ function route() {
   const [hash, query = ""] = (location.hash.replace(/^#/, "") || "/").split("?");
   const task = hash.match(/^\/t\/([A-Z][A-Z0-9]*-\d+)$/);
   const note = hash.match(/^\/notes\/([\w-]+)$/);
+  const doc = hash.match(DOC_ROUTE);
+  if (doc) return { name: "doc", nav: "docs", id: doc[1] };
+  if (hash === "/docs") return { name: "docs", nav: "docs", query };
   const settings = hash.match(/^\/settings(?:\/([\w-]+))?$/);
   if (task) return { name: "task", nav: "tasks", id: task[1], artifact: new URLSearchParams(query).get("artifact") };
   if (note) return { name: "note", nav: "notes", id: note[1] };
@@ -468,6 +474,7 @@ function route() {
 function render() {
   if (!state.me) return;
   const r = route();
+  if (r.name !== "doc" && docs.isOpen()) docs.close();
   for (const a of document.querySelectorAll("[data-nav]")) a.classList.toggle("on", a.dataset.nav === r.nav);
   $("nav-settings").hidden = false;
   account();
@@ -477,12 +484,15 @@ function render() {
   for (const [nav, label] of [["inbox", waiting ? `Inbox, ${waiting} waiting` : "Inbox"], ["machines", online() ? `Machines, ${online()} online` : "Machines"]])
     document.querySelector(`[data-nav="${nav}"]`)?.setAttribute("aria-label", label);
   document.title = `${waiting ? `(${waiting}) ` : ""}Maple Factory`;
-  const next = { task: () => taskView(r.id, r.artifact), tasks: tasksView, new: () => newTaskView(r), notes: notesView, machines: machinesView, note: () => noteView(r.id), settings: () => settings.view(r.section) }[r.name]?.() ?? inboxView();
+  const next = { task: () => taskView(r.id, r.artifact), tasks: tasksView, new: () => newTaskView(r), notes: notesView, docs: () => docs.listView(r), doc: () => docs.docView(r.id), machines: machinesView, note: () => noteView(r.id), settings: () => settings.view(r.section) }[r.name]?.() ?? inboxView();
+  // The open doc's editor never leaves the page: redraw only around it, or ProseMirror loses focus and typing.
+  if (r.name === "doc" && docs.patch($("main"), next)) return;
   // Keep what someone's typing: re-render only around the boxes being typed in.
   mount(next, !!document.activeElement?.closest?.("[data-keep]"));
 }
 const view = render;
 const settings = createSettings({ state, h, send, toast, render, ago });
+const docs = createDocs({ state, h, send, render, toast, icon, ago, allTasks });
 
 // Sections of the Inbox and Tasks pages folded down to their heading, kept in this browser.
 const collapsed = loadCollapsed();
@@ -943,7 +953,8 @@ function taskView(id, artifact = null) {
       h("span", { class: `pill s-${t.state}` }, stateLabel(t)),
       t.risk && riskPill(t.risk.level),
       ownerControl(t),
-      h("span", { class: "muted" }, `${goal?.name ?? ""}${(goal?.repos?.length ?? 0) > 1 ? ` · ${t.repo ?? goal.repo}` : ""} · updated ${ago(t.updatedAt)}`)),
+      h("span", { class: "muted" }, `${goal?.name ?? ""}${(goal?.repos?.length ?? 0) > 1 ? ` · ${t.repo ?? goal.repo}` : ""} · updated ${ago(t.updatedAt)}`),
+      goal && docs.goalLink(goal.id)),
     (t.after ?? []).length > 0 && h("div", { class: "muted", style: "font-size:13px;margin-top:4px" }, "Builds on ",
       t.after.map((id, i) => [i ? ", " : "", h("a", { href: `#/t/${id}` }, id)])),
     effortLine(t),

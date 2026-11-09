@@ -1,0 +1,30 @@
+{
+  "name": "@maple/docs-editor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The web docs editor (TipTap + Yjs). Bundled into server/web/app/docs/editor.bundle.js by scripts/build-docs-editor.mjs.",
+  "scripts": {
+    "test": "node --test ../test/docs-markdown.test.ts"
+  },
+  "dependencies": {
+    "@tiptap/core": "^3",
+    "@tiptap/pm": "^3",
+    "@tiptap/starter-kit": "^3",
+    "@tiptap/extension-collaboration": "^3",
+    "@tiptap/extension-collaboration-caret": "^3",
+    "@tiptap/extension-list": "^3",
+    "@tiptap/extension-mention": "^3",
+    "@tiptap/extension-bubble-menu": "^3",
+    "@tiptap/suggestion": "^3",
+    "@tiptap/y-tiptap": "^3",
+    "y-websocket": "^3",
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.33",
+    "prosemirror-markdown": "^1.13.2",
+    "markdown-it": "^14.1.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

@@ -4,14 +4,16 @@
   "type": "module",
   "workspaces": [
     "server",
+    "server/docs-editor",
     "installer"
   ],
   "scripts": {
     "gen": "node protocol/gen.ts",
-    "gen:check": "node protocol/gen.ts --check && node protocol/fixtures/check.ts && node scripts/sync-mermaid.mjs --check",
+    "gen:check": "node protocol/gen.ts --check && node protocol/fixtures/check.ts && node scripts/sync-mermaid.mjs --check && node scripts/build-docs-editor.mjs --check",
     "sync:mermaid": "node scripts/sync-mermaid.mjs",
     "test:fixtures": "node --test protocol/fixtures/check.test.ts",
     "dev": "npm run dev --workspace server",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build:docs": "node scripts/build-docs-editor.mjs"
   }
 }

@@ -95,7 +95,9 @@ export class DocHub extends DurableObject<Env> {
     const here = this.ctx.getWebSockets().filter((o) => o !== ws).flatMap((o) =>
       Object.entries((o.deserializeAttachment() as Peer).aware).map(([id, [clock, state]]) => [Number(id), clock, state] as [number, number, string]));
     if (here.length) ws.send(this.awarenessMessage(here));
-    return new Response(null, { status: 101, webSocket: pair[0] });
+    // The socket authed by a `maple-token` subprotocol (auth.ts) has to hear it chosen, or the browser drops it.
+    const tokenProtocol = request.headers.get("sec-websocket-protocol")?.split(",")[0].trim() === "maple-token";
+    return new Response(null, { status: 101, webSocket: pair[0], headers: tokenProtocol ? { "sec-websocket-protocol": "maple-token" } : {} });
   }
 
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer) {
