@@ -259,12 +259,7 @@ import SwiftUI
         let who = { (name: String) in
             members.contains { $0.login == name } ? person(name, members: members) : Person(name: name, color: color(for: name), isHuman: true)
         }
-        let status: IntakeRequest.Status = switch r.status {
-        case "clarifying": .clarifying
-        case "accepted": .accepted(taskID: r.taskId ?? "")
-        case "declined": .declined
-        default: .new
-        }
+        let status = r.intakeStatus
         return IntakeRequest(
             id: r.id, source: source, requester: who(r.requester), title: r.title, when: ago(r.at),
             thread: r.thread.map { m in
