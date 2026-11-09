@@ -1,0 +1,40 @@
+{
+  // maple-server under celld (github.com/denoland/celld), outside Cloudflare: `npm run celld`, or
+  // server/Dockerfile.celld. Keep in step with wrangler.jsonc (test/celld.test.ts checks the bindings);
+  // it differs only where celld needs it to:
+  // - main is celld-entry.ts, which applies migrations/*.sql itself (celld dev has no migrations CLI);
+  // - no `dev` or `keep_vars`: celld rejects keys it doesn't know;
+  // - delete_all_deletes_alarm, so deleteAll() clears a hub's alarm the same way as on Cloudflare;
+  // - the Text rule, so celld-entry.ts can import the .sql files.
+  // It sits in server/ because celld wants web/ and migrations/ inside the project: no `..`, no symlinks.
+  "name": "maple-factory",
+  "main": "celld-entry.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_als", "delete_all_deletes_alarm"],
+  "assets": { "directory": "./web", "html_handling": "auto-trailing-slash" },
+  "durable_objects": {
+    "bindings": [
+      { "name": "ORG", "class_name": "OrgHub" },
+      { "name": "MACHINE", "class_name": "MachineHub" },
+      { "name": "DOC", "class_name": "DocHub" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["OrgHub", "MachineHub"] },
+    { "tag": "v2", "new_sqlite_classes": ["DocHub"] }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "maple",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [{ "binding": "RELEASES", "bucket_name": "maple-releases" }],
+  "vars": {
+    "GITHUB_ORG": "",
+    "RELEASE_CHANNEL": "stable"
+  },
+  "rules": [{ "type": "Text", "globs": ["**/*.sql"] }]
+}

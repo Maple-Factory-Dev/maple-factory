@@ -111,6 +111,50 @@ Only admins change them (`repo.scripts` in the audit, naming which ones changed)
 Admins see when a newer maple-server is out, and how this factory gets it, on the home page, `/setup` and
 the Mac app's Account settings. `/healthz` says which version is running.
 
+## Self-host on celld
+
+The same server runs outside Cloudflare on [celld](https://github.com/denoland/celld) 0.6.3, with no
+source changes (the MF-372 spike, `docs/celld-spike.md`). `celld.jsonc` sits beside `wrangler.jsonc` with
+the same bindings (`test/celld.test.ts` keeps them in step); its entry, `celld-entry.ts`, is `src/index.ts`
+plus D1 migrations applied by the Worker itself on the first request (`src/migrate.ts`, recorded in the
+same `d1_migrations` table wrangler keeps), since `celld dev` has no local migrations CLI. A new file in
+`migrations/` goes in `src/migrate.ts`'s list and `celld-entry.ts`'s imports too; the tests fail until it does.
+
+On a Mac (arm64) or Linux (arm64, x86_64), after `npm ci` at the repo root:
+
+```sh
+npm run celld:install --workspace server   # celld 0.6.3 into ${CELLD_BIN_DIR:-~/.local/bin}, sha256-checked
+npm run celld --workspace server           # installs if needed, then serves on ${MAPLE_PORT:-8788}
+node server/celld/probe.mjs                # smoke check: healthz, assets, D1, R2
+```
+
+`celld/install.sh` pins the version and each asset's sha256 (the release publishes no attestation), skips
+the download when that version is already installed, and checks esbuild is there (celld bundles with the
+workspace's `node_modules/.bin/esbuild`). Vars come from `server/.dev.vars`, as for `wrangler dev`
+(`GITHUB_ORG`, `PUBLIC_URL`, `DEV_LOGIN` on localhost, and the rest; `/setup` keeps the GitHub App and
+`SESSION_SECRET` in D1 as usual). State lives in `server/.celld/` (gitignored); `celld dev --clean` wipes it.
+
+In Docker, from the repo root:
+
+```sh
+docker build -f server/Dockerfile.celld -t maple-server-celld .
+docker run -p 8788:8788 -v maple-celld:/app/server/.celld \
+  -e GITHUB_ORG=acme -e PUBLIC_URL=https://maple.example.com maple-server-celld
+```
+
+Keep `/app/server/.celld` on a volume: it holds D1, R2 and the Durable Objects. `-e` vars are written to
+`.dev.vars` when the container starts (celld reads vars only from there); mount your own at
+`/app/server/.dev.vars` instead and it's used as is. Put a proxy in front for TLS and compression.
+
+Known gaps, from the spike:
+
+- **`/app/` 404s** under celld's `auto-trailing-slash` (a nested `index.html` isn't served; `/app` still
+  redirects there, and `/app/index.html` redirects back). It's a celld bug with no workaround yet, so the
+  web app doesn't load; the Mac, iPhone and Android apps and runners work.
+- **One node only.** `celld dev` keeps state on local disk; running several nodes needs a fleet bucket
+  (`celld --bucket s3://…`), and `celld d1`/`celld r2` operator commands only reach a fleet bucket.
+- `celld r2` can't upload runner releases to a dev node; maplefactory.dev's feed still serves them.
+
 ## Runners
 
 `/install.sh` and every runner's self-update get maple-runner from `/releases/`, which serves

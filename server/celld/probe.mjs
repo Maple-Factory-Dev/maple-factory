@@ -1,10 +1,10 @@
-// THROWAWAY SPIKE PROBE (MF-372): checks each brief item against server/ running under `celld dev`.
-//   node server/celld/probe.mjs [http://localhost:8788] [pkcs1.pem] [pkcs8.pem]
-// Start celld with CELLD_IDLE_EVICT_S=5 so the hibernation check can see a MachineHub hibernate.
+// Smoke check for maple-server under celld (server/celld.jsonc, `npm run celld`), from the MF-372 spike.
+//   node server/celld/probe.mjs [http://localhost:8788]
+// Needs DEV_LOGIN in server/.dev.vars (it signs in through /dev/token). Set CELLD_PROBE_HIBERNATION=1, and
+// start celld with CELLD_IDLE_EVICT_S=5, to also check a MachineHub hibernating and waking.
 import crypto from "node:crypto";
-import fs from "node:fs";
 
-const [base = "http://localhost:8788", pkcs1, pkcs8] = process.argv.slice(2);
+const [base = "http://localhost:8788"] = process.argv.slice(2);
 const wsBase = base.replace(/^http/, "ws");
 const results = [];
 const report = (item, verdict, why) => { results.push([item, verdict, why]); console.log(`${verdict.padEnd(7)} ${item}: ${why}`); };
@@ -31,26 +31,9 @@ await check("assets auto-trailing-slash", async () => {
     `/app -> ${a.status} ${a.headers.get("location")}; /app/ -> ${b.status} ${served ? "index.html" : JSON.stringify(body.slice(0, 40))}; /app/app.css -> ${c.status}`);
 });
 
-await check("RSASSA-PKCS1-v1_5 JWT", async () => {
-  const notes = [];
-  let pass = 0;
-  for (const [label, file] of [["PKCS#1", pkcs1], ["PKCS#8", pkcs8]]) {
-    if (!file) { notes.push(`${label}: no key given`); continue; }
-    const pem = fs.readFileSync(file, "utf8");
-    const r = await fetch(`${base}/__celld/jwt`, { method: "POST", body: JSON.stringify({ pem }) });
-    const j = await r.json();
-    if (!j.jwt) { notes.push(`${label}: ${j.error}`); continue; }
-    const [h, p, s] = j.jwt.split(".");
-    const ok = crypto.verify("sha256", Buffer.from(`${h}.${p}`), crypto.createPublicKey(pem), Buffer.from(s, "base64url"));
-    if (ok) pass++;
-    notes.push(`${label}: node:crypto verify=${ok}`);
-  }
-  report("RSASSA-PKCS1-v1_5 JWT", pass === 2 ? "PASS" : "FAIL", notes.join("; "));
-});
-
 await check("D1 read/write", async () => {
   const me = await (await fetch(`${base}/api/me`, { headers: auth })).json();
-  const r = await fetch(`${base}/api/name`, { method: "PUT", headers: { ...auth, "content-type": "application/json", origin: base }, body: JSON.stringify({ name: "celld spike" }) });
+  const r = await fetch(`${base}/api/name`, { method: "PUT", headers: { ...auth, "content-type": "application/json", origin: base }, body: JSON.stringify({ name: "celld probe" }) });
   const enroll = await fetch(`${base}/api/machines/enroll`, { method: "POST", headers: { ...auth, origin: base } });
   report("D1 read/write", me.member?.login && enroll.status === 200 ? "PASS" : "FAIL", `/api/me login=${me.member?.login} role=${me.member?.role}; PUT /api/name ${r.status}; enroll code insert ${enroll.status}`);
 });
@@ -65,17 +48,8 @@ await check("R2 put/get", async () => {
   report("R2 put/get", up.status === 201 && text === body ? "PASS" : "FAIL", `RELEASES.put via /api/attachments ${up.status}; get ${got.status} match=${text === body}; /releases/ miss -> ${rel.status}`);
 });
 
-await check("Durable Object alarms", async () => {
-  const name = `p${Date.now()}`;
-  await fetch(`${base}/__celld/alarm/${name}/set`);
-  await sleep(2500);
-  const s = await (await fetch(`${base}/__celld/alarm/${name}/state`)).json();
-  const f = await (await fetch(`${base}/__celld/alarm/${name}x/forget`)).json();
-  report("Durable Object alarms", s.fired && f.alarmAfterDeleteAll === null ? "PASS" : "FAIL", `alarm fired=${!!s.fired}; getAlarm() after deleteAll() under delete_all_deletes_alarm = ${f.alarmAfterDeleteAll}`);
-});
-
 // A fake runner and a viewer on one MachineHub: auto-response, attachments, hibernation.
-await check("hibernation WS + auto-response + attachments", async () => {
+if (process.env.CELLD_PROBE_HIBERNATION) await check("hibernation WS + auto-response + attachments", async () => {
   const { code } = await (await fetch(`${base}/api/machines/enroll`, { method: "POST", headers: { ...auth, origin: base } })).json();
   const id = `celld-probe-${Date.now().toString(36)}`;
   const en = await fetch(`${base}/runner/enroll`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code, runnerId: id, hostname: id, os: "macos", arch: "aarch64", version: "0.0.0" }) });
@@ -122,15 +96,6 @@ await check("hibernation WS + auto-response + attachments", async () => {
   globalThis.probeRunner = id;
 });
 
-await check("Sentry without nodejs_als", async () => {
-  const als = await (await fetch(`${base}/__celld/als`)).json();
-  const thrown = await fetch(`${base}/debug/sentry-test`);
-  const direct = await (await fetch(`${base}/__celld/sentry`)).json();
-  const ok = als.storeAfterAwait === 42 && direct.flushed;
-  report("Sentry without nodejs_als", ok ? "PARTIAL" : "FAIL",
-    `SDK loads + withSentry wraps (healthz sentry=true); AsyncLocalStorage keeps store across await=${als.storeAfterAwait === 42}; honored flags=${Object.keys(als.flags ?? {}).filter((k) => als.flags[k]).join(",")}; captureException+flush sent=${direct.flushed}; /debug/sentry-test -> ${thrown.status} (check the catcher for an envelope)`);
-});
-
 console.log("\n| item | verdict | detail |\n| --- | --- | --- |");
 for (const [i, v, w] of results) console.log(`| ${i} | ${v} | ${w.replace(/\|/g, "\\|")} |`);
-process.exit(0);
+process.exit(results.some(([, v]) => v === "FAIL") ? 1 : 0);

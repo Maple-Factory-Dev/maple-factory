@@ -10,7 +10,12 @@ migrations in dev), and one is minor (Sentry on the uncaught-throw path).
   `gh release download v0.6.3 -R denoland/celld -p celld-aarch64-apple-darwin.gz && gunzip … && cp … ~/.local/bin/celld`.
   `gh attestation verify` returned 404 (no attestation published for this asset), even though the README says provenance is verifiable.
 - esbuild has to be on PATH or in `CELLD_ESBUILD`. The repo's `node_modules/.bin/esbuild` (0.28.2, from wrangler) works.
-- Run: `cd server/celld && cp -R ../web web && cp -R ../migrations migrations && CELLD_ESBUILD=../../node_modules/.bin/esbuild celld dev wrangler.jsonc --port 8788 --logs`
+- **Now packaged (MF-373):** the throwaway `server/celld/entry.ts` and `server/celld/wrangler.jsonc` and the
+  copy steps are gone. Use `server/celld/install.sh` (pinned, sha256-checked), `server/celld.jsonc` +
+  `server/celld-entry.ts` (self-applied migrations), `npm run celld` or `server/Dockerfile.celld`, and
+  `server/celld/probe.mjs` as the smoke check; see "Self-host on celld" in server/README.md. The commands
+  and config below record how the spike ran.
+- Spike run (historical): `cd server/celld && cp -R ../web web && cp -R ../migrations migrations && CELLD_ESBUILD=../../node_modules/.bin/esbuild celld dev wrangler.jsonc --port 8788 --logs`
   (add `CELLD_IDLE_EVICT_S=5` for the hibernation check), then `curl -XPOST localhost:8788/__celld/migrate`.
 - `server/celld/.dev.vars` (gitignored):
   ```

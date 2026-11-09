@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "wrangler d1 migrations apply maple --local && wrangler dev --port ${MAPLE_PORT:-8788}",
     "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy",
+    "celld:install": "sh celld/install.sh",
+    "celld": "sh celld/install.sh >/dev/null && PATH=\"${CELLD_BIN_DIR:-$HOME/.local/bin}:$PATH\" CELLD_ESBUILD=../node_modules/.bin/esbuild celld dev celld.jsonc --port ${MAPLE_PORT:-8788}",
     "typecheck": "tsc --noEmit",
     "test": "node --no-warnings=ExperimentalWarning --experimental-transform-types --test test/*.test.ts"
   },
