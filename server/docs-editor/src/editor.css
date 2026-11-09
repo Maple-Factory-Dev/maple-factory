@@ -1,0 +1,43 @@
+/* The docs editor (MF-361). Colors come from app.css's tokens; embed.html defines the same ones. */
+.doc-editor { color: var(--text); }
+.doc-editor[data-theme="dark"] { color-scheme: dark; }
+.doc-prose { outline: none; min-height: 50vh; padding: 4px 2px 40vh; font-size: 15px; line-height: 1.6; }
+.doc-prose > * + * { margin-top: 0.6em; }
+.doc-prose h1 { font-size: 1.8em; line-height: 1.2; margin: 0.8em 0 0.3em; }
+.doc-prose h2 { font-size: 1.4em; line-height: 1.25; margin: 0.8em 0 0.3em; }
+.doc-prose h3 { font-size: 1.15em; margin: 0.8em 0 0.3em; }
+.doc-prose p { margin: 0; }
+.doc-prose ul, .doc-prose ol { padding-left: 1.4em; margin: 0.3em 0; }
+.doc-prose ul[data-type="taskList"] { list-style: none; padding-left: 0.2em; }
+.doc-prose ul[data-type="taskList"] li { display: flex; gap: 0.5em; align-items: flex-start; }
+.doc-prose ul[data-type="taskList"] li > label { flex: none; margin-top: 0.2em; }
+.doc-prose ul[data-type="taskList"] li > div { flex: 1; }
+.doc-prose ul[data-type="taskList"] li[data-checked="true"] > div { color: var(--muted); text-decoration: line-through; }
+.doc-prose blockquote { border-left: 3px solid var(--stroke); border-left-color: color-mix(in srgb, var(--text) 18%, transparent); margin: 0.4em 0; padding: 0 0 0 0.9em; color: var(--muted); }
+.doc-prose pre { background: var(--raised); border-radius: 8px; padding: 10px 12px; font-family: var(--mono); font-size: 13px; overflow-x: auto; }
+.doc-prose code { font-family: var(--mono); font-size: 0.88em; background: var(--fill); border-radius: 4px; padding: 1px 4px; }
+.doc-prose pre code { background: none; padding: 0; font-size: inherit; }
+.doc-prose a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.doc-prose hr { border: none; border-top: 1px solid var(--stroke); margin: 1.2em 0; }
+.doc-prose p.is-editor-empty:first-child::before { content: "Type / for blocks, @ to mention, # for a task"; color: var(--faint); float: left; height: 0; pointer-events: none; }
+.doc-mention { color: var(--mention); font-weight: 600; }
+.doc-taskref { font-family: var(--mono); font-size: 0.9em; color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); border-radius: 4px; padding: 0 4px; text-decoration: none !important; cursor: pointer; }
+.doc-taskref.ProseMirror-selectednode { outline: 2px solid var(--accent); }
+
+/* Other people's carets (CollaborationCaret) */
+.collaboration-carets__caret { position: relative; margin: 0 -1px; border-left: 2px solid; border-right: 0; word-break: normal; pointer-events: none; }
+.collaboration-carets__label { position: absolute; top: -1.45em; left: -2px; font-size: 11px; font-weight: 600; line-height: 1; color: #fff; padding: 3px 5px; border-radius: 4px 4px 4px 0; white-space: nowrap; user-select: none; font-style: normal; }
+.collaboration-carets__selection { }
+
+/* Menus */
+.doc-menu { position: absolute; z-index: 1000; min-width: 220px; max-width: 280px; padding: 4px; background: var(--card); border: 1px solid var(--stroke); border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.18); font-size: 13px; color: var(--text); }
+.doc-menu-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; border-radius: 6px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.doc-menu-item.on, .doc-menu-item:hover { background: var(--fill); }
+.doc-menu-icon { flex: none; width: 26px; text-align: center; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.doc-menu-hint { margin-left: auto; color: var(--faint); font-family: var(--mono); font-size: 11px; }
+.doc-menu-empty { padding: 6px 8px; color: var(--faint); }
+.doc-bubble { display: flex; gap: 2px; padding: 3px; background: var(--term); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.22); }
+.doc-bubble button { border: 0; background: none; color: var(--term-text); font: 600 12px/1 system-ui, sans-serif; padding: 6px 8px; border-radius: 5px; cursor: pointer; }
+.doc-bubble button:hover, .doc-bubble button.on { background: rgba(255,255,255,.14); color: #fff; }
+.doc-bubble .doc-bubble-italic { font-style: italic; }
+.doc-bubble .doc-bubble-strikethrough { text-decoration: line-through; }
