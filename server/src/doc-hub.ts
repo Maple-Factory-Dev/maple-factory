@@ -8,6 +8,7 @@ import * as encoding from "lib0/encoding";
 import * as decoding from "lib0/decoding";
 import * as syncProtocol from "y-protocols/sync";
 import type { Env } from "./env.ts";
+import { readDoc, anchorFor, applySuggestion, DocToolError } from "../docs-editor/src/headless.js";
 
 const MESSAGE_SYNC = 0;
 const MESSAGE_AWARENESS = 1;
@@ -78,6 +79,8 @@ export class DocHub extends DurableObject<Env> {
       }
       return new Response(null, { status: 204 });
     }
+    // From OrgHub's agent doc tools (MF-365): read as Markdown, anchor a quote or block, apply an accepted suggestion.
+    if (request.method === "POST" && ["/read", "/anchor", "/apply"].includes(url.pathname)) return this.tools(url.pathname, request);
     if (url.pathname !== "/sync") return new Response("Not found.", { status: 404 });
     const login = request.headers.get("x-member-login");
     const docId = request.headers.get("x-doc-id");
@@ -98,6 +101,24 @@ export class DocHub extends DurableObject<Env> {
     // The socket authed by a `maple-token` subprotocol (auth.ts) has to hear it chosen, or the browser drops it.
     const tokenProtocol = request.headers.get("sec-websocket-protocol")?.split(",")[0].trim() === "maple-token";
     return new Response(null, { status: 101, webSocket: pair[0], headers: tokenProtocol ? { "sec-websocket-protocol": "maple-token" } : {} });
+  }
+
+  /** /read {threads} → ReadDoc; /anchor {block?, quote?} → DocAnchor; /apply {anchor, markdown} → {before}. 422: the agent's mistake. */
+  private async tools(path: string, request: Request): Promise<Response> {
+    const docId = request.headers.get("x-doc-id");
+    if (docId) this.sql.exec("INSERT INTO meta (key, value) VALUES ('id', ?) ON CONFLICT (key) DO NOTHING", docId);
+    const body = (await request.json()) as Record<string, any>;
+    try {
+      if (path === "/read") return Response.json(readDoc(this.doc, Array.isArray(body.threads) ? body.threads : []));
+      if (path === "/anchor") return Response.json(anchorFor(this.doc, { block: body.block ?? null, quote: body.quote ?? null }));
+      if (this.bytes >= MAX_DOC_BYTES) return new Response("This doc is full.", { status: 422 });
+      // origin null: onUpdate keeps it, sends it to every open socket as a sync update, and touches OrgHub.
+      const { before } = applySuggestion(this.doc, body.anchor, String(body.markdown ?? ""), null);
+      return Response.json({ before });
+    } catch (e) {
+      if (e instanceof DocToolError) return new Response(e.message, { status: 422 });
+      throw e;
+    }
   }
 
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer) {
