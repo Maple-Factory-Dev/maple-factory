@@ -1,13 +1,13 @@
-## 0.108.0 — 2026-11-09
-
-The runner understands the new shared planning docs messages, so it stays in step with servers that have Docs.
-
 # maple-runner changelog
 
 Newest first. A release adds its `## <version> — <date>` section here before running
 `scripts/release-runner.mjs`, which takes that section as the manifest's notes (unless `--notes` is given) and
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
+
+## 0.108.0 — 2026-11-09
+
+The runner understands the new shared planning docs messages, so it stays in step with servers that have Docs.
 
 ## 0.107.0 — 2026-11-08
 
