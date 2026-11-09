@@ -56,7 +56,8 @@ export function commentHighlights(get) {
           if (t.resolved) continue;
           const r = resolveAnchor(ydoc, mapping, t.anchor);
           if (r.orphan || r.to > state.doc.content.size) continue;
-          decos.push(Decoration.inline(r.from, r.to, { class: "doc-comment-mark" + (t.id === active ? " active" : ""), "data-thread": t.id }));
+          const kind = t.suggestion ? "doc-suggestion-mark" : "doc-comment-mark";
+          decos.push(Decoration.inline(r.from, r.to, { class: kind + (t.id === active ? " active" : ""), "data-thread": t.id }));
         }
         return DecorationSet.create(state.doc, decos);
       },
@@ -134,7 +135,7 @@ function composer(members, placeholder, onSubmit, onCancel) {
 
 /**
  * The margin rail: thread cards aligned to their anchors (orphans under "On deleted text"), with Open /
- * Resolved filters, reply, Resolve and Reopen. `threads()` → DocThread[]; `send(cmd)` relays
+ * Resolved filters, reply, Resolve and Reopen; suggested edits (MF-365) get Accept / Reject (doc.suggestion). `threads()` → DocThread[]; `send(cmd)` relays
  * doc.comment / doc.resolve / doc.reopen; `onCount(open)` tells the host the open count (for badges).
  */
 export function createCommentRail({ editor, ydoc, docId, threads, members, send, onCount = () => {} }) {
@@ -167,22 +168,45 @@ export function createCommentRail({ editor, ydoc, docId, threads, members, send,
   function card(t) {
     const c = el("div", "doc-thread" + (t.id === active ? " active" : "") + (t.resolved ? " resolved" : ""));
     c.dataset.thread = t.id;
-    if (t.anchor?.quote) c.append(el("div", "doc-thread-quote", t.anchor.quote));
+    const sug = t.suggestion;
+    if (sug) {
+      // A tracked change (MF-365): the original struck through, the replacement in green, Accept / Reject.
+      c.classList.add("suggestion");
+      const by = t.comments[0]?.agent || t.createdBy;
+      c.append(el("div", "doc-suggest-label", `Suggested edit by ${by}`));
+      const diff = el("div", "doc-suggest-diff");
+      if (t.anchor?.quote) diff.append(el("del", "doc-suggest-old", t.anchor.quote));
+      diff.append(sug.replacement ? el("ins", "doc-suggest-new", sug.replacement) : el("span", "doc-suggest-delete", "(delete it)"));
+      c.append(diff);
+    } else if (t.anchor?.quote) c.append(el("div", "doc-thread-quote", t.anchor.quote));
     for (const m of t.comments) {
       const row = el("div", "doc-comment");
       const meta = el("div", "doc-comment-meta");
-      meta.append(el("strong", null, m.author), el("span", null, ` · ${ago(m.at)}`));
+      meta.append(el("strong", null, m.author));
+      if (m.agent) meta.append(el("span", "doc-agent-badge", m.agent));
+      meta.append(el("span", null, ` · ${ago(m.at)}`));
       const text = el("div", "doc-comment-text");
       for (const part of m.text.split(/(@[\w-]+)/)) text.append(part.startsWith("@") ? el("span", "doc-comment-mention", part) : document.createTextNode(part));
       row.append(meta, text);
       c.append(row);
     }
     const actions = el("div", "doc-thread-actions");
-    const toggle = el("button", "doc-btn", t.resolved ? "Reopen" : "Resolve");
-    toggle.type = "button";
-    toggle.addEventListener("click", (e) => { e.stopPropagation(); send({ type: t.resolved ? "doc.reopen" : "doc.resolve", doc: docId, thread: t.id }); });
-    actions.append(toggle);
-    if (t.resolved) actions.append(el("span", "doc-thread-by", `Resolved by ${t.resolvedBy}`));
+    if (sug?.status === "open") {
+      for (const [label, accept] of [["Accept", true], ["Reject", false]]) {
+        const b = el("button", "doc-btn" + (accept ? " primary doc-suggest-accept" : " doc-suggest-reject"), label);
+        b.type = "button";
+        b.addEventListener("click", (e) => { e.stopPropagation(); send({ type: "doc.suggestion", doc: docId, thread: t.id, accept }); });
+        actions.append(b);
+      }
+    } else if (sug) {
+      actions.append(el("span", `doc-suggest-status ${sug.status}`, `${sug.status === "accepted" ? "Accepted" : "Rejected"}${sug.decidedBy ? ` by ${sug.decidedBy}` : ""}`));
+    } else {
+      const toggle = el("button", "doc-btn", t.resolved ? "Reopen" : "Resolve");
+      toggle.type = "button";
+      toggle.addEventListener("click", (e) => { e.stopPropagation(); send({ type: t.resolved ? "doc.reopen" : "doc.resolve", doc: docId, thread: t.id }); });
+      actions.append(toggle);
+      if (t.resolved) actions.append(el("span", "doc-thread-by", `Resolved by ${t.resolvedBy}`));
+    }
     c.append(actions);
     if (t.id === active && !t.resolved) {
       const reply = composer(members, "Reply…", (text) => send({ type: "doc.comment", doc: docId, thread: t.id, text }));
