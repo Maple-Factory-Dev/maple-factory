@@ -248,14 +248,16 @@ struct IntakeDetailView: View {
     private func actionBar(_ request: Wire.IntakeRequest) -> some View {
         HStack(spacing: 8) {
             Button { starting = true } label: {
-                Label("Start task", systemImage: "plus").frame(maxWidth: .infinity)
+                Label("Start task", systemImage: "plus").lineLimit(1).frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .tint(Theme.accent)
             .accessibilityIdentifier("intake.start")
-            Button { asking = true } label: { Label("Ask", systemImage: "bubble.left") }
+            Button { asking = true } label: { Label("Ask", systemImage: "bubble.left").lineLimit(1) }
+                .fixedSize()
                 .accessibilityIdentifier("intake.ask")
-            Button { attaching = true } label: { Label("Attach", systemImage: "link") }
+            Button { attaching = true } label: { Label("Attach", systemImage: "link").lineLimit(1) }
+                .fixedSize()
                 .accessibilityIdentifier("intake.attach")
             Button(role: .destructive) { confirmingDecline = true } label: { Image(systemName: "xmark") }
                 .accessibilityLabel("Decline")
