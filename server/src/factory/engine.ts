@@ -9,7 +9,7 @@ import type { Env } from "../env.ts";
 import { ArtifactKindValues, PriorityValues, RoleValues } from "../wire.ts";
 import type {
   Artifact, ArtifactKind, ChangeRequest, CheckRun, ClientMessage, Comment, DiffCommit, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
-  Classification, McpConnector, NotRunCheck, Priority, PromptAdditions, RiskLevel, ServerToRunner, SessionEnd, Task, WorktreeScripts,
+  Classification, DocThread, McpConnector, NotRunCheck, Priority, PromptAdditions, RiskLevel, ServerToRunner, SessionEnd, Task, WorktreeScripts,
 } from "../wire.ts";
 import { audit, machineHub } from "../util.ts";
 import { cleanTags, TAG } from "../machines.ts";
@@ -18,7 +18,8 @@ import { byRank, needsSession, Store, type TaskSession } from "./store.ts";
 import { builderPrompt, cleanPrompts, MERGE_ANCHOR, type Moving, plannerPrompt, resumePrompt, reviewerPrompt } from "./prompts.ts";
 import { goalRepos, OWNER, REPO, taskRepo } from "./repos.ts";
 import { affectedBy, emptyForecast, inFlight, refreshOverlaps, type Lane } from "./forecast.ts";
-import { allowed, isPersonalTool, personalTools, toolsFor } from "./tools.ts";
+import { allowed, isDocTool, isPersonalTool, personalTools, toolsFor } from "./tools.ts";
+import { DocTools } from "./doc-tools.ts";
 import { parseDiagrams } from "./diagrams.ts";
 import { Drafts } from "./drafts.ts";
 import { everyText, Recurrings, whenText } from "./recurring.ts";
@@ -85,6 +86,8 @@ type Hooks = {
   userToken?(login: string): Promise<string | null>;
   /** Langfuse (integrations/langfuse.ts): tasks as traces, sessions' cost as generations, touchpoints as scores. */
   langfuse?: LangfuseSink;
+  /** Push a doc thread's newest @mentions (MF-365's doc tools). */
+  docMentions?(thread: DocThread): void;
 };
 
 /** How a "didn't merge" for missing approving reviews starts: a builder can't fix that, so it goes to a person. */
@@ -193,7 +196,11 @@ export class Engine {
   /** @Maple's asks in Slack. */
   readonly slack: SlackAsks;
 
+  /** Agents' doc tools and a person's suggestion Accept / Reject (MF-365). */
+  readonly docs: DocTools;
+
   constructor(private env: Env, private store: Store, private hooks: Hooks, private intake: Intake, private secrets: Secrets) {
+    this.docs = new DocTools(env, store, { broadcast: (m) => hooks.broadcast(m), members: () => hooks.members(), notify: (t) => hooks.docMentions?.(t) });
     // Maple's own one-off runs (Draft with AI, Scout, Set up with AI, @Maple in Slack) only stop for an
     // "Everything" pause; Pause New Work holds back tasks, not these.
     const stopped = (m: { id: string }) => this.pause(m.id) === "all";
@@ -2854,6 +2861,13 @@ export class Engine {
     if (!task) return { error: "The task isn't there any more." };
     if (task.worker?.session !== sessionId) return { error: "This session isn't the task's current worker any more; stop here." };
     if (name !== "get_task" && this.store.private(task.id).handingOff) return { error: "The task is being handed off to another machine; stop here." };
+    if (isDocTool(name)) {
+      try {
+        return { result: await this.docs.run({ author: task.id, agent: `${task.id} ${s.role}` }, name, args) };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
+    }
     const handingOffBefore = name === "raise_hand" && !!this.store.private(task.id).budgetHandOff;
     try {
       const here = task.machine ? machinesNow?.find((m) => m.id === task.machine) : undefined;
@@ -2889,6 +2903,7 @@ export class Engine {
 
   /** get_repo_setup and save_repo_setup, from a session on `machine` that isn't a factory task's. */
   private async personalTool(machine: Machine, name: string, a: Record<string, unknown>): Promise<{ summary: string; data?: unknown }> {
+    if (isDocTool(name)) return this.docs.run({ author: machine.owner, agent: `agent on ${machine.name}` }, name, a);
     const asked = str(a.repo, "repo");
     const repo = this.store.repos().find((r) => r.name.toLowerCase() === asked.trim().toLowerCase())?.name
       ?? fail(`${asked} isn't one of the org's repos.`);

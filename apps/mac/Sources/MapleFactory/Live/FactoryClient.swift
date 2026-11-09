@@ -62,6 +62,10 @@ import Foundation
     private(set) var notes: [Note] = []
     /// Shared planning docs' index (docs/planning-docs.md), archived ones included; see `FeedState.activeDocs`.
     private(set) var docs: [Wire.Doc] = []
+    /// The title of a doc.create we sent (MF-382), until its doc.updated lands.
+    private(set) var pendingDocTitle: String?
+    /// Called with the id of a doc we just created, once the server has it: AppState opens it, ready to type.
+    @ObservationIgnored var onDocCreated: ((String) -> Void)?
     /// Comment threads of docs we've opened (MF-364), by doc id.
     private(set) var docThreads: [String: [Wire.DocThread]] = [:]
     /// Your Draft with AI runs, by id.
@@ -665,6 +669,10 @@ import Foundation
             store(for: batch.id).apply(events: batch.events, epoch: batch.epoch)
         case .docUpdated, .docRemoved:
             FeedState.applyDoc(message, to: &docs)
+            if let id = Self.createdDocId(pendingTitle: pendingDocTitle, me: me?.login, message: message) {
+                pendingDocTitle = nil
+                onDocCreated?(id)
+            }
         case .docThreads, .docThreadUpdated:
             FeedState.applyThreads(message, to: &docThreads)
         case .pushDevices:
@@ -673,6 +681,14 @@ import Foundation
         case .unknown:
             break
         }
+    }
+
+    /// The doc our pending doc.create made (MF-382): a doc.updated whose creator is me and whose title matches.
+    /// Someone else's doc with the same title, or a rename, doesn't count.
+    nonisolated static func createdDocId(pendingTitle: String?, me: String?, message: Wire.ServerToClient) -> String? {
+        guard let pendingTitle, let me, case .docUpdated(let update) = message,
+              update.doc.createdBy == me, update.doc.title == pendingTitle else { return nil }
+        return update.doc.id
     }
 
     /// A banner when a task newly needs you; the snapshot never calls this, so reconnecting stays quiet.
@@ -1074,14 +1090,18 @@ import Foundation
     // MARK: Commands
 
     /// Shared docs (docs/planning-docs.md): the server answers each with doc.updated.
-    func createDoc(title: String, goal: String?) { send(.docCreate(.init(title: title, goal: goal))) }
+    /// Its doc.updated opens the new doc (MF-382), like the web's `pendingCreate`.
+    func createDoc(title: String, goal: String?) {
+        pendingDocTitle = title
+        send(.docCreate(.init(title: title, goal: goal)))
+    }
     func renameDoc(id: String, title: String) { send(.docRename(.init(id: id, title: title))) }
     func archiveDoc(id: String, archived: Bool = true) { send(.docArchive(.init(id: id, archived: archived))) }
     /// A doc's comment threads (MF-364): answered with doc.threads, then kept current by doc.thread.updated.
     func askDocThreads(_ id: String) { send(.docThreads(.init(doc: id))) }
-    /// Relays the docs embed's `command` event: only doc.comment / doc.resolve / doc.reopen get through.
+    /// Relays the docs embed's `command` event: only doc.comment / doc.resolve / doc.reopen / doc.suggestion get through.
     func sendDocCommand(_ command: [String: Any]) {
-        guard let type = command["type"] as? String, ["doc.comment", "doc.resolve", "doc.reopen"].contains(type),
+        guard let type = command["type"] as? String, ["doc.comment", "doc.resolve", "doc.reopen", "doc.suggestion"].contains(type),
               let data = try? JSONSerialization.data(withJSONObject: command),
               let message = try? JSONDecoder().decode(Wire.ClientMessage.self, from: data) else { return }
         send(message)

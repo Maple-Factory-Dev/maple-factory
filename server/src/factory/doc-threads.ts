@@ -31,9 +31,11 @@ export function newThread(doc: string, author: string, text: string, anchor: Doc
   return { id: crypto.randomUUID(), doc, anchor, comments: [comment(author, text, members, at)], resolved: null, resolvedBy: null, resolvedAt: null, createdBy: author, createdAt: at };
 }
 
-/** A reply; it reopens a resolved thread. */
+/** A reply; it reopens a resolved thread, except a decided suggestion, which stays resolved (the rail has no
+ *  Resolve for it, and there's nothing left to decide). */
 export function addComment(t: DocThread, author: string, text: string, members: { login: string }[], at = Date.now()): DocThread {
-  return { ...t, comments: [...t.comments, comment(author, text, members, at)], resolved: null, resolvedBy: null, resolvedAt: null };
+  const next = { ...t, comments: [...t.comments, comment(author, text, members, at)] };
+  return t.suggestion && t.suggestion.status !== "open" ? next : { ...next, resolved: null, resolvedBy: null, resolvedAt: null };
 }
 
 export function resolve(t: DocThread, by: string, at = Date.now()): DocThread {

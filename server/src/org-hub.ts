@@ -97,6 +97,7 @@ export class OrgHub extends DurableObject<Env> {
       },
       userToken: (login) => userToken(env, login),
       langfuse: this.langfuse,
+      docMentions: (t) => ctx.waitUntil(threads.notifyMentions(this.push, t).catch((e) => console.error("push:", e))),
     }, this.intake, this.secrets);
   }
 
@@ -1090,6 +1091,14 @@ export class OrgHub extends DurableObject<Env> {
         this.store.saveThread(thread);
         this.broadcast({ type: "doc.thread.updated", thread });
         this.broadcast({ type: "doc.updated", doc: this.store.doc(doc.id)! });
+        return;
+      }
+      case "doc.suggestion": {
+        try {
+          await this.engine.docs.decide(client.member.login, msg.doc, msg.thread, msg.accept);
+        } catch (e) {
+          this.send(ws, { type: "error", message: e instanceof Error ? e.message : String(e), requestId: msg.type });
+        }
         return;
       }
       case "note.delete": {

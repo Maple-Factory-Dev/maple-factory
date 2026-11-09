@@ -184,6 +184,36 @@ test("a [!RESEARCH] quote (not a block here; MF-366) stays a plain quote", () =>
   assert.equal(doc.firstChild!.type.name, "blockquote");
 });
 
+// MF-382: a brand-new doc's fragment is empty; after the first sync the editor gives it one empty paragraph.
+test("an empty doc gets exactly one empty paragraph, once", async () => {
+  const Y = await import("yjs");
+  const { ensureStarterBlock, STARTER_ORIGIN } = await import("../docs-editor/src/starter.js");
+  const ydoc = new Y.Doc();
+  const frag = ydoc.getXmlFragment("prosemirror");
+  const origins: unknown[] = [];
+  ydoc.on("afterTransaction", (tr: any) => origins.push(tr.origin));
+  assert.equal(ensureStarterBlock(ydoc), true);
+  assert.equal(frag.length, 1);
+  assert.equal(frag.toString(), "<paragraph></paragraph>");
+  assert.deepEqual(origins, [STARTER_ORIGIN], "a local origin, one transaction");
+  assert.equal(ensureStarterBlock(ydoc), false, "a second sync adds nothing");
+  assert.equal(frag.length, 1);
+});
+
+test("a doc with content is left unchanged by the starter paragraph", async () => {
+  const Y = await import("yjs");
+  const { ensureStarterBlock } = await import("../docs-editor/src/starter.js");
+  const ydoc = new Y.Doc();
+  const frag = ydoc.getXmlFragment("prosemirror");
+  const p = new Y.XmlElement("paragraph");
+  p.insert(0, [new Y.XmlText("Hello")]);
+  frag.insert(0, [p]);
+  const before = Y.encodeStateAsUpdate(ydoc);
+  assert.equal(ensureStarterBlock(ydoc), false);
+  assert.equal(frag.toString(), "<paragraph>Hello</paragraph>");
+  assert.deepEqual(Y.encodeStateAsUpdate(ydoc), before, "no new Yjs ops");
+});
+
 // MF-384: highlighted code blocks with a language picker.
 import { Editor } from "@tiptap/core";
 import { EditorState } from "@tiptap/pm/state";

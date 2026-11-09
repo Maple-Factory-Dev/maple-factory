@@ -6,7 +6,7 @@
 <title>Maple doc</title>
 <!-- The docs editor with no feed chrome, for the Mac and iOS apps to host in a WKWebView (MF-361).
      Bridge: window.mapleDocs.load({ docId, token, me, members, tasks, threads?, demo? }), updateTasks(tasks), updateThreads(threads),
-     setTheme('light'|'dark'), exportMarkdown(), destroy(). Events (ready, status, peers, synced, theme, error, openTask, plus MF-364's
+     setTheme('light'|'dark'), exportMarkdown(), focus(), destroy(). Events (ready, status, peers, synced, theme, error, openTask, plus MF-364's
      command {command} for the app to relay to its socket and threads {open} for badges) go to
      window.webkit.messageHandlers.maple when it exists, else to window.parent via postMessage. See docs/planning-docs.md. -->
 <link rel="stylesheet" href="editor.css">
@@ -62,6 +62,8 @@
     },
     setTheme: (t) => { applyTheme(t); post("theme", { theme }); },
     exportMarkdown: () => handle?.exportMarkdown() ?? null,
+    /** Puts the caret at the end of the doc (MF-382): the apps call it on `synced` for a doc they just created. */
+    focus: () => { handle?.focus(); return !!handle; },
     /** New task objects from the app's feed (MF-363): task embeds redraw in place. */
     updateTasks: (list) => { tasks = list ?? []; handle?.tasksChanged(); },
     /** The doc's comment threads from the app's feed (MF-364): highlights and the rail redraw. */
