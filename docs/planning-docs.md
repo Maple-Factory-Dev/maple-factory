@@ -116,3 +116,28 @@ opens one. One editor, one sync path, no native CRDT.
 - Decisions recorded from a doc, and turning parts of it into tasks.
 - An MCP server so agents can read and edit docs.
 - Search, history/versions browsing, and permissions finer than "org members".
+
+
+## Planning visuals (MF-363)
+
+Docs carry the blocks a plan needs, each a TipTap node in `server/docs-editor/src/nodes.js` with a Markdown
+form that stays readable on GitHub and for agents reading an exported doc. Type `/` for the block menu.
+
+| Block | In the editor | Markdown |
+| --- | --- | --- |
+| Diagram | Mermaid source beside a live preview (the offline renderer in `/app/mermaid`); click it for the zoom/pan/search viewer | a ` ```mermaid ` fence |
+| Table | resizable columns, header row; the bubble menu adds and deletes rows and columns | a GFM pipe table, header row first (column widths aren't exported) |
+| Chart | bar or line SVG of the nearest table above it: first column labels, every numeric column a series; no library, no network | a ` ```chart ` fence with `type: bar\|line` and `title:` lines |
+| Image | pasted, dropped or picked png/jpeg/gif/webp, uploaded to R2 (`POST /api/attachments`); SVG is always a file | `![alt](/attachments/<id>/<name> "width=320")` |
+| File | any other upload, as a chip | a paragraph that is only `[name](/attachments/<id>/<name> "mime · N bytes")` |
+| Callout | note, tip, warning or important (click the label to change it) | `> [!NOTE]` / `[!TIP]` / `[!WARNING]` / `[!IMPORTANT]` |
+| Toggle | a collapsible section with a heading | `> [!TOGGLE] heading`, then the quoted body |
+| Divider | a rule | `---` |
+| Task embed | a live card: id, title, state, PR and owner, redrawn as the feed changes (slash menu → pick a task) | `> [!TASK] MF-12 · title · state · PR #n · @owner` (only the id is read back) |
+| Research | ask an agent: Ask creates a `Research: <question>` task in the picked goal (the doc's by default); the block shows its live state, then the answer, with **Insert answer** (as editable text below) and **Open report** | `> [!RESEARCH] MF-40 · question`, then the answer quoted (only the id and question are read back) |
+
+The host passes full tasks (`tasks()`: id, title, state, pr, assignee, goal, findings), `goals()` and the
+doc's goal, and calls `handle.tasksChanged()` when the feed changes (the web app on `task.updated` and
+`snapshot`; app hosts through `mapleDocs.updateTasks(tasks)`). A research block's Ask raises
+`createResearch {question, goal, docId, pos}`; the host sends `task.create` and answers with
+`handle.setResearchTask(pos, id)`. Export snapshots each embed's current state and each answer.
