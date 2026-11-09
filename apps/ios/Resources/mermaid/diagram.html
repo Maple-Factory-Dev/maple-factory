@@ -32,6 +32,8 @@
   #bar button:hover { background: var(--hit-bg); }
   #q { font: inherit; height: 26px; width: 170px; border: 1px solid var(--line); border-radius: 7px; padding: 0 8px; background: var(--bg); color: var(--fg); }
   #count { color: var(--muted); min-width: 48px; text-align: center; font-variant-numeric: tabular-nums; }
+  #fixed { color: var(--muted); font-size: 11px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; white-space: nowrap; }
+  #fixed[hidden] { display: none; }
   .sep { width: 1px; height: 20px; background: var(--line); }
   .mf-hit rect, .mf-hit polygon, .mf-hit circle, .mf-hit ellipse, .mf-hit path.basic, .mf-hit .label-container { stroke: var(--hit) !important; stroke-width: 3px !important; }
   text.mf-hit, .mf-hit text, .mf-hit span, .mf-hit div { text-decoration: underline; text-decoration-color: var(--hit); text-decoration-thickness: 2px; }
@@ -51,6 +53,7 @@
 <body>
 <div id="stage" aria-label="Diagram"></div>
 <div id="bar" role="toolbar" aria-label="Diagram controls">
+  <span id="fixed" hidden title="Some labels were quoted so this diagram could render; the source itself is unchanged.">Auto-fixed Mermaid syntax</span>
   <input id="q" type="search" placeholder="Search" aria-label="Search the diagram" autocomplete="off" spellcheck="false">
   <span id="count" aria-live="polite"></span>
   <button id="prev" title="Previous match (↑)" aria-label="Previous match">↑</button>
@@ -62,6 +65,68 @@
   <button id="fit" title="Fit to window">Fit</button>
 </div>
 <div id="error" role="alert"><div class="msg"></div><div class="hint">This diagram's Mermaid source didn't parse. Here it is as written:</div><pre></pre></div>
+<script>
+/* mf-repair:start */
+// MF-375: planners often write labels like EMB[/app/docs/embed.html], which Mermaid reads as an unclosed
+// parallelogram. When a flowchart doesn't parse, this quotes node and edge labels whose text clashes with
+// Mermaid's syntax (ID["/app/docs/embed.html"]); valid shapes and already-quoted labels are left alone.
+function repairMermaid(source) {
+  const text = String(source == null ? "" : source);
+  const lines = text.split("\n");
+  const head = lines.find((l) => { const t = l.trim(); return t && !t.startsWith("%%") && t !== "---"; }) || "";
+  if (!/^\s*(flowchart|graph)\b/.test(head)) return { source: text, changed: false };
+  const SPECIAL = /[()[\]{}|#;"]/;
+  const SHAPES = [
+    /^\[\[([^[\]]*)\]\]$/, /^\[\(([^()]*)\)\]$/, /^\(\[([^[\]]*)\]\)$/, /^\(\(\(([^()]*)\)\)\)$/, /^\(\(([^()]*)\)\)$/,
+    /^\{\{([^{}]*)\}\}$/, /^\[[/\\]([^/\\]*)[/\\]\]$/, /^\(([^()]*)\)$/, /^\{([^{}]*)\}$/, /^\[(?![/\\])([^[\]]*)\]$/, /^>([^\]]*)\]$/,
+  ];
+  const CLOSE = { "[": "]", "(": ")", "{": "}", ">": "]" };
+  const BOUNDARY = /[\s;&:\-=~.<]/;
+  const ID = /[A-Za-z0-9_]+(?:[-.][A-Za-z0-9_]+)*/y;
+  const SKIP = /^\s*(%%|(classDef|class|style|linkStyle|click|direction|subgraph|end)\b)/;
+  const quote = (t) => '"' + t.replace(/"/g, "#quot;") + '"';
+  const valid = (region) => {
+    if (/^.[/\\(\[{]*"[^"]*"[/\\)\]}]*.$/.test(region)) return true; // already quoted, e.g. E["x"] or A(["x"])
+    return SHAPES.some((re) => { const m = re.exec(region); return m && !SPECIAL.test(m[1]); });
+  };
+  let changed = false;
+  const out = lines.map((line, n) => {
+    if (n === lines.indexOf(head) || SKIP.test(line)) return line;
+    let res = "", i = 0;
+    while (i < line.length) {
+      const ch = line[i];
+      if (ch === '"') { const j = line.indexOf('"', i + 1); const end = j < 0 ? line.length : j + 1; res += line.slice(i, end); i = end; continue; }
+      if (ch === "|") {
+        const j = line.indexOf("|", i + 1);
+        if (j < 0) { res += line.slice(i); break; }
+        const label = line.slice(i + 1, j);
+        if (SPECIAL.test(label) && !/^\s*"[^"]*"\s*$/.test(label)) { res += "|" + quote(label) + "|"; changed = true; }
+        else res += line.slice(i, j + 1);
+        i = j + 1; continue;
+      }
+      ID.lastIndex = i;
+      const m = /[A-Za-z0-9_]/.test(ch) ? ID.exec(line) : null;
+      if (!m) { res += ch; i++; continue; }
+      const k = i + m[0].length, open = line[k], close = CLOSE[open];
+      res += m[0]; i = k;
+      if (!close || line[k + 1] === "@") continue;
+      let end = -1, inQuote = false;
+      for (let j = k + 1; j < line.length; j++) {
+        if (line[j] === '"') inQuote = !inQuote;
+        else if (!inQuote && line[j] === close && line[j + 1] !== close && (j + 1 >= line.length || BOUNDARY.test(line[j + 1]))) { end = j; break; }
+      }
+      if (end < 0) continue;
+      const region = line.slice(k, end + 1);
+      if (valid(region)) res += region;
+      else { res += region[0] + quote(region.slice(1, -1).trim()) + region[region.length - 1]; changed = true; }
+      i = end + 1;
+    }
+    return res;
+  });
+  return { source: changed ? out.join("\n") : text, changed };
+}
+/* mf-repair:end */
+</script>
 <script>
 (() => {
   "use strict";
@@ -128,8 +193,16 @@
     if (!source.trim()) return fail("The diagram has no source.", source);
     try {
       mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: state.theme === "dark" ? "dark" : "default", suppressErrorRendering: true, fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" });
-      await mermaid.parse(source);
-      const { svg } = await mermaid.render("mf-diagram-" + seq, source);
+      let draw = source, repaired = false;
+      try { await mermaid.parse(source); }
+      catch (err) {
+        // MF-375: try once more with unquoted labels quoted; if that fails too, show the original error and source.
+        const fix = repairMermaid(source);
+        if (!fix.changed) throw err;
+        try { await mermaid.parse(fix.source); } catch (_) { throw err; }
+        draw = fix.source; repaired = true;
+      }
+      const { svg } = await mermaid.render("mf-diagram-" + seq, draw);
       if (seq !== state.seq) return;
       stage.innerHTML = svg;
       const el = stage.querySelector("svg");
@@ -146,7 +219,8 @@
       const query = opts.query != null ? opts.query : params.get("q");
       if (state.mode === "viewer" && query) { q.value = query; search(query); }
       // The markup lets a host keep showing the drawn SVG as an image without re-rendering (the web's inline cards).
-      notify({ event: "rendered", width: state.w, height: state.h, svg: state.mode === "inline" ? markup : undefined, source: state.mode === "inline" ? source : undefined });
+      document.getElementById("fixed").hidden = !(repaired && state.mode === "viewer");
+      notify({ event: "rendered", width: state.w, height: state.h, repaired: repaired || undefined, svg: state.mode === "inline" ? markup : undefined, source: state.mode === "inline" ? source : undefined });
     } catch (err) {
       if (seq === state.seq) fail(err, source);
     }

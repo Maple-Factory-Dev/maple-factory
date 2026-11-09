@@ -109,4 +109,5 @@ test("parseDiagrams caps titles and notes", () => {
 test("the planner prompt offers diagrams", () => {
   const f = planning();
   assert.match(plannerPrompt(f.t(), null), /diagrams \(optional\): up to 6 Mermaid diagrams/);
+  assert.match(plannerPrompt(f.t(), null), /Quote any label that contains \/, #, parentheses, brackets or \|, e\.g\. EMB\["\/app\/docs\/embed\.html"\]/);
 });
