@@ -249,6 +249,26 @@ pre.out { margin: 6px 0 0; background: var(--term); color: var(--term-text); bor
 .event { font-size: 14px; }
 .event b { font-weight: 600; }
 .event .when { color: var(--faint); font-size: 12px; margin-left: 6px; }
+.ask-card { border: 1px solid var(--stroke); border-radius: 10px; background: var(--card); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.ask-card .row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }
+.ask-kind { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; background: var(--fill); color: var(--muted); margin-left: 4px; }
+.ask-kind.hand { color: var(--awaiting); background: color-mix(in srgb, var(--awaiting) 12%, transparent); }
+.ask-kind.prompt { color: var(--building); background: color-mix(in srgb, var(--building) 12%, transparent); }
+.ask-kind.question { color: var(--planning); background: color-mix(in srgb, var(--planning) 12%, transparent); }
+.ask-text { color: var(--text); }
+.ask-command { font-family: var(--mono); font-size: 12px; background: var(--term); color: var(--term-text); border-radius: 6px; padding: 6px 9px; margin: 0; white-space: pre-wrap; word-break: break-word; }
+.ask-options { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.ask-options li { border: 1px solid var(--stroke); border-radius: 7px; padding: 5px 9px; }
+.ask-options li.picked { border-color: var(--approve); background: color-mix(in srgb, var(--approve) 10%, transparent); }
+.ask-title { font-weight: 600; }
+.ask-options li.picked .ask-title { color: var(--approve); }
+.ask-tag { font-size: 11px; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 999px; padding: 0 6px; margin-left: 6px; }
+.ask-by { font-size: 12px; color: var(--muted); margin-left: 6px; }
+.ask-detail { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.ask-note { margin: 0; padding: 4px 10px; border-left: 3px solid var(--stroke); color: var(--muted); font-style: italic; white-space: pre-wrap; }
+.ask-verdict { font-size: 13px; font-weight: 600; }
+.ask-verdict.yes { color: var(--approve); }
+.ask-verdict.no { color: var(--cancelled); }
 .comment { background: var(--card); border: 1px solid var(--stroke); border-radius: 10px; padding: 8px 12px; }
 
 /* Markdown in comments, change requests and briefs (markdown.js). */
