@@ -18,7 +18,7 @@ import { inQuietHours } from "./quiet-hours.js";
 import { canManage, machineStatus, meters, pauseSettings, pauseUntil, resumeSettings, sortMachines, teammatesTasks, usageRows } from "./machines.js";
 import { fillIcons, icon } from "./icons.js";
 import { riskBadge, riskDetails } from "./risk.js";
-import { canRerun, checkHref, checkStatusText, checkSummary, octicon, prStateLabel, taskFinished } from "./pull.js";
+import { canRerun, checkHref, checkStatusText, checkSummary, checksBadge, mergeLine, octicon, prStateLabel, taskFinished } from "./pull.js";
 
 const state = { me: null, org: "", members: [], goals: [], tasks: new Map(), notes: [], docs: [], live: false, diffs: new Map(), machines: [], checkLogs: new Map(), older: older() };
 
@@ -517,7 +517,14 @@ function row(t, sub) {
     h("span", { class: `dot bg-${t.state}` }),
     h("div", {},
       h("div", { class: "title" }, priorityChip(t), t.title, effortChip(t)),
-      h("div", { class: "sub" }, h("span", { class: "mono" }, t.id), goal ? ` · ${goal.name}` : "", t.followUpOf ? ` · Follow-up of ${t.followUpOf}` : "", " · ", sub)));
+      h("div", { class: "sub" }, h("span", { class: "mono" }, t.id), goal ? ` · ${goal.name}` : "", t.followUpOf ? ` · Follow-up of ${t.followUpOf}` : "", " · ", sub, ciBadge(t))));
+}
+
+/** A task's CI at a glance on its row, the way GitHub lists them: ✓ / ✕ / ◔ and "3/5"; nothing without checks. */
+function ciBadge(t) {
+  const b = t.pr && !taskFinished(t) && checksBadge(t.pr.checks);
+  return b && h("span", { class: `ci-badge tone-${b.tone}`, title: b.title },
+    h("span", { class: `pr-sum-icon tone-${b.tone}` }, b.icon), h("span", { class: "mono-digits" }, b.text));
 }
 
 // ---- priority: P0 do it right away … P3 when there's room ----
@@ -539,6 +546,7 @@ function stateLabel(t) {
   if (t.state !== "reviewing") return STATE_TITLE[t.state];
   if (t.liveLog === "Merging…" || t.liveLog === "In merge queue…") return t.liveLog;
   if (t.mergeAt != null && !t.hand) return h("span", { "data-merge-at": t.mergeAt }, countdownLabel(t.mergeAt));
+  if (t.autoReview?.rounds.at(-1)?.verdict === "passed") return mergeLine(t);
   return STATE_TITLE[t.state];
 }
 

@@ -20,6 +20,32 @@ export function checkSummary(checks) {
   return { ...n, total, tone, headline, detail: `${n.passed} of ${total} passed`, segments };
 }
 
+const BADGE_ICON = { passed: "✓", failed: "✕", running: "◔", none: "◌" };
+
+/** A task row's GitHub-style CI badge: its icon, tone, "3/5" passed count and the headline as a title;
+ *  null when there's no pull request or no checks on it (the Mac app's ChecksBadge). */
+export function checksBadge(checks) {
+  if (!checks?.length) return null;
+  const s = checkSummary(checks);
+  return { icon: BADGE_ICON[s.tone], tone: s.tone, text: `${s.passed}/${s.total}`, title: `${s.headline} · ${s.detail}` };
+}
+
+/** A task whose automatic review passed: "Ready to merge" only once every CI check (and any Apple check)
+ *  has passed, as the server's merge gate reads it; before that, what it's waiting on (LiveAdapter.mergeLine). */
+export function mergeLine(task) {
+  if (task.pr) {
+    const s = checkSummary(task.pr.checks);
+    if (s.tone === "running") return `Checks running · ${s.passed} of ${s.total}`;
+    if (s.tone === "failed") return s.failed === 1 ? "1 check failing" : `${s.failed} checks failing`;
+    if (s.tone === "none") return "Waiting for checks";
+  }
+  const apple = task.appleChecks?.state;
+  if (apple === "waiting" || apple === "running") return "Waiting for Apple checks";
+  if (apple === "failed") return "Apple checks failing";
+  const needed = task.reviewsNeeded ?? 0;
+  return needed === 0 ? "Ready to merge" : `${task.reviews?.length ?? 0} of ${needed} reviews`;
+}
+
 const STATE_LABEL = { open: "Open", draft: "Draft", merged: "Merged", closed: "Closed" };
 
 /** The pull request's state as it reads: a cancelled task's still-open pull request reads Closed. */

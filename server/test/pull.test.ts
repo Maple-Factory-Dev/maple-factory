@@ -1,7 +1,7 @@
 // The web task page's pull request card: the checks' summary, the state label and which checks can run again.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { canRerun, checkHref, checkStatusText, checkSummary, prStateLabel } from "../web/app/pull.js";
+import { canRerun, checkHref, checkStatusText, checkSummary, checksBadge, mergeLine, prStateLabel } from "../web/app/pull.js";
 
 const check = (status: string, over: Record<string, unknown> = {}) => ({ name: status, status, duration: "1m 2s", required: false, ...over });
 const pr = (over: Record<string, unknown> = {}) => ({ number: 12, url: "https://github.com/o/r/pull/12", state: "open", branch: "agent/mf-1", base: "main", checks: [], ...over });
@@ -68,4 +68,42 @@ test("links and status text", () => {
   assert.equal(checkStatusText(check("passed")), "1m 2s");
   assert.equal(checkStatusText(check("running")), "Running…");
   assert.equal(checkStatusText(check("queued")), "Queued");
+});
+
+// MF-398: a GitHub-style badge on task rows, and "Ready to merge" only once CI has passed.
+const passedTask = (checks: unknown[] | null, over: Record<string, unknown> = {}) =>
+  ({ id: "MF-1", state: "reviewing", reviewsNeeded: 0, reviews: [], ...(checks ? { pr: pr({ checks }) } : {}), ...over });
+
+test("checksBadge: icon, tone and a passed/total count", () => {
+  assert.deepEqual(checksBadge([check("passed"), check("passed"), check("running"), check("queued"), check("running")]),
+    { icon: "◔", tone: "running", text: "2/5", title: "2 running · 2 of 5 passed" });
+  assert.equal(checksBadge([check("failed"), check("passed")])?.tone, "failed");
+  assert.equal(checksBadge([check("failed"), check("passed")])?.icon, "✕");
+  assert.equal(checksBadge([check("passed")])?.icon, "✓");
+  assert.equal(checksBadge([]), null);
+  assert.equal(checksBadge(undefined), null);
+});
+
+test("mergeLine: running checks are not ready to merge", () => {
+  assert.equal(mergeLine(passedTask([check("passed"), check("passed"), check("passed"), check("running"), check("queued")])), "Checks running · 3 of 5");
+});
+
+test("mergeLine: failing checks", () => {
+  assert.equal(mergeLine(passedTask([check("failed"), check("failed"), check("passed")])), "2 checks failing");
+  assert.equal(mergeLine(passedTask([check("failed"), check("running")])), "1 check failing");
+});
+
+test("mergeLine: a pull request with no checks yet waits", () => {
+  assert.equal(mergeLine(passedTask([])), "Waiting for checks");
+});
+
+test("mergeLine: all passed reads Ready to merge, or the reviews still owed", () => {
+  assert.equal(mergeLine(passedTask([check("passed"), check("passed")])), "Ready to merge");
+  assert.equal(mergeLine(passedTask([check("passed")], { reviewsNeeded: 2, reviews: ["bea"] })), "1 of 2 reviews");
+});
+
+test("mergeLine: Apple checks still gate the merge", () => {
+  assert.equal(mergeLine(passedTask([check("passed")], { appleChecks: { state: "waiting" } })), "Waiting for Apple checks");
+  assert.equal(mergeLine(passedTask([check("passed")], { appleChecks: { state: "running" } })), "Waiting for Apple checks");
+  assert.equal(mergeLine(passedTask([check("passed")], { appleChecks: { state: "passed" } })), "Ready to merge");
 });
