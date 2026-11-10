@@ -29,3 +29,17 @@ export function agentsIn(text: string): AgentRole[] {
   }
   return found;
 }
+
+/** The agents a doc comment can ask (MF-366): `@planner`, `@researcher`, once each. Doc threads only;
+ *  task comments keep AGENT_ROLES. */
+export const DOC_AGENT_ROLES = ["planner", "researcher"] as const;
+export type DocAgentRole = (typeof DOC_AGENT_ROLES)[number];
+
+export function docAgentsIn(text: string): DocAgentRole[] {
+  const found: DocAgentRole[] = [];
+  for (const [, name] of text.matchAll(MENTION)) {
+    const role = DOC_AGENT_ROLES.find((r) => r === name.toLowerCase());
+    if (role && !found.includes(role)) found.push(role);
+  }
+  return found;
+}

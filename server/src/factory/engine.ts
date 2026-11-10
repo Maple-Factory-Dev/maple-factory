@@ -9,7 +9,7 @@ import type { Env } from "../env.ts";
 import { ArtifactKindValues, PriorityValues, RoleValues } from "../wire.ts";
 import type {
   Artifact, ArtifactKind, ChangeRequest, CheckRun, ClientMessage, Comment, DiffCommit, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
-  Classification, DocThread, McpConnector, NotRunCheck, Priority, PromptAdditions, RiskLevel, ServerToRunner, SessionEnd, Task, WorktreeScripts,
+  AgentState, Classification, DocAgentRun, DocThread, McpConnector, NotRunCheck, Priority, PromptAdditions, RiskLevel, ServerToRunner, SessionEnd, Task, WorktreeScripts,
 } from "../wire.ts";
 import { audit, machineHub } from "../util.ts";
 import { cleanTags, TAG } from "../machines.ts";
@@ -20,6 +20,8 @@ import { goalRepos, OWNER, REPO, taskRepo } from "./repos.ts";
 import { affectedBy, emptyForecast, inFlight, refreshOverlaps, type Lane } from "./forecast.ts";
 import { allowed, isDocTool, isPersonalTool, personalTools, toolsFor } from "./tools.ts";
 import { DocTools } from "./doc-tools.ts";
+import * as asks from "./doc-asks.ts";
+import * as docThreads from "./doc-threads.ts";
 import { parseDiagrams } from "./diagrams.ts";
 import { Drafts } from "./drafts.ts";
 import { everyText, Recurrings, whenText } from "./recurring.ts";
@@ -1586,7 +1588,8 @@ export class Engine {
    *  machine with their tags: its owner's first, else (shareable) a teammate's within what it lends. */
   private async proveChecks(machines: Machine[]) {
     const live = this.store.liveSessions();
-    const busy = (m: string, kind?: string) => live.filter((s) => s.machine === m && (!kind || s.kind === kind)).length;
+    const asksOn = this.askLoad();
+    const busy = (m: string, kind?: string) => live.filter((s) => s.machine === m && (!kind || s.kind === kind)).length + (kind ? 0 : asksOn(m));
     for (const listed of this.store.tasks()) {
       const task = this.store.task(listed.id);
       const a = task?.appleChecks;
@@ -1705,7 +1708,8 @@ export class Engine {
     }
     const priv = this.store.private(task.id);
     const live = this.store.liveSessions();
-    const busy = (m: string, kind?: string) => live.filter((s) => s.machine === m && (!kind || s.kind === kind)).length;
+    const asksOn = this.askLoad();
+    const busy = (m: string, kind?: string) => live.filter((s) => s.machine === m && (!kind || s.kind === kind)).length + (kind ? 0 : asksOn(m));
 
     let machine: Machine | undefined;
     let kind: TaskSession["kind"] = "personal";
@@ -1901,6 +1905,7 @@ export class Engine {
         return null;
       }
       case "session.error": {
+        if (this.askRecord(msg.id)) return this.askEnded(msg.id, "failed", `Couldn't start: ${msg.message}`), null;
         const s = this.store.session(msg.id);
         if (!s) return null;
         this.store.endSession(msg.id, "error");
@@ -1913,6 +1918,7 @@ export class Engine {
         return null;
       }
       case "session.activity": {
+        if (this.askRecord(msg.id)) return this.askActivity(msg.id, msg.activity.state, msg.activity.step ?? msg.activity.message ?? null), null;
         const s = this.store.session(msg.id);
         const task = s && this.store.task(s.task);
         if (!task || task.worker?.session !== msg.id) return null;
@@ -1940,12 +1946,19 @@ export class Engine {
         return null;
       }
       case "session.ended": {
+        if (this.askRecord(msg.end.id)) return this.askEnded(msg.end.id, msg.end.cause === "killed" ? "stopped" : msg.end.cause === "exited" ? "done" : "failed", msg.end.cause === "killed" ? (msg.end.by && msg.end.by !== "factory" ? `Stopped by ${msg.end.by}.` : null) : msg.end.cause === "exited" ? null : `Its session ended (${msg.end.cause}).`), null;
         await this.ended(msg.end);
         return null;
       }
       case "session.cost": {
         // Filed under the session's task and role; anything the factory didn't start is dropped.
         const c = msg.cost;
+        const ar = this.askRecord(c.session);
+        if (ar) {
+          if (c.costUsd != null) this.saveAsk({ ...ar, costUsd: c.costUsd });
+          await this.checkAskBudgets();
+          return null;
+        }
         const s = this.store.session(c.session);
         const task = s && this.store.task(s.task);
         if (!s || !task) return null;
@@ -2835,6 +2848,22 @@ export class Engine {
   }
 
   private async tool(machine: string, sessionId: string, name: string, args: Record<string, unknown>): Promise<Reply> {
+    const ask = this.askRecord(sessionId);
+    if (ask) {
+      // A doc ask (MF-366): the doc tools only, as the asker's agent.
+      if (name === "tools/list") return { result: { summary: "", data: { tools: personalTools().filter((t) => isDocTool(t.name)) } } };
+      if (!isDocTool(name)) return { error: `${name} isn't available to an agent asked from a doc; answer with reply_to_doc_thread or suggest_doc_edit.` };
+      try {
+        const result = await this.docs.run({ author: ask.by, agent: asks.agentLabel(ask) }, name, args);
+        if (asks.ANSWER_TOOLS.includes(name)) {
+          const latest = this.askRecord(sessionId);
+          if (latest) this.saveAsk({ ...latest, repliedAt: now() });
+        }
+        return { result };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
+    }
     const s = this.store.session(sessionId);
     if (!s) {
       // Not one the factory started for a task: your own session on a member's machine.
@@ -4127,6 +4156,191 @@ export class Engine {
   private reaped = new Set<string>();
   /** Merged branches being deleted on GitHub, by task, so cleanup waits for (and doesn't repeat) one. */
   private branchDeletes = new Map<string, Promise<void>>();
+
+  // ---------------------------------------------------------------------------
+  // Doc asks (MF-366): an agent asked from a doc thread, answering through the doc tools.
+
+  private askRecord(session: string): asks.AskRecord | null {
+    const raw = this.store.get(`docask:${session}`);
+    return raw ? (JSON.parse(raw) as asks.AskRecord) : null;
+  }
+
+  private saveAsk(r: asks.AskRecord) {
+    this.store.set(`docask:${r.session}`, JSON.stringify(r));
+    const all = this.askSessions();
+    if (!all.includes(r.session)) this.store.set("docasks", JSON.stringify([...all, r.session].slice(-200)));
+  }
+
+  private askSessions(): string[] {
+    return JSON.parse(this.store.get("docasks") ?? "[]") as string[];
+  }
+
+  /** Asks still running. */
+  liveAsks(): asks.AskRecord[] {
+    return this.openAsks().filter(asks.working);
+  }
+
+  /** Asks whose session is still open, answered (idle) ones included. */
+  private openAsks(): asks.AskRecord[] {
+    return this.askSessions().map((id) => this.askRecord(id)).filter((r): r is asks.AskRecord => !!r && !r.ended);
+  }
+
+  /** Open ask sessions per machine (answered ones still hold a runner slot until they close). */
+  private askLoad(): (machine: string) => number {
+    const open = this.openAsks();
+    return (m) => open.filter((a) => a.machine === m).length;
+  }
+
+  /** Sets a thread's agent run and tells every member. */
+  private setRun(threadId: string, patch: Partial<DocAgentRun>) {
+    const t = this.store.thread(threadId);
+    if (!t?.agent) return;
+    const thread = { ...t, agent: { ...t.agent, ...patch } };
+    this.store.saveThread(thread);
+    this.hooks.broadcast({ type: "doc.thread.updated", thread });
+  }
+
+  /** The machine a new ask of `by`'s runs on; throws FactoryError with why there's none (or they're at their limit). */
+  async askPreflight(by: string, agent = "claude"): Promise<asks.Pick> {
+    const limit = asks.overLimit(this.liveAsks(), by);
+    if (limit) fail(limit);
+    const machines = await this.hooks.machines();
+    const live = this.store.liveSessions();
+    const asksOn = this.askLoad();
+    const busy = (m: string, kind?: string) => live.filter((x) => x.machine === m && (!kind || x.kind === kind)).length + (kind ? 0 : asksOn(m));
+    const picked = asks.pickMachine(machines, by, agent, {
+      paused: (m) => !!this.store.settings(m.id).paused,
+      hasAgent: (m, a) => this.hasAgent(m, a),
+      overCap: (m, a, owner) => this.overCap(m, a, owner),
+      lends: (m, owner) => this.lends(m, owner, busy),
+      busy: (m) => busy(m.id),
+    });
+    if (typeof picked === "string") fail(picked);
+    return picked as asks.Pick;
+  }
+
+  /** Opens an agent session that answers in `thread` (already saved). Throws FactoryError when it can't. */
+  async ask(by: string, threadId: string, role: asks.AskRole, agent = "claude"): Promise<DocThread> {
+    const thread = this.store.thread(threadId) ?? fail("That thread isn't there any more.");
+    const doc = this.store.doc(thread.doc) ?? fail("That doc isn't there any more.");
+    if (asks.live(thread.agent)) fail("An agent is already working in this thread; reply to it, or stop it first.");
+    const { machine } = await this.askPreflight(by, agent);
+    const previous = thread.agent && this.askRecord(thread.agent.session);
+    if (previous) await this.closeIdleAsk(previous);
+    const goal = doc.goal ? this.store.goal(doc.goal) : null;
+    const repo = goal?.repos?.[0] ?? goal?.repo ?? null;
+    let markdown: string | null = null;
+    try {
+      const read = await this.docs.run({ author: by, agent: role }, "read_doc", { doc: doc.id });
+      markdown = typeof read.data === "string" ? read.data : null;
+    } catch { /* the agent reads it itself */ }
+    const id = crypto.randomUUID();
+    const short = id.slice(0, 8);
+    const prompt = asks.askPrompt({ doc, markdown, thread, role, by, repo, goal: goal?.name ?? null });
+    const command: ServerToRunner = {
+      type: "session.open", id, agent, cwd: repo ? goal?.folder ?? "" : "", cols: COLS, rows: ROWS, prompt, resume: false, taskId: null,
+      ...(repo ? { worktree: { name: `${asks.ASK_PREFIX}${short}`, base: goal?.base ?? null, existing: false }, task: { id: `${asks.ASK_PREFIX}${id}`, repo, scripts: null } } : {}),
+      unattended: { mode: this.store.get("unattended") ?? "project", commands: [] },
+      model: null,
+      connectors: this.connectors(),
+    } as ServerToRunner;
+    const at = now();
+    this.saveAsk({ session: id, doc: doc.id, thread: thread.id, by, role, machine: machine.id, agent, startedAt: at, costUsd: 0, ended: false });
+    const run: DocAgentRun = { session: id, role, machine: machine.id, by, status: "starting", message: `Starting on ${machine.name}…`, startedAt: at, endedAt: null };
+    const next = { ...thread, agent: run };
+    this.store.saveThread(next);
+    this.hooks.broadcast({ type: "doc.thread.updated", thread: next });
+    if (!(await this.toRunner(machine.id, command))) {
+      this.askEnded(id, "failed", `Couldn't reach ${machine.name}.`);
+      fail(`Couldn't reach ${machine.name}.`);
+    }
+    this.hooks.waitUntil(audit(this.env, by, "doc.ask", doc.id, { thread: thread.id, machine: machine.id, role }));
+    return next;
+  }
+
+  private askActivity(session: string, state: AgentState, step: string | null) {
+    const r = this.askRecord(session)!;
+    if (r.ended) return;
+    const t = this.store.thread(r.thread);
+    if (!t?.agent || t.agent.session !== session || !asks.live(t.agent)) return;
+    const status = asks.statusFor(state, step);
+    const message = step ? unwrapPasted(step).slice(0, 200) : null;
+    if (status === "done") {
+      // A 'done' that lands right after a follow-up was typed, before any work, is the previous turn's.
+      if (r.typedAt && now() - r.typedAt < asks.TYPED_GRACE_MS) return;
+      // Its turn ended: stop counting it as running; the session stays open so a reply in the thread is typed
+      // into it, until it's been quiet for IDLE_GRACE_MS (checkAskBudgets). Done only if it wrote in the doc
+      // this turn; otherwise it's waiting (it asked something in its terminal, say).
+      if (!r.idleSince) this.saveAsk({ ...r, idleSince: now(), typedAt: null });
+      if ((r.repliedAt ?? -1) >= (r.turnAt ?? r.startedAt)) this.setRun(r.thread, { status, message: null, endedAt: now() });
+      else this.setRun(r.thread, { status: "waiting", message: "Its turn ended without a reply in the thread. Reply here to nudge it." });
+      return;
+    }
+    if (r.typedAt) this.saveAsk({ ...r, typedAt: null });
+    if (status !== t.agent.status || message !== (t.agent.message ?? null)) this.setRun(r.thread, { status, message });
+  }
+
+  private askEnded(session: string, status: "done" | "stopped" | "failed", message: string | null) {
+    const r = this.askRecord(session);
+    if (!r || r.ended) return;
+    this.saveAsk({ ...r, ended: true });
+    const t = this.store.thread(r.thread);
+    if (t?.agent?.session === session && asks.live(t.agent)) this.setRun(r.thread, { status, message, endedAt: now() });
+  }
+
+  /** Closes an answered ask's open session (a new ask in its thread, or its grace period ran out); the thread keeps Done. */
+  private async closeIdleAsk(r: asks.AskRecord) {
+    if (r.ended) return;
+    await this.toRunner(r.machine, { type: "session.kill", id: r.session }, "factory");
+    this.saveAsk({ ...r, ended: true });
+    const t = this.store.thread(r.thread);
+    if (t?.agent?.session === r.session && asks.live(t.agent)) this.setRun(r.thread, { status: "done", endedAt: now() });
+  }
+
+  /** Who may stop a thread's agent: the asker, the machine's owner or an admin. */
+  async stopAsk(by: string, admin: boolean, threadId: string): Promise<void> {
+    const t = this.store.thread(threadId) ?? fail("That thread isn't there any more.");
+    const run = t.agent;
+    if (!run || !asks.live(run)) fail("No agent is running in this thread.");
+    const machine = (await this.hooks.machines()).find((m) => m.id === run!.machine);
+    if (run!.by !== by && machine?.owner !== by && !admin) fail("Only who asked, the machine's owner or an admin can stop it.");
+    await this.toRunner(run!.machine, { type: "session.kill", id: run!.session }, by);
+    this.askEnded(run!.session, "stopped", `Stopped by ${by}.`);
+  }
+
+  /** Types a reply into the thread's ask while its session is open (working, or answered and waiting for
+   *  follow-ups), which turns it back to Thinking. False when no session is open there. */
+  async typeIntoAsk(thread: DocThread, by: string, text: string): Promise<boolean> {
+    const run = thread.agent;
+    const r = run && this.askRecord(run.session);
+    if (!run || !r || r.ended || r.thread !== thread.id) return false;
+    const res = await machineHub(this.env, run.machine).fetch("https://hub/input", { method: "POST", body: JSON.stringify({ session: run.session, text: asks.followUp(by, thread.id, thread.doc, text) }) });
+    if (!res.ok) return false;
+    const at = now();
+    this.saveAsk({ ...r, typedAt: at, turnAt: at, ...(r.idleSince ? { idleSince: null, idleMs: (r.idleMs ?? 0) + (at - r.idleSince) } : {}) });
+    if (run.status === "waiting" || run.status === "done") this.setRun(thread.id, { status: "thinking", message: null, endedAt: null });
+    return true;
+  }
+
+  /** Kills asks past the per-run budget (policy budgetMinutes / budgetCostUsd) and says so in the thread. */
+  async checkAskBudgets(at = now()) {
+    const policy = this.store.policy();
+    const limits = { minutes: budgetMinutes(policy), costUsd: budgetCostUsd(policy) };
+    for (const r of this.openAsks().filter((r) => asks.idleExpired(r, at))) await this.closeIdleAsk(r);
+    for (const r of this.liveAsks()) {
+      const over = asks.overBudget(r, limits, at);
+      if (!over) continue;
+      await this.toRunner(r.machine, { type: "session.kill", id: r.session }, "factory");
+      const why = over === "time" ? `it ran past ${minutesText(limits.minutes ?? 0)}` : `it spent its ${dollars(limits.costUsd ?? 0)} budget`;
+      this.askEnded(r.session, "stopped", `Stopped: ${why}.`);
+      const t = this.store.thread(r.thread);
+      if (t) {
+        const note = docThreads.addComment(t, "factory", `The agent was stopped because ${why}. Ask again to carry on.`, []);
+        this.store.saveThread(note);
+        this.hooks.broadcast({ type: "doc.thread.updated", thread: note });
+      }
+    }
+  }
 
   /** Types into the task's live session, as if at its keyboard. False when nothing's running. */
   private async type(task: Task, text: string): Promise<boolean> {

@@ -231,3 +231,16 @@
 .doc-pill.decision-accepted { background: color-mix(in srgb, #2f9e63 20%, transparent); }
 .doc-pill.decision-rejected { background: color-mix(in srgb, #c2453d 20%, transparent); }
 .doc-pill.decision-superseded { background: color-mix(in srgb, gray 20%, transparent); }
+
+/* Ask an agent (MF-366): the composer's role toggle and a thread's agent status chip. */
+.doc-ask-roles { display: flex; gap: 4px; margin-bottom: 6px; }
+.doc-ask-role { font: inherit; font-size: 12px; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--stroke); background: transparent; color: var(--muted); cursor: pointer; }
+.doc-ask-role.on { background: color-mix(in srgb, #8250df 16%, transparent); border-color: #8250df; color: var(--text); }
+.doc-agent-status { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 6px 0; padding: 4px 8px; border-radius: 8px; font-size: 12px; background: color-mix(in srgb, #8250df 10%, transparent); color: var(--text); }
+.doc-agent-dot { width: 8px; height: 8px; border-radius: 50%; background: #8250df; flex: none; }
+.doc-agent-status.live .doc-agent-dot { animation: doc-agent-pulse 1.2s ease-in-out infinite; }
+.doc-agent-status.done .doc-agent-dot { background: #1a7f37; }
+.doc-agent-status.stopped .doc-agent-dot, .doc-agent-status.failed .doc-agent-dot { background: #d73a49; }
+.doc-agent-msg { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; flex: 1 1 0; min-width: 0; }
+.doc-agent-stop { margin-left: auto; padding: 1px 8px; font-size: 11px; }
+@keyframes doc-agent-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.8); } }

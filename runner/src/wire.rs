@@ -93,6 +93,29 @@ pub enum Role {
     Other,
 }
 
+/// Where an agent asked from a doc thread stands (MF-366).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DocAgentStatus {
+    /// Its session is opening.
+    Starting,
+    /// Reading and thinking.
+    Thinking,
+    /// Running tools: reading code, the web, writing its answer.
+    Working,
+    /// Waiting on a prompt in its session.
+    Waiting,
+    /// Its session ended after answering.
+    Done,
+    /// A person stopped it, or it ran past its budget.
+    Stopped,
+    /// It couldn't start, or ended early.
+    Failed,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
 /// Where a suggested doc edit stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2394,6 +2417,27 @@ pub struct DocSuggestion {
     pub decided_at: Option<u64>,
 }
 
+/// An agent asked from a doc thread (MF-366): a side conversation that answers in the thread.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocAgentRun {
+    /// Its session on the machine.
+    pub session: String,
+    /// planner or researcher.
+    pub role: String,
+    /// The machine it runs on.
+    pub machine: String,
+    /// Who asked.
+    pub by: String,
+    pub status: DocAgentStatus,
+    /// What it's doing now, or why it stopped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    pub started_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<u64>,
+}
+
 /// A comment thread anchored to text in a shared doc.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2416,6 +2460,9 @@ pub struct DocThread {
     /// Set when the thread is a suggested edit (a tracked change) rather than a plain comment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suggestion: Option<DocSuggestion>,
+    /// The newest agent asked in this thread (MF-366).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<DocAgentRun>,
 }
 
 /// One option a decision considered.
@@ -3821,6 +3868,26 @@ pub enum ClientMessage {
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         anchor: Option<DocAnchor>,
+    },
+    /// Ask an agent about a doc selection (MF-366): starts a thread on `anchor`, or continues `thread`, and opens a session on one of the asker's machines that answers in the thread.
+    #[serde(rename = "doc.ask")]
+    DocAsk {
+        doc: Uuid,
+        /// None: start a new thread (then `anchor` is required).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thread: Option<Uuid>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        anchor: Option<DocAnchor>,
+        text: String,
+        /// planner (default) or researcher.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        role: Option<String>,
+    },
+    /// Stop the agent running in a doc thread: the asker, the machine's owner or an admin.
+    #[serde(rename = "doc.agentStop")]
+    DocAgentStop {
+        doc: Uuid,
+        thread: Uuid,
     },
     #[serde(rename = "doc.resolve")]
     DocResolve {

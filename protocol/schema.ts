@@ -59,6 +59,10 @@ export const enums: Record<string, Enum> = {
     doc: "What a factory session is for.",
     values: { planner: "Writes the plan.", builder: "Builds and proves it.", reviewer: "Reviews the change." },
   },
+  DocAgentStatus: {
+    doc: "Where an agent asked from a doc thread stands (MF-366).",
+    values: { starting: "Its session is opening.", thinking: "Reading and thinking.", working: "Running tools: reading code, the web, writing its answer.", waiting: "Waiting on a prompt in its session.", done: "Its session ended after answering.", stopped: "A person stopped it, or it ran past its budget.", failed: "It couldn't start, or ended early." },
+  },
   DocSuggestionStatus: {
     doc: "Where a suggested doc edit stands.",
     values: { open: "Waiting for a person.", accepted: "Accepted: the doc's text was replaced.", rejected: "Rejected: the doc is unchanged." },
@@ -1075,10 +1079,15 @@ export const structs: Record<string, Struct> = {
     fields: { replacement: "string", status: "DocSuggestionStatus", decidedBy: "string?", decidedAt: "u64?" },
     fieldDocs: { replacement: "Markdown that replaces the anchored text (empty: a deletion).", decidedBy: "Who accepted or rejected it." },
   },
+  DocAgentRun: {
+    doc: "An agent asked from a doc thread (MF-366): a side conversation that answers in the thread.",
+    fields: { session: "string", role: "string", machine: "string", by: "string", status: "DocAgentStatus", message: "string?", startedAt: "u64", endedAt: "u64?" },
+    fieldDocs: { session: "Its session on the machine.", role: "planner or researcher.", machine: "The machine it runs on.", by: "Who asked.", message: "What it's doing now, or why it stopped." },
+  },
   DocThread: {
     doc: "A comment thread anchored to text in a shared doc.",
-    fields: { id: "uuid", doc: "uuid", anchor: "DocAnchor?", comments: "DocComment[]", resolved: "bool?", resolvedBy: "string?", resolvedAt: "u64?", createdBy: "string", createdAt: "u64", suggestion: "DocSuggestion?" },
-    fieldDocs: { anchor: "None: a comment on the whole doc.", suggestion: "Set when the thread is a suggested edit (a tracked change) rather than a plain comment." },
+    fields: { id: "uuid", doc: "uuid", anchor: "DocAnchor?", comments: "DocComment[]", resolved: "bool?", resolvedBy: "string?", resolvedAt: "u64?", createdBy: "string", createdAt: "u64", suggestion: "DocSuggestion?", agent: "DocAgentRun?" },
+    fieldDocs: { anchor: "None: a comment on the whole doc.", suggestion: "Set when the thread is a suggested edit (a tracked change) rather than a plain comment.", agent: "The newest agent asked in this thread (MF-366)." },
   },
   DecisionOption: {
     doc: "One option a decision considered.",
@@ -1729,6 +1738,12 @@ export const unions: Record<string, Union> = {
         fields: { doc: "uuid", thread: "uuid?", text: "string", anchor: "DocAnchor?" },
         fieldDocs: { thread: "None: start a new thread (then `anchor` is required)." },
       },
+      "doc.ask": {
+        doc: "Ask an agent about a doc selection (MF-366): starts a thread on `anchor`, or continues `thread`, and opens a session on one of the asker's machines that answers in the thread.",
+        fields: { doc: "uuid", thread: "uuid?", anchor: "DocAnchor?", text: "string", role: "string?" },
+        fieldDocs: { thread: "None: start a new thread (then `anchor` is required).", role: "planner (default) or researcher." },
+      },
+      "doc.agentStop": { doc: "Stop the agent running in a doc thread: the asker, the machine's owner or an admin.", fields: { doc: "uuid", thread: "uuid" } },
       "doc.resolve": { fields: { doc: "uuid", thread: "uuid" } },
       "doc.reopen": { fields: { doc: "uuid", thread: "uuid" } },
       "doc.suggestion": { doc: "Accept or reject a suggested edit; accepting replaces the anchored text in the doc.", fields: { doc: "uuid", thread: "uuid", accept: "bool" } },

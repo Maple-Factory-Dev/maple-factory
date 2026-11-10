@@ -60,7 +60,7 @@ struct StatisticsView: View {
             }
             .task(id: days) { if state.isLive && isAdmin { client.loadStats(days: days) } }
             .onChange(of: section) { proxy.scrollTo("top", anchor: .top) }
-            // `-statsSection cost` opens on the Cost card, `-statsSection calendar` on the merges calendar and `-statsSection findings` on the findings, for screenshots.
+            // `-statsSection cost` opens on the Cost card, `-statsSection calendar` on the merges calendar and `-statsSection findings` on the findings, for screenshots. Add `-mergeCalendarDays 30` (or 60, 90, 365) to pick the calendar's range: AppStorage reads launch arguments.
             .onChange(of: summary == nil, initial: true) {
                 guard summary != nil, let section = AppDefaults.string(forKey: "statsSection") else { return }
                 if section == "findings" {

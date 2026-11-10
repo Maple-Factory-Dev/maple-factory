@@ -195,7 +195,7 @@ export function createDocEditor({ el, docId, me, members = () => [], tasks = () 
     rail = createCommentRail({ editor, ydoc, docId, threads, members, send: sendThreadCommand, onCount: (open) => onEvent("threads", { open }) });
     shell.append(rail.rail);
   }
-  bubble.append(bubbleMenuElement(editor, rail ? () => rail.startThread() : null));
+  bubble.append(bubbleMenuElement(editor, rail ? () => rail.startThread() : null, rail ? () => rail.startThread(true) : null));
 
   const peers = () => {
     const out = new Map();

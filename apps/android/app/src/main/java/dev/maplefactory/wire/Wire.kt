@@ -152,6 +152,30 @@ enum class Role(val raw: String) {
     object Serializer : WireEnumSerializer<Role>("Role", entries, { it.raw }, Unknown)
 }
 
+/** Where an agent asked from a doc thread stands (MF-366). */
+@Serializable(with = DocAgentStatus.Serializer::class)
+enum class DocAgentStatus(val raw: String) {
+    /** Its session is opening. */
+    Starting("starting"),
+    /** Reading and thinking. */
+    Thinking("thinking"),
+    /** Running tools: reading code, the web, writing its answer. */
+    Working("working"),
+    /** Waiting on a prompt in its session. */
+    Waiting("waiting"),
+    /** Its session ended after answering. */
+    Done("done"),
+    /** A person stopped it, or it ran past its budget. */
+    Stopped("stopped"),
+    /** It couldn't start, or ended early. */
+    Failed("failed"),
+    /** A value this build doesn't know yet; newer servers may send them. */
+    Unknown("unknown"),
+    ;
+
+    object Serializer : WireEnumSerializer<DocAgentStatus>("DocAgentStatus", entries, { it.raw }, Unknown)
+}
+
 /** Where a suggested doc edit stands. */
 @Serializable(with = DocSuggestionStatus.Serializer::class)
 enum class DocSuggestionStatus(val raw: String) {
@@ -2125,6 +2149,24 @@ data class DocSuggestion(
     val decidedAt: Long? = null,
 )
 
+/** An agent asked from a doc thread (MF-366): a side conversation that answers in the thread. */
+@Serializable
+data class DocAgentRun(
+    /** Its session on the machine. */
+    val session: String,
+    /** planner or researcher. */
+    val role: String,
+    /** The machine it runs on. */
+    val machine: String,
+    /** Who asked. */
+    val by: String,
+    val status: DocAgentStatus,
+    /** What it's doing now, or why it stopped. */
+    val message: String? = null,
+    val startedAt: Long,
+    val endedAt: Long? = null,
+)
+
 /** A comment thread anchored to text in a shared doc. */
 @Serializable
 data class DocThread(
@@ -2140,6 +2182,8 @@ data class DocThread(
     val createdAt: Long,
     /** Set when the thread is a suggested edit (a tracked change) rather than a plain comment. */
     val suggestion: DocSuggestion? = null,
+    /** The newest agent asked in this thread (MF-366). */
+    val agent: DocAgentRun? = null,
 )
 
 /** One option a decision considered. */
@@ -3481,6 +3525,23 @@ sealed class ClientMessage {
         val text: String,
         val anchor: dev.maplefactory.wire.DocAnchor? = null,
     ) : ClientMessage()
+    /** Ask an agent about a doc selection (MF-366): starts a thread on `anchor`, or continues `thread`, and opens a session on one of the asker's machines that answers in the thread. */
+    @Serializable
+    data class DocAsk(
+        val doc: String,
+        /** None: start a new thread (then `anchor` is required). */
+        val thread: String? = null,
+        val anchor: dev.maplefactory.wire.DocAnchor? = null,
+        val text: String,
+        /** planner (default) or researcher. */
+        val role: String? = null,
+    ) : ClientMessage()
+    /** Stop the agent running in a doc thread: the asker, the machine's owner or an admin. */
+    @Serializable
+    data class DocAgentStop(
+        val doc: String,
+        val thread: String,
+    ) : ClientMessage()
     @Serializable
     data class DocResolve(
         val doc: String,
@@ -4108,6 +4169,8 @@ sealed class ClientMessage {
             "doc.rename" -> json.decodeFromJsonElement(DocRename.serializer(), body)
             "doc.archive" -> json.decodeFromJsonElement(DocArchive.serializer(), body)
             "doc.comment" -> json.decodeFromJsonElement(DocComment.serializer(), body)
+            "doc.ask" -> json.decodeFromJsonElement(DocAsk.serializer(), body)
+            "doc.agentStop" -> json.decodeFromJsonElement(DocAgentStop.serializer(), body)
             "doc.resolve" -> json.decodeFromJsonElement(DocResolve.serializer(), body)
             "doc.reopen" -> json.decodeFromJsonElement(DocReopen.serializer(), body)
             "doc.suggestion" -> json.decodeFromJsonElement(DocSuggestion.serializer(), body)
@@ -4217,6 +4280,8 @@ sealed class ClientMessage {
             is DocRename -> "doc.rename" to json.encodeToJsonElement(DocRename.serializer(), value)
             is DocArchive -> "doc.archive" to json.encodeToJsonElement(DocArchive.serializer(), value)
             is DocComment -> "doc.comment" to json.encodeToJsonElement(DocComment.serializer(), value)
+            is DocAsk -> "doc.ask" to json.encodeToJsonElement(DocAsk.serializer(), value)
+            is DocAgentStop -> "doc.agentStop" to json.encodeToJsonElement(DocAgentStop.serializer(), value)
             is DocResolve -> "doc.resolve" to json.encodeToJsonElement(DocResolve.serializer(), value)
             is DocReopen -> "doc.reopen" to json.encodeToJsonElement(DocReopen.serializer(), value)
             is DocSuggestion -> "doc.suggestion" to json.encodeToJsonElement(DocSuggestion.serializer(), value)

@@ -168,6 +168,7 @@ ${done}${moving(others)}${comments(task)}${changes(task)}${
 
 Work through the steps in order. Call \`progress\` when you start and finish each step (step numbers from 1).
 Commit as you go with clear messages. When a change request is applied, call \`progress\` with its id in \`applied\`.
+${SUBAGENTS}
 For each Done when item, produce real evidence and call \`prove\` (item numbers from 1): paste the command and its output for terminal/tests proofs.
 ${ARTIFACTS(task)}
 ${THREADS}
@@ -184,6 +185,11 @@ export function resumePrompt(task: Task, reason: string): string {
 Anything you were running in the terminal (dev servers, watchers, a test run) stopped. Check \`git status\` and \`git log\` to see where you were, then carry on with the task from there.
 Keep reporting with the same tools as before (\`progress\`, \`prove\`, \`raise_hand\`, \`finish\`).`;
 }
+
+/** Subagents: the builder may fan out independent work (searches, checks) to at most 3 helpers, but
+ *  keeps the commits and the factory calls (progress, prove, finish) to itself. */
+const SUBAGENTS =
+  "You may use subagents (e.g. Claude Code's Agent tool, or Codex's) for independent work that can run in parallel, such as searching the codebase, investigating a separate area or running checks, when that will speed the task up. Use at most 3 at a time, and skip them for small tasks. You still own the result: you make the commits and call \`progress\`, \`prove\` and \`finish\` yourself, and you review what a subagent hands back before relying on it.";
 
 /** Comment threads: people talking to the session mid-flight, answered with \`reply\`. */
 const THREADS =

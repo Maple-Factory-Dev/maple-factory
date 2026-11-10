@@ -100,4 +100,60 @@ struct MergeCalendarTests {
         #expect(m.weeks[0][0] != nil)
         #expect(m.total > 0)
     }
+
+    // MF-386: the card's 30d / 60d / 90d / 1y picker shows only the trailing days.
+
+    @Test func windowingToThirtyDaysEndsOnTheLastDayWithASundayPaddedFirstWeek() {
+        let year = days(from: "2025-11-02", Array(repeating: 0, count: 365)) // to Sunday 2026-11-01
+        let last30 = MergeCalendarModel.window(year, last: 30)
+        #expect(last30.count == 30)
+        #expect(last30.first?.day == "2026-10-03")
+        #expect(last30.last?.day == "2026-11-01")
+        let m = MergeCalendarModel(last30)
+        // 2026-10-03 is a Saturday: six blank slots, then four whole weeks and Sunday Nov 1.
+        #expect(m.weeks.count == 6)
+        #expect(m.weeks[0][0...5].allSatisfy { $0 == nil })
+        #expect(m.weeks[0][6]?.day == "2026-10-03")
+        #expect(m.weeks[5][0]?.day == "2026-11-01")
+        #expect(m.months.map(\.name).count == 2) // Oct and Nov both labelled on the wide columns
+    }
+
+    @Test func windowingToNinetyDays() {
+        let year = days(from: "2025-11-02", Array(repeating: 0, count: 365))
+        let last90 = MergeCalendarModel.window(year, last: 90)
+        #expect(last90.count == 90)
+        #expect(last90.first?.day == "2026-08-04")
+        let m = MergeCalendarModel(last90)
+        // Tuesday Aug 4: two blank slots, 92 slots in all, so 14 week columns.
+        #expect(m.weeks.count == 14)
+        #expect(m.weeks[0][0...1].allSatisfy { $0 == nil })
+        #expect(m.weeks[0][2]?.day == "2026-08-04")
+    }
+
+    @Test func totalsStreaksAndBusiestDayCountOnlyTheWindow() {
+        // A merge a day all year, a 50 in the spring, a gap the day before the 30-day window and a 5 inside it.
+        var counts = Array(repeating: 1, count: 365)
+        counts[200] = 50
+        counts[334] = 0
+        counts[350] = 5
+        let year = days(from: "2025-11-02", counts)
+        let whole = MergeCalendarModel(year)
+        #expect(whole.longestStreak == 334)
+        #expect(whole.busiest?.merges == 50)
+        let m = MergeCalendarModel(MergeCalendarModel.window(year, last: 30))
+        #expect(m.total == 29 + 5)
+        #expect(m.longestStreak == 30)
+        #expect(m.currentStreak == 30)
+        #expect(m.busiest?.merges == 5)
+        #expect(m.cap == MergeCalendarModel.cap(Array(counts.suffix(30))))
+    }
+
+    @Test func aYearOrMoreReturnsEverythingUnchanged() {
+        let year = days(from: "2025-11-02", Array(0..<365).map { $0 % 4 })
+        #expect(MergeCalendarModel.window(year, last: 365) == year)
+        #expect(MergeCalendarModel.window(year, last: 400) == year)
+        #expect(MergeCalendarModel(MergeCalendarModel.window(year, last: 365)) == MergeCalendarModel(year))
+        #expect(MergeCalendar.span(365) == "the last year")
+        #expect(MergeCalendar.span(30) == "the last 30 days")
+    }
 }

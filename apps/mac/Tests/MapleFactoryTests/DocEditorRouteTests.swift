@@ -25,6 +25,25 @@ struct DocEditorRouteTests {
         #expect(DocEditorView.route(page!, embed: page, isMainFrame: true) == .allow)
     }
 
+    /// MF-387: the diagram frames load in place (live, including the server's .html → extensionless redirect, and the
+    /// bundled demo page); a main-frame move to another page still leaves.
+    @Test func diagramSubframesLoadInPlace() {
+        let live = DocEditorView.pageURL(.live(url: embed, token: "t"), dark: false)
+        #expect(DocEditorView.route(URL(string: "https://factory.test/app/mermaid/diagram.html?mode=inline")!, embed: live, isMainFrame: false) == .allow)
+        #expect(DocEditorView.route(URL(string: "https://factory.test/app/mermaid/diagram?mode=viewer")!, embed: live, isMainFrame: false) == .allow)
+        #expect(DocEditorView.route(URL(string: "https://factory.test/app/mermaid/diagram?mode=inline")!, embed: live, isMainFrame: true) == .external)
+        let demo = DocEditorView.pageURL(.demo(markdown: ""), dark: false)
+        #expect(DocEditorView.route(URL(string: "maple-docs://embed/app/mermaid/diagram.html?mode=inline")!, embed: demo, isMainFrame: false) == .allow)
+    }
+
+    /// The bundled diagram page must let its own script load on the maple-docs scheme: WebKit doesn't match
+    /// `'self'` for the opaque-origin sandboxed frame there, which left the demo doc's diagram unrendered.
+    @Test func bundledDiagramPageAllowsItsSchemeScripts() throws {
+        let page = try #require(Bundle.module.url(forResource: "diagram", withExtension: "html"))
+        let html = try String(contentsOf: page, encoding: .utf8)
+        #expect(html.contains("script-src 'self' 'unsafe-inline' file: \(DocsEmbedScheme.scheme):"))
+    }
+
     // MARK: peers bridge event (MF-381)
 
     @Test func peerKeepsItsAvatar() {
@@ -47,5 +66,15 @@ struct DocEditorRouteTests {
         let peer = DocEditorStatus.Peer.parse(["login": "octo"])
         #expect(peer?.name == "octo")
         #expect(peer?.color == "#888888")
+    }
+
+    // MARK: bridge messages from subframes (MF-387 review)
+
+    @Test func subframesMayOnlySendFrameDiagnostics() {
+        #expect(DocEditorView.acceptsMessage("frame", isMainFrame: false))
+        for type in ["openTask", "command", "error", "ready", "status", "synced", "peers"] {
+            #expect(!DocEditorView.acceptsMessage(type, isMainFrame: false))
+            #expect(DocEditorView.acceptsMessage(type, isMainFrame: true))
+        }
     }
 }

@@ -106,6 +106,8 @@ jobs:
       - run: npm run typecheck
       - name: Unit tests (the e2e-*.mjs scripts need a live stack and aren't run here)
         run: npm test --workspace server
+      - name: Installer unit tests
+        run: npm test --workspace installer
 
   security:
     name: security (cargo audit, npm audit)
