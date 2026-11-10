@@ -167,6 +167,9 @@ const MERGE_GRACE_MS = 10_000;
 /** How long a proof job may go unanswered on a machine that stays online (an older runner never answers). */
 const PROVE_TIMEOUT_MS = 45 * 60_000;
 
+/** A pull request comment, review or inline comment from the GitHub webhook (`githubComment` in trackers.ts). */
+type GitHubComment = { owner: string; repo: string; number: number; ghId: string; author: string; bot: boolean; body: string; url: string | null; at: number | null; review?: string; path?: string | null; line?: number | null };
+
 export class FactoryError extends Error {}
 
 const now = () => Date.now();
@@ -2604,7 +2607,8 @@ export class Engine {
     this.reposUpdated();
   }
 
-  async fromGitHub(event: { owner: string; repo: string; sha?: string | null; number?: number | null; merged?: boolean; closed?: boolean; enqueued?: boolean; dequeued?: boolean; reason?: string | null }) {
+  async fromGitHub(event: { owner: string; repo: string; sha?: string | null; number?: number | null; merged?: boolean; closed?: boolean; enqueued?: boolean; dequeued?: boolean; reason?: string | null; kind?: string }) {
+    if (event.kind === "comment") return this.githubComment(event as unknown as GitHubComment);
     const repo = `${event.owner}/${event.repo}`.toLowerCase();
     for (const task of this.store.tasks()) {
       const gh = this.store.private(task.id).gh;
@@ -2632,6 +2636,27 @@ export class Engine {
         continue;
       }
       await this.refreshChecks(task.id);
+    }
+  }
+
+  /** A comment or review left on a task's pull request on GitHub (MF-424): it goes on the task's
+   *  comments, marked as from GitHub with a link to it. The factory's own (and any bot's) are skipped,
+   *  and its id comes from GitHub's so a redelivered webhook adds nothing. */
+  private async githubComment(e: GitHubComment) {
+    const slug = this.env.GITHUB_APP_SLUG?.trim().toLowerCase();
+    if (e.bot || /\[bot\]$/i.test(e.author) || (slug && e.author.toLowerCase() === slug)) return;
+    const repo = `${e.owner}/${e.repo}`.toLowerCase();
+    const id = `gh-${e.ghId}`;
+    for (const task of this.store.tasks()) {
+      const gh = this.store.private(task.id).gh;
+      if (!gh || `${gh.owner}/${gh.repo}`.toLowerCase() !== repo || task.pr?.number !== e.number) continue;
+      if (task.comments.some((c) => c.id === id)) continue;
+      const anchor = e.path ? (e.line ? `${e.path}:${e.line}` : e.path) : e.review ? `Review · ${e.review}` : null;
+      const text = e.body.trim() || (e.review ? `${e.review[0].toUpperCase()}${e.review.slice(1)}.` : "");
+      if (!text) continue;
+      const comment = await this.comment(e.author, text, { at: e.at ?? undefined, anchor });
+      task.comments.push({ ...comment, id, source: "github", url: e.url ?? null });
+      this.save(task);
     }
   }
 
