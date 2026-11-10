@@ -31,6 +31,7 @@ struct TaskListView: View {
             .padding(.bottom, 24)
         }
         .scrollIndicators(.never)
+        .taskKeyboardNav(.list(TaskKeyNav.listRows(tasks, collapsed: collapsed)))
         .cancelTaskConfirmation(task: cancelling ?? FactoryTask.none, isPresented: Binding(get: { cancelling != nil }, set: { if !$0 { cancelling = nil } }))
         .renameTask(task: renaming ?? FactoryTask.none, isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }))
     }
@@ -120,6 +121,8 @@ struct TaskListView: View {
             if selected { Rectangle().fill(task.state.color).frame(width: 2) }
         }
         .overlay(alignment: .bottom) { Hairline().padding(.leading, 24) }
+        .keyboardCursorRing(state.keyboardCursor == task.id, cornerRadius: 4, inset: 2)
+        .id(task.id)
         .contentShape(Rectangle())
         .taskClicks(task.id)
         .contextMenu {
