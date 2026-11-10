@@ -116,6 +116,16 @@ test("builds an FCM v1 request with a cached OAuth token from the service accoun
   assert.deepEqual(JSON.parse(send.init.body).message.data, { factory: cred.id, ref: "MF-12", reason: "hand" });
 });
 
+test("a decision push (MF-370) with a doc:<uuid> ref is accepted and says a decision needs you", async () => {
+  const cred = await enroll();
+  const ref = "doc:3f2a9c1e-8b4d-4e6f-9a1b-2c3d4e5f6a7b";
+  assert.equal((await signed("/push/send", cred, msg(cred, { ref, reason: "decision" }))).status, 200);
+  assert.deepEqual(JSON.parse(calls[0].init.body).aps.alert, { title: ref, body: "A decision needs you" });
+  assert.equal((await signed("/push/send", cred, msg(cred, { ref, reason: "mention" }))).status, 200);
+  assert.equal((await signed("/push/send", cred, msg(cred, { reason: "nope" }))).status, 400);
+  for (const bad of ["doc:", "doc:a/b", "task:MF-12", "x".repeat(41)]) assert.equal((await signed("/push/send", cred, msg(cred, { ref: bad }))).status, 400, bad);
+});
+
 test("a gone token answers 410 (APNs 410, FCM UNREGISTERED)", async () => {
   const cred = await enroll();
   provider = () => Response.json({ reason: "Unregistered" }, { status: 410 });

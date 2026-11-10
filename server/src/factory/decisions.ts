@@ -4,6 +4,7 @@
 // returns the next Decision plus the DecisionEvent to append to the server-side, append-only log, and
 // fold(events) rebuilds a decision from that log alone.
 import type { Decision, DecisionAction, DecisionEvent, DecisionOption } from "../wire.ts";
+import { mentionsIn } from "./mentions.ts";
 
 export const MAX_QUESTION = 500;
 export const MAX_RATIONALE = 10_000;
@@ -144,4 +145,24 @@ export function markdownLine(d: Decision | undefined, id: string): string {
   if (!d) return `> [!DECISION] ${id}`;
   const chosen = d.options.find((o) => o.id === d.chosen)?.label;
   return `> [!DECISION] ${id} · ${d.question} · ${d.status}${chosen && d.status !== "proposed" ? ` → ${chosen}` : ""}`;
+}
+
+/** Who a newly proposed decision pushes to (reason `decision`, ref `doc:<id>`): the org members @mentioned in its
+ *  question, rationale or option notes, once each, never the proposer. An agent's proposal also goes to
+ *  `proposedBy`, the person it works for, when that's a member. */
+export function pushTargets(d: Decision, members: { login: string }[]): string[] {
+  const text = [d.question, d.rationale, ...d.options.map((o) => o.note ?? "")].join("\n");
+  const person = d.agent ? members.find((m) => m.login.toLowerCase() === d.proposedBy.toLowerCase())?.login : undefined;
+  const mentioned = mentionsIn(text, members, d.proposedBy);
+  return person ? [person, ...mentioned] : mentioned;
+}
+
+/** Push a newly proposed decision to pushTargets; Push.send skips quiet hours and a relay that's off. */
+export async function notifyProposed(
+  push: { send(login: string, what: { ref: string; reason: "decision" }): Promise<number> },
+  d: Decision, members: { login: string }[],
+): Promise<number> {
+  let sent = 0;
+  for (const login of pushTargets(d, members)) sent += await push.send(login, { ref: `doc:${d.doc}`, reason: "decision" });
+  return sent;
 }

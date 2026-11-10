@@ -16,7 +16,7 @@ import { aesKey, secretsKey } from "./secrets.ts";
 import { inQuietHours } from "./quiet-hours.ts";
 import { audit, b64url, fromB64url, sha256, text } from "./util.ts";
 
-export type PushReason = "hand" | "question" | "approval" | "review" | "mention";
+export type PushReason = "hand" | "question" | "approval" | "review" | "mention" | "decision";
 export interface Credential { id: string; secret: string }
 
 const enc = new TextEncoder();
