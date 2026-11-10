@@ -6,7 +6,8 @@
   "license": "UNLICENSED",
   "type": "module",
   "bin": { "maple": "maple.mjs" },
-  "files": ["maple.mjs", "README.md"],
+  "files": ["maple.mjs", "config.mjs", "README.md"],
+  "scripts": { "test": "node --test" },
   "engines": { "node": ">=20" },
   "dependencies": {
     "wrangler": "^4.158.0"
