@@ -3051,8 +3051,10 @@ export class Engine {
       const refused = await this.checkArtifactUpload(s.task, args);
       if (refused) return { error: refused };
     }
-    // finish sends only the checks its machine can run, so it needs that machine's tags (read before the task, so it's current).
-    const machinesNow = name === "finish" ? await this.hooks.machines() : null;
+    // finish sends only the checks its machine can run, so it needs that machine's tags; a memory tool needs its
+    // machine's name. Read before the task: nothing below awaits between reading the task and saving it, so a
+    // change saved meanwhile (a comment, a proof from a parallel tool call) is never overwritten.
+    const machinesNow = name === "finish" || isMemoryTool(name) ? await this.hooks.machines() : null;
     const task = this.store.task(s.task);
     if (!task) return { error: "The task isn't there any more." };
     if (task.worker?.session !== sessionId) return { error: "This session isn't the task's current worker any more; stop here." };
@@ -3067,7 +3069,7 @@ export class Engine {
     if (isMemoryTool(name)) {
       try {
         const goal = this.store.goal(task.goal) ?? null;
-        const machineName = (await this.hooks.machines()).find((m) => m.id === s.machine)?.name ?? s.machine;
+        const machineName = machinesNow?.find((m) => m.id === s.machine)?.name ?? s.machine;
         return { result: this.memoryTool({ session: sessionId, by: task.owner, task: task.id, role: s.role, agent: `${task.id} ${s.role}`, machine: machineName, repo: taskRepo(task, goal), goal: task.goal }, name, args, task) };
       } catch (e) {
         return { error: e instanceof Error ? e.message : String(e) };
@@ -3111,7 +3113,11 @@ export class Engine {
           mine.text = things(before + 1);
           mine.at = now();
         } else this.event(task, who, things(before + 1));
-      } else this.event(task, who, `archived a memory: ${out.reason}`);
+      } else {
+        // One short line for the timeline; the audit log keeps the reason as it was given.
+        const reason = (out.reason ?? "").replace(/\s+/g, " ").trim();
+        this.event(task, who, `archived a memory: ${reason.length > 120 ? `${reason.slice(0, 119).trimEnd()}…` : reason}`);
+      }
       this.save(task);
     }
     return { summary: out.summary, data: out.data };

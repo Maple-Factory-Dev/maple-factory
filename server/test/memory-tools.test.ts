@@ -76,7 +76,7 @@ function factory() {
     assert.equal(out.error, undefined, out.error);
     return out.result!.data as { id: string; already: boolean };
   };
-  return { store, engine, call, remember, broadcasts, audits };
+  return { store, engine, call, remember, broadcasts, audits, hooks };
 }
 
 // Ten notes with no words in common, so none is a near-duplicate of another.
@@ -249,6 +249,57 @@ test("a task whose agent remembers three things has one 'remembered 3 things' ev
   await remember(NOTES[3], "repo", REVIEWER);
   assert.deepEqual(store.task("MF-2")!.events.map((e) => e.text), ["remembered 1 thing"]);
   assert.deepEqual(said().length, 2);
+});
+
+test("a change saved to the task while a memory tool reads the machines is kept (R1.1)", async () => {
+  const { store, call, hooks } = factory();
+  const machines = hooks.machines;
+  // Reading the machines yields, so other messages run: here a person's comment and a state change land meanwhile.
+  hooks.machines = async () => {
+    const t = store.task("MF-1")!;
+    t.comments.push({ id: "c1", by: "owner", text: "one more thing", at: 5 } as never);
+    t.title = "Tidy up";
+    store.saveTask(t);
+    return machines();
+  };
+  const m = await call("remember", { text: NOTES[0], kind: "gotcha", scope: "repo" });
+  assert.equal(m.error, undefined, m.error);
+  let t = store.task("MF-1")!;
+  assert.deepEqual(t.comments.map((c) => c.id), ["c1"]);
+  assert.equal(t.title, "Tidy up");
+  assert.deepEqual(t.events.map((e) => e.text), ["remembered 1 thing"]);
+  hooks.machines = async () => {
+    const t = store.task("MF-1")!;
+    t.comments.push({ id: "c2", by: "owner", text: "and another", at: 6 } as never);
+    store.saveTask(t);
+    return machines();
+  };
+  assert.equal((await call("forget", { id: m.result!.data.id, reason: "wrong" })).error, undefined);
+  t = store.task("MF-1")!;
+  assert.deepEqual(t.comments.map((c) => c.id), ["c1", "c2"]);
+  assert.deepEqual(t.events.map((e) => e.text), ["remembered 1 thing", "archived a memory: wrong"]);
+  // A session that stopped being the worker while the machines were read is turned away, and writes nothing.
+  hooks.machines = async () => {
+    const t = store.task("MF-1")!;
+    t.worker = null;
+    store.saveTask(t);
+    return machines();
+  };
+  assert.match((await call("remember", { text: NOTES[1], kind: "gotcha", scope: "repo" })).error!, /isn't the task's current worker/);
+  assert.equal(store.memoryWrites(BUILDER).remembered, 1);
+});
+
+test("a forget's reason is one short line on the timeline, and whole in the audit log (R1.2)", async () => {
+  const { store, call, remember, audits } = factory();
+  const m = await remember(NOTES[0]);
+  const reason = `CI moved\n\n  to hosted   runners.\n${"It no longer applies. ".repeat(12)}`.trim();
+  assert.equal((await call("forget", { id: m.id, reason })).error, undefined);
+  const text = store.task("MF-1")!.events.at(-1)!.text;
+  assert.match(text, /^archived a memory: CI moved to hosted runners\. It no longer applies\./);
+  assert.ok(!/\s\s|\n/.test(text));
+  assert.ok(text.endsWith("…"));
+  assert.ok(text.length <= "archived a memory: ".length + 120, text);
+  assert.equal(JSON.parse(audits.find((a) => a[2] === "memory.archived")![4] as string).reason, reason);
 });
 
 test("repoFromCwd: a checkout, a worktree, a bare folder name, ambiguity and no match", () => {
