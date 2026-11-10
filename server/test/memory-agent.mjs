@@ -10,6 +10,9 @@ import { createInterface } from "node:readline";
 
 const argv = process.argv.slice(2);
 const logAt = argv.indexOf("--fixture-log");
+// The runner also runs an agent's command for its own probes (e.g. `<command> auth status`), without the
+// fixture's arguments: that isn't a session, so say nothing and go.
+if (logAt < 0 || !argv[logAt + 1]) process.exit(1);
 const log = argv[logAt + 1];
 const session = process.env.MAPLE_SESSION_ID;
 const record = (type, data = {}) => appendFileSync(log, JSON.stringify({ session, type, ...data }) + "\n");
