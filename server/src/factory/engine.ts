@@ -6,7 +6,7 @@
 // (tools.ts); a session that ends without reporting is classified by its end's cause (`ended`).
 
 import type { Env } from "../env.ts";
-import { ArtifactKindValues, PriorityValues, RoleValues } from "../wire.ts";
+import { ArtifactKindValues, PriorityValues, RoleValues, TaskStateValues } from "../wire.ts";
 import type {
   Artifact, ArtifactKind, ChangeRequest, CheckRun, ClientMessage, Comment, DiffCommit, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
   AgentState, Classification, DocAgentRun, DocThread, McpConnector, NotRunCheck, Priority, PromptAdditions, RiskLevel, ServerToRunner, SessionEnd, Task, WorktreeScripts,
@@ -20,6 +20,7 @@ import { builderPrompt, cleanPrompts, MERGE_ANCHOR, type Moving, plannerPrompt, 
 import { goalRepos, OWNER, REPO, taskRepo } from "./repos.ts";
 import { affectedBy, emptyForecast, inFlight, refreshOverlaps, type Lane } from "./forecast.ts";
 import { allowed, isDocTool, isPersonalTool, personalTools, toolsFor } from "./tools.ts";
+import { filterGoals, filterTasks, findGoal, isOpen } from "./mcp-search.ts";
 import { DocTools } from "./doc-tools.ts";
 import * as asks from "./doc-asks.ts";
 import * as docTasks from "./doc-tasks.ts";
@@ -2853,20 +2854,7 @@ export class Engine {
   /** Make drafts in `goal` from proposals (propose_tasks' tasks, submit_findings' follow-ups), in order.
    *  Every one is checked before any is made, so a bad proposal makes none. */
   private makeProposals(goal: Goal, task: Task, role: Role, asked: Record<string, unknown>[], field: string): { made: string[]; lines: string[] } {
-    if (asked.length > 20) fail(`${field}: at most 20 per call.`);
-    const repos = goalRepos(goal);
-    const picks = asked.map((p, i) => {
-      const named = typeof p.repo === "string" ? p.repo.trim() : "";
-      const repo = named ? repos.find((r) => r.toLowerCase() === named.toLowerCase()) ?? fail(repos.length ? `${field}[].repo: ${named} isn't one of this goal's repos (${repos.join(", ")}).` : `${field}[].repo: this goal lists no repos; leave repo out.`) : task.repo ?? null;
-      const priority = p.priority == null ? null : PriorityValues.includes(p.priority as Priority) ? (p.priority as Priority) : fail(`${field}[].priority: ${String(p.priority)} isn't p0, p1, p2 or p3.`);
-      // `#n`: the n-th proposal in this call, made before it; anything else is an existing task.
-      const refs = arr(p.after).map((x) => String(x).trim()).filter(Boolean);
-      const earlier = refs.map((r) => (/^#\d+$/.test(r) ? Number(r.slice(1)) : null));
-      for (const [k, n] of earlier.entries()) if (n != null && (n < 1 || n > i)) fail(`${field}[${i}].after: ${refs[k]} isn't an earlier proposal in this call${n > i ? "; a task can only wait on ones listed before it" : ""}.`);
-      const existing = this.checkAfter(null, refs.filter((_, k) => earlier[k] == null));
-      const effort = p.effort == null ? undefined : effortName(String(p.effort));
-      return { title: str(p.title, `${field}[].title`).slice(0, 120).trim(), brief: str(p.brief, `${field}[].brief`), repo, priority, existing, earlier: [...new Set(earlier.filter((n): n is number => n != null))], effort };
-    });
+    const picks = this.checkProposals(goal, asked, field, task.repo ?? null);
     return this.makeDrafts(goal, task.owner, picks.map((p) => ({
       fields: { ...this.inherited(task), title: p.title, brief: `${p.brief}\n\nProposed by ${task.id}'s ${role}.`, repo: p.repo, priority: p.priority, ...(p.effort !== undefined ? { effort: p.effort } : {}) },
       after: (made) => [...p.existing, ...p.earlier.map((n) => made[n - 1]!)],
@@ -2874,6 +2862,117 @@ export class Engine {
       event: `proposed by ${task.id}`,
       audit: { proposedBy: task.id },
     })));
+  }
+
+  /** Proposals checked, none made: each one's repo (one of the goal's; left out: `repo`), priority, what it
+   *  waits on (`#n` an earlier proposal in the call, anything else an existing task) and effort. Throws on the
+   *  first bad one. Shared by the agents' propose_tasks and an outside MCP client's (mcpTool). */
+  private checkProposals(goal: Goal, asked: Record<string, unknown>[], field: string, repo: string | null) {
+    if (asked.length > 20) fail(`${field}: at most 20 per call.`);
+    const repos = goalRepos(goal);
+    return asked.map((p, i) => {
+      const named = typeof p.repo === "string" ? p.repo.trim() : "";
+      const picked = named ? repos.find((r) => r.toLowerCase() === named.toLowerCase()) ?? fail(repos.length ? `${field}[].repo: ${named} isn't one of this goal's repos (${repos.join(", ")}).` : `${field}[].repo: this goal lists no repos; leave repo out.`) : repo;
+      const priority = p.priority == null ? null : PriorityValues.includes(p.priority as Priority) ? (p.priority as Priority) : fail(`${field}[].priority: ${String(p.priority)} isn't p0, p1, p2 or p3.`);
+      // `#n`: the n-th proposal in this call, made before it; anything else is an existing task.
+      const refs = arr(p.after).map((x) => String(x).trim()).filter(Boolean);
+      const earlier = refs.map((r) => (/^#\d+$/.test(r) ? Number(r.slice(1)) : null));
+      for (const [k, n] of earlier.entries()) if (n != null && (n < 1 || n > i)) fail(`${field}[${i}].after: ${refs[k]} isn't an earlier proposal in this call${n > i ? "; a task can only wait on ones listed before it" : ""}.`);
+      const existing = this.checkAfter(null, refs.filter((_, k) => earlier[k] == null));
+      const effort = p.effort == null ? undefined : effortName(String(p.effort));
+      return { title: str(p.title, `${field}[].title`).slice(0, 120).trim(), brief: str(p.brief, `${field}[].brief`), repo: picked, priority, existing, earlier: [...new Set(earlier.filter((n): n is number => n != null))], effort };
+    });
+  }
+
+  /** An outside MCP client's goal and task tools (src/mcp.ts, MF-416), already checked against its token's
+   *  scopes, run as the member `login`. It reads trimmed views (never a raw Task: no session logs, costs or
+   *  artifact keys), makes drafts only, and comments the way the app does. A FactoryError's message goes back
+   *  to the client. */
+  async mcpTool(login: string, client: string, name: string, a: Record<string, unknown>): Promise<{ summary: string; data?: unknown }> {
+    const via = `${client} via MCP`;
+    const cap = (v: unknown) => Math.min(100, Math.max(1, typeof v === "number" && Number.isFinite(v) ? Math.floor(v) : 50));
+    const text = (v: unknown) => (typeof v === "string" ? v : "");
+    const goals = this.store.goals();
+    const goalLabel = (id: string) => { const g = goals.find((x) => x.id === id); return g ? { id: g.id, name: g.name, prefix: g.prefix } : { id, name: null, prefix: null }; };
+    const findTask = (v: unknown) => { const id = str(v, "task"); return this.store.task(id) ?? this.store.task(id.toUpperCase()) ?? fail(`task: there's no task ${id}. Find it with list_tasks.`); };
+    switch (name) {
+      case "list_goals": {
+        const found = filterGoals(goals, { q: text(a.q), archived: a.archived === true });
+        const shown = found.slice(0, cap(a.limit));
+        const tasks = this.store.tasks();
+        return {
+          summary: found.length > shown.length ? `${shown.length} of ${found.length} goals match; narrow with q.` : `${found.length} goal${found.length === 1 ? "" : "s"}.`,
+          data: shown.map((g) => ({ id: g.id, name: g.name, prefix: g.prefix, summary: g.summary, repos: goalRepos(g), ...(g.archived ? { archived: true } : {}), openTasks: tasks.filter((t) => t.goal === g.id && isOpen(t.state)).length })),
+        };
+      }
+      case "list_tasks": {
+        const state = a.state == null || a.state === "" ? null : a.state === "open" || TaskStateValues.includes(a.state as Task["state"]) ? (a.state as Task["state"] | "open") : fail(`state: ${String(a.state)} isn't open or one of ${TaskStateValues.join(", ")}.`);
+        const priority = a.priority == null || a.priority === "" ? null : PriorityValues.includes(a.priority as Priority) ? (a.priority as Priority) : fail(`priority: ${String(a.priority)} isn't p0, p1, p2 or p3.`);
+        if (text(a.goal).trim() && !findGoal(goals, text(a.goal))) fail(`goal: there's no goal ${text(a.goal).trim()}. Find it with list_goals.`);
+        const found = filterTasks(this.store.tasks(), goals, { q: text(a.q), goal: text(a.goal), state, owner: a.mine === true ? login : text(a.owner), priority, effort: text(a.effort) });
+        const shown = found.slice(0, cap(a.limit));
+        return {
+          summary: found.length > shown.length ? `${shown.length} of ${found.length} tasks match; narrow with q or a filter.` : `${found.length} task${found.length === 1 ? "" : "s"}.`,
+          data: shown.map((t) => ({ id: t.id, title: t.title, state: t.state, goal: goalLabel(t.goal), owner: t.owner, priority: t.priority ?? null, effort: t.effort ?? null, pr: t.pr?.url ?? null, updatedAt: t.updatedAt })),
+        };
+      }
+      case "get_task": {
+        const t = findTask(a.task);
+        const said = (c: Comment) => ({ id: c.id, author: c.author, text: c.text, at: c.at, ...(c.anchor ? { anchor: c.anchor } : {}), ...(c.via ? { via: c.via } : {}) });
+        const roots = [...new Set(t.comments.map((c) => c.replyTo ?? c.id))];
+        return {
+          summary: `${t.id} · ${t.title} (${t.state})`,
+          data: {
+            id: t.id, title: t.title, state: t.state, goal: goalLabel(t.goal), owner: t.owner, repo: t.repo ?? null,
+            priority: t.priority ?? null, effort: t.effort ?? null, brief: t.brief,
+            planVersion: t.planVersion, planSummary: t.planSummary ?? null,
+            plan: t.plan.map((p) => ({ text: p.text, file: p.file, progress: p.progress ?? null })),
+            doneWhen: t.doneWhen.map((d) => ({ text: d.text, proof: d.proof, status: d.status })),
+            risk: t.risk ? { level: t.risk.level, reasons: t.risk.reasons } : null,
+            after: t.after, waiting: t.waiting ?? null,
+            pr: t.pr ? { number: t.pr.number, url: t.pr.url ?? null, state: t.pr.state } : null,
+            hand: t.hand ? { reason: t.hand.reason, summary: t.hand.summary, assignee: t.hand.assignee, options: t.hand.options.map((o) => o.title) } : null,
+            question: t.question ? { text: t.question.text, options: t.question.options, role: t.question.role } : null,
+            threads: roots.map((root) => ({ thread: root, comments: t.comments.filter((c) => (c.replyTo ?? c.id) === root).map(said) })),
+            events: t.events.slice(-20).map((e) => ({ who: e.who, text: e.text, at: e.at })),
+            createdAt: t.createdAt, updatedAt: t.updatedAt,
+          },
+        };
+      }
+      case "propose_tasks": {
+        const ref = str(a.goal, "goal");
+        const goal = findGoal(goals, ref) ?? fail(`goal: there's no goal ${ref}. Find it with list_goals.`);
+        if (goal.archived) fail(`goal: ${goal.name} is archived; propose in a goal that's still open.`);
+        const asked = arr(a.tasks).map((x) => obj(x));
+        if (!asked.length) fail("tasks: at least one.");
+        const picks = this.checkProposals(goal, asked, "tasks", null);
+        const { made, lines } = this.makeDrafts(goal, login, picks.map((p) => ({
+          fields: { title: p.title, brief: `${p.brief.slice(0, 20_000)}\n\nProposed by ${client} via MCP.`, repo: p.repo, shareable: true, agent: "claude", priority: p.priority, ...(p.effort !== undefined ? { effort: p.effort } : {}) },
+          after: (ids) => [...p.existing, ...p.earlier.map((n) => ids[n - 1]!)],
+          who: login,
+          event: `proposed via ${client} (MCP)`,
+          audit: { via: "mcp", client },
+        })));
+        this.hooks.broadcast({ type: "toast", text: `${login} proposed ${made.length === 1 ? made[0] : `${made.length} tasks`} via ${client}; ${made.length === 1 ? "it's" : "they're"} in ${goal.name}'s drafts.`, taskId: made[0] });
+        return { summary: `Proposed ${made.length} draft${made.length === 1 ? "" : "s"} in ${goal.name}. A person sends each to planning or deletes it; nothing runs until they do.\n${lines.join("\n")}`, data: { made } };
+      }
+      case "comment_on_task": {
+        const t = findTask(a.task);
+        const body = str(a.text, "text").slice(0, 8000);
+        let replyTo: string | null = null;
+        if (a.thread != null && a.thread !== "") {
+          const parent = t.comments.find((c) => c.id === a.thread) ?? fail(`thread: no comment ${String(a.thread)} on ${t.id}; get_task lists its threads.`);
+          replyTo = parent.replyTo ?? parent.id;
+        }
+        const comment = await this.comment(login, body, { via, replyTo });
+        t.comments.push(comment);
+        await this.toThread(t, login, comment);
+        this.save(t);
+        return { summary: replyTo ? `Replied in thread ${replyTo} on ${t.id}.` : `Commented on ${t.id}.`, data: { comment: comment.id, thread: replyTo ?? comment.id } };
+      }
+      default:
+        return fail(`${name} isn't a tool here.`);
+    }
   }
 
   /** What a draft made from `source` takes from it: its agent, model, effort and sharing. */

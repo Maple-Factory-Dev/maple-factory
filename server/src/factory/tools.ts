@@ -87,6 +87,47 @@ export const DOC_TOOLS: Omit<Tool, "roles">[] = [
   },
 ];
 export const DOC_TOOL_NAMES = DOC_TOOLS.map((t) => t.name);
+// Goals and tasks for outside MCP clients only (src/mcp.ts, MF-416), run by the engine's `mcpTool` as the member.
+// Not in TOOLS or PERSONAL_TOOLS: a factory session's own get_task and propose_tasks are about its task.
+const taskRef = str("The task's id, like MF-416 (from list_tasks).");
+export const MCP_TASK_TOOLS: Omit<Tool, "roles">[] = [
+  {
+    name: "list_goals",
+    description: "The factory's goals (not archived unless asked): id, name, task prefix, summary, repos and how many tasks are open. Search with `q` rather than listing everything.",
+    inputSchema: obj({ q: str("Words in the goal's name, prefix, summary or a repo."), archived: { type: "boolean", description: "Include archived goals too." }, limit: int("At most this many (default 50, at most 100).") }),
+  },
+  {
+    name: "list_tasks",
+    description: "Search and filter the factory's tasks: id, title, state, goal, owner, priority, effort and pull request, most recently updated first. Search with `q` (every word must appear in the id, title or brief) and narrow with the filters, rather than paging through everything.",
+    inputSchema: obj({
+      q: str("Words in the task's id, title or brief."),
+      goal: str("Only this goal's tasks: its id, prefix or name."),
+      state: oneOf(["open", "drafting", "planning", "awaitingApproval", "backlog", "building", "reviewing", "merged", "cancelled", "closed"], "Only tasks in this state; 'open' is everything not merged, closed or cancelled."),
+      owner: str("Only this member's tasks (their login)."),
+      mine: { type: "boolean", description: "Only your own tasks." },
+      priority: oneOf(["p0", "p1", "p2", "p3"], "Only this priority."),
+      effort: str("Only tasks in this effort (its name)."),
+      limit: int("At most this many (default 50, at most 100)."),
+    }),
+  },
+  {
+    name: "get_task",
+    description: "One task: its title, state, goal, owner, brief, plan steps, done-when items, risk, what it waits on, pull request, any open question or raised hand, its comment threads and its latest events.",
+    inputSchema: obj({ task: taskRef }, ["task"]),
+  },
+  {
+    name: "propose_tasks",
+    description: "Propose new tasks in a goal. Each becomes a draft owned by you that a person sends to planning or deletes; nothing plans or builds until they do. Call once with every proposal. When the work has to land in order, give each proposal `after` (what must merge first) and the set a shared `effort`.",
+    inputSchema: obj({ goal: str("The goal to propose them in: its id, prefix or name (from list_goals)."), tasks: list(proposal, "1–20 proposals.") }, ["goal", "tasks"]),
+  },
+  {
+    name: "comment_on_task",
+    description: "Comment on a task as you, or reply in one of its comment threads. A comment in a thread an agent is part of reaches the task's running agent as conversation. @login mentions notify that member.",
+    inputSchema: obj({ task: taskRef, text: str("The comment (Markdown); at most 8,000 characters."), thread: str("Reply in this thread: a comment id from get_task. Left out: a new comment.") }, ["task", "text"]),
+  },
+];
+export const MCP_TASK_TOOL_NAMES = MCP_TASK_TOOLS.map((t) => t.name);
+
 export const isDocTool = (name: string) => DOC_TOOL_NAMES.includes(name);
 
 const TOOLS: Tool[] = [

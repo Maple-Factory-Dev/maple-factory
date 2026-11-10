@@ -149,6 +149,7 @@ Line numbers are after this task's changes.
 | F-28 | medium | `src/auth.ts` `revokeMember`, `src/mcp-auth.ts` | fixed |
 | F-29 | info | `src/org-hub.ts` `/mcp/call`, `src/factory/doc-tools.ts` | no change |
 | F-30 | low | `src/mcp.ts` | follow-up |
+| F-31 | medium | `src/factory/engine.ts` `mcpTool`, `src/factory/mcp-search.ts` | fixed |
 
 ### F-01 · high · `/releases/` served attachments without sign-in, as live HTML — fixed
 
@@ -432,7 +433,7 @@ API. A malformed `issue.self` throws, and the request gets a 500, not a crash of
 
 ## MCP: outside clients at `/mcp` (MF-369)
 
-A member's Claude Desktop, claude.ai, Claude Code or Cursor works on the org's docs as them through a remote MCP
+A member's Claude Desktop, claude.ai, Claude Code or Cursor works on the org's docs, goals and tasks as them through a remote MCP
 server (`src/mcp.ts`), with tokens from OAuth 2.1 or Settings (`src/mcp-auth.ts`, `migrations/0009_mcp_tokens.sql`).
 It's a new public auth surface, so each piece was reviewed against this audit's findings. Tests:
 `test/mcp.test.ts` (units) and `test/e2e-mcp-clients.mjs` (against `wrangler dev`).
@@ -442,7 +443,7 @@ It's a new public auth surface, so each piece was reviewed against this audit's 
 MCP tokens (`mfp_…`, refresh `mfr_…`) are a different table from app tokens and kept as sha256 only. `currentMember`
 returns null for any `Bearer mfp_/mfr_` header before anything else, so not even local dev's `DEV_LOGIN` fallback
 signs one in, and an MCP token can never reach `/api/*`, `/client/connect` or a doc socket. `mcpCaller` only takes
-`mfp_`, so an app token (`mft_`) gets 401 at `/mcp`. A leaked MCP token is limited to its doc scopes.
+`mfp_`, so an app token (`mft_`) gets 401 at `/mcp`. A leaked MCP token is limited to its scopes.
 
 ### F-23 · high · OAuth code flow: PKCE, redirects, open redirect — fixed
 
@@ -477,10 +478,13 @@ get 202, GET/DELETE get 405 (no SSE stream or sessions). A 401 sends `WWW-Authen
 
 ### F-27 · medium · Scope enforcement — fixed
 
-Each doc tool needs one scope: `docs:read` for `list_docs` and `read_doc`, `docs:write` for the five that write.
-`tools/list` shows only what the token allows, and `tools/call` checks again (`toolAllowed`, an own-property lookup),
-so a read-only token can't call a write tool it was never shown. Only the seven doc tools exist here: no repo setup,
-no tasks, no admin. Personal tokens are made with chosen scopes; OAuth grants take the scopes asked for and shown.
+Each tool needs one of four scopes: `docs:read` for `list_docs` and `read_doc`, `docs:write` for the five that
+write docs, `tasks:read` for `list_goals`, `list_tasks` and `get_task`, and `tasks:write` for `propose_tasks` and
+`comment_on_task` (MF-416). `tools/list` shows only what the token allows, and `tools/call` checks again
+(`toolAllowed`, an own-property lookup), so a read-only token can't call a write tool it was never shown. Only these
+twelve tools exist here: no repo setup, no plan approval, steering, merging or admin. Personal tokens are made with
+chosen scopes; OAuth grants take the scopes asked for and shown. An empty ask is still `docs:read` alone, and a
+token made before the tasks scopes keeps only what it has.
 
 ### F-28 · medium · Revocation paths — fixed
 
@@ -501,7 +505,25 @@ and decisions wait for a person. Errors other than `DocToolFailure` are logged a
 ### F-30 · low · No per-token rate limit at `/mcp` — follow-up
 
 A token can call as fast as the Worker answers. Each call is one OrgHub round trip, and writes are capped by
-DocTools (sizes, threads). **Follow-up:** a per-token budget (e.g. 60 writes a minute) in the OrgHub.
+DocTools (sizes, threads); `propose_tasks` makes at most 20 drafts a call, and `list_goals`/`list_tasks` scan the
+org's goals and tasks in memory for at most 8 words of a 200-character `q`. **Follow-up:** a per-token budget (e.g.
+60 writes a minute, covering proposals and comments, and a search budget) in the OrgHub.
+
+### F-31 · medium · Task tools: what an outside client can read and start (MF-416) — fixed
+
+`OrgHub /mcp/call` sends the five task tools to `Engine.mcpTool` with the login from the token, never from the
+request body. **Drafts only:** `propose_tasks` goes through `makeDrafts`, the path an agent's own proposals take,
+so a task is `drafting`, owned by the member, and nothing plans or builds until a person sends it to planning;
+every proposal is checked (repo is one of the goal's, priority, what it waits on) before any is made, an archived
+goal is refused, and each draft is audited (`task.created`, `via: "mcp"`, the client's name). **Reads are
+trimmed:** `get_task` returns title, state, brief, plan, done-when, risk, PR link, open question or hand, comment
+threads and the last 20 events, never the raw task (no session logs, costs, diffs, evidence or artifact keys);
+`list_tasks` and `list_goals` search only ids, titles, briefs, goal names, prefixes, summaries and repos, never
+plan text, logs or comments. A member's token reads what that member can read in the app (one org, no per-goal
+ACL). **Comments reach a live agent:** `comment_on_task` is the app's `task.comment` path, shown as the member
+with a "<client> via MCP" badge and cut at 8,000 characters; in a thread an agent is part of, it is typed to the
+task's session as conversation, exactly as the member's own comment would be. It can't steer (no change request),
+approve or merge, and a member who doesn't want an outside model talking to their agents leaves `tasks:write` off.
 
 ## Verification
 
