@@ -230,6 +230,39 @@ final class AppState {
         set { if !isLive { mockIntake = newValue } }
     }
     private var mockIntake = FactoryData.seedIntake
+
+    /// Headless `empty` (MF-406): the mockup with nothing in it, to show each page's empty state.
+    private(set) var demoEmpty = false
+    /// Headless `empty:goals`: also no goals, as a brand-new factory has.
+    private(set) var demoNoGoals = false
+    /// Headless `empty:inbox`: the team's inbox stays, with nothing in it for you.
+    private(set) var demoInboxTeamOnly = false
+
+    /// A factory that's loaded and has no goals yet: a connected one with an empty snapshot, or `empty:goals`.
+    var hasNoGoals: Bool {
+        let ready = demoNoGoals || (isLive && client?.hasSnapshot == true)
+        return ready && FactoryData.activeGoals.isEmpty
+    }
+
+    /// Where a page lands when there may be no goals: a goal (the starting one, or a stale one) goes to All goals,
+    /// whose empty state leads to New Goal…, rather than a goal page for a goal that isn't there.
+    nonisolated static func landing(_ destination: Destination, noGoals: Bool) -> Destination {
+        if noGoals, case .goal = destination { return .allGoals }
+        return destination
+    }
+
+    private func clearForDemo(goals: Bool) {
+        demoEmpty = true
+        mockTasks = []
+        mockIntake = []
+        mockNotes = []
+        selectedNote = nil
+        if goals {
+            demoNoGoals = true
+            FactoryData.liveGoals = []
+        }
+        destination = Self.landing(destination, noGoals: hasNoGoals)
+    }
     var selectedIntake: String? = FactoryData.seedIntake.first?.id
     /// Who has the keyboard in each live session, and lines typed during this run.
     var sessionDrivers: [String: SessionDriver] = [:]
@@ -857,6 +890,8 @@ final class AppState {
                 && (task.state == .awaitingApproval || task.state == .reviewing)
                 && !(task.state == .reviewing ? task.reviews : task.approvals).contains { $0.id == me.id }
         }.map { InboxItem(kind: $0.state == .reviewing ? .review : .approval, taskID: $0.id, assignee: me, message: "Your review is requested", when: $0.updated) }
+        if demoEmpty { return asked }
+        if demoInboxTeamOnly { return FactoryData.seedInbox.filter { $0.assignee.id != me.id && $0.kind != .mention } }
         return asked + FactoryData.seedInbox.filter { item in
             if [.approval, .review].contains(item.kind), asked.contains(where: { $0.taskID == item.taskID }) { return false }
             let task = task(item.taskID)
@@ -2561,7 +2596,7 @@ final class AppState {
     /// One step of a demo script, `name:argument…`; nil when it has no argument.
     nonisolated static func demoAction(_ command: String) -> [String]? {
         let parts = command.trimmingCharacters(in: .whitespaces).split(separator: ":").map(String.init)
-        return parts.count >= 2 ? parts : nil
+        return parts.count >= 2 || parts == ["empty"] ? parts : nil
     }
 
     static let demoSettings = Notification.Name("AppState.demoSettings")
@@ -2582,6 +2617,10 @@ final class AppState {
             guard let parts = Self.demoAction(String(command)) else { continue }
             switch parts[0] {
             case "approve": approvePlan(parts[1])
+            // `empty` clears the mockup's tasks, inbox, hand raises, notes, requests and activity; `empty:goals` its goals too.
+            case "inbox": NotificationCenter.default.post(name: InboxView.demo, object: parts[1])
+            case "empty" where parts.count > 1 && parts[1] == "inbox": demoInboxTeamOnly = true
+            case "empty": clearForDemo(goals: parts.count > 1 && parts[1] == "goals")
             // The Detail panel's Reviewers row: `request:<id>:<login>`, and `reviewersask:<id>` opens its picker.
             case "request" where parts.count > 2: requestReviewers(parts[1], add: [parts[2]])
             case "reviewersask": NotificationCenter.default.post(name: ReviewersRow.demoOpen, object: parts[1])

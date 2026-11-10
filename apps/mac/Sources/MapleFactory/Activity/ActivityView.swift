@@ -64,7 +64,7 @@ struct ActivityView: View {
                     .id("top")
 
                     if entries.isEmpty {
-                        PlaceholderView(title: "Nothing yet", icon: "waveform.path.ecg").frame(height: 240)
+                        EmptyState(title: "Nothing yet", icon: "waveform.path.ecg", detail: "Activity shows up here as agents plan, build and merge.").frame(height: 240)
                     }
                     ForEach(days(entries.prefix(shown)), id: \.title) { day in
                         VStack(alignment: .leading, spacing: 8) {

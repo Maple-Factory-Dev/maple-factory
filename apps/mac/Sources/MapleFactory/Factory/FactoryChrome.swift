@@ -316,15 +316,58 @@ struct FactoryStatusBar: View {
     }
 }
 
-struct PlaceholderView: View {
+/// The one empty state every page uses (MF-406): an icon, a title, a line of detail, and up to two ways on: an
+/// accent button and a plain link. Built on `ContentUnavailableView` so it matches Docs, Decisions and Settings.
+struct EmptyState: View {
+    struct Action {
+        let title: String
+        var icon: String? = nil
+        let run: () -> Void
+    }
+
     let title: String
     let icon: String
+    var detail: String? = nil
+    var action: Action? = nil
+    var secondary: Action? = nil
 
     var body: some View {
-        VStack(spacing: 10) {
-            Image(systemName: icon).font(.system(size: 28)).foregroundStyle(Theme.textFaint)
-            Text(title).font(.system(size: 15, weight: .medium)).foregroundStyle(Theme.text)
-            Text("Not mocked up yet").font(.system(size: 12.5)).foregroundStyle(Theme.textMuted)
+        ContentUnavailableView {
+            Label {
+                Text(title).font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
+            } icon: {
+                Image(systemName: icon).font(.system(size: 26)).foregroundStyle(Theme.textFaint)
+            }
+        } description: {
+            if let detail {
+                Text(detail).font(.system(size: 13)).foregroundStyle(Theme.textMuted).frame(maxWidth: 380)
+            }
+        } actions: {
+            if action != nil || secondary != nil {
+                VStack(spacing: 8) {
+                    if let action {
+                        Button(action: action.run) {
+                            HStack(spacing: 5) {
+                                if let icon = action.icon { Image(systemName: icon).font(.system(size: 11, weight: .semibold)) }
+                                Text(action.title)
+                            }
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(Theme.onAccent)
+                            .padding(.horizontal, 14)
+                            .frame(height: 28)
+                            .background(RoundedRectangle(cornerRadius: 7).fill(Theme.accent))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if let secondary {
+                        Button(action: secondary.run) {
+                            Text(secondary.title).font(.system(size: 12.5)).foregroundStyle(Theme.accent)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

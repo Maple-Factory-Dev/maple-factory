@@ -6,13 +6,23 @@ struct InboxView: View {
     @SwiftUI.State private var filter: InboxItem.Kind? = nil
     @SwiftUI.State private var mineOnly = true
 
+    /// Headless runs switch scope with `inbox:team` or `inbox:mine`.
+    static let demo = Notification.Name("InboxView.demo")
+
     private var items: [InboxItem] { mineOnly ? state.myInbox : state.inbox }
 
     private var goalCount: Int {
         Set(items.map { state.task($0.taskID).goal }).count
     }
-    private var things: String { items.count == 1 ? "1 thing" : "\(items.count) things" }
-    private var goals: String { goalCount == 1 ? "1 goal" : "\(goalCount) goals" }
+
+    /// The line under the title: how much is waiting, across how many goals, on whom (MF-406: "Nothing is waiting…" at zero).
+    static func headerLine(count: Int, goals goalCount: Int, mine: Bool) -> String {
+        let whom = mine ? "you" : "the team"
+        guard count > 0 else { return "Nothing is waiting on \(whom)." }
+        let things = count == 1 ? "1 thing" : "\(count) things"
+        let goals = goalCount == 1 ? "1 goal" : "\(goalCount) goals"
+        return "\(things) across \(goals) \(count == 1 ? "is" : "are") waiting on \(whom)."
+    }
 
     var body: some View {
         ScrollView {
@@ -28,6 +38,8 @@ struct InboxView: View {
                         }
                     }
                 }
+
+                if items.isEmpty { caughtUp }
             }
             .frame(maxWidth: 920, alignment: .leading)
             .padding(.horizontal, 24)
@@ -36,9 +48,30 @@ struct InboxView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollIndicators(.never)
+        // A kind filter left on a group that's emptied (or isn't in this scope) falls back to All.
+        .onChange(of: filter.map { state.inbox($0, mine: mineOnly).isEmpty } ?? false) { _, empty in
+            if empty { filter = nil }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Self.demo)) { note in
+            if let scope = note.object as? String { mineOnly = scope != "team"; filter = nil }
+        }
         .taskKeyboardNav(.list(rowTasks), primary: { id in
             if let item = shownItems.first(where: { $0.taskID == id }) { state.performInboxAction(item) }
         })
+    }
+
+    /// Inbox zero. In For you with the team still waiting on things, a link over to Team.
+    private var caughtUp: some View {
+        let team = state.inbox.count
+        return EmptyState(
+            title: "You're all caught up",
+            icon: "checkmark.circle",
+            detail: mineOnly ? "Nothing needs your review, approval or answer right now." : "Nothing across the team is waiting on a person right now.",
+            secondary: mineOnly && team > 0
+                ? .init(title: "\(team) waiting on the team") { mineOnly = false; filter = nil }
+                : nil
+        )
+        .padding(.top, 60)
     }
 
     /// The rows on screen, in order: each kind's group under the filter.
@@ -59,9 +92,7 @@ struct InboxView: View {
                     Text("Inbox")
                         .font(.system(size: 24, weight: .semibold))
                         .foregroundStyle(Theme.text)
-                    Text(mineOnly
-                         ? "\(things) across \(goals) \(items.count == 1 ? "is" : "are") waiting on you."
-                         : "\(things) across \(goals) \(items.count == 1 ? "is" : "are") waiting on the team.")
+                    Text(Self.headerLine(count: items.count, goals: goalCount, mine: mineOnly))
                         .font(.system(size: 13.5))
                         .foregroundStyle(Theme.textMuted)
                 }
@@ -72,6 +103,7 @@ struct InboxView: View {
                 }
             }
 
+            if !items.isEmpty {
             HStack(spacing: 6) {
                 chip("All", count: items.count, color: Theme.text, kind: nil)
                 ForEach(InboxItem.Kind.allCases, id: \.self) { kind in
@@ -80,6 +112,7 @@ struct InboxView: View {
                         chip(kind.shortTitle, count: count, color: kind.color, kind: kind)
                     }
                 }
+            }
             }
         }
     }

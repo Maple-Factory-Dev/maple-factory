@@ -30,7 +30,13 @@ struct IntakeView: View {
                 IntakeDetail(request: request)
                     .id(request.id)
             } else {
-                PlaceholderView(title: "No request selected", icon: "tray.and.arrow.down")
+                if state.intake.isEmpty {
+                    EmptyState(title: "No requests yet", icon: "tray.and.arrow.down",
+                               detail: "Work asked for from Slack or the intake API lands here before it becomes a task.")
+                } else {
+                    EmptyState(title: "No request selected", icon: "tray.and.arrow.down",
+                               detail: visible.isEmpty ? "Nothing matches this filter." : "Pick a request on the left to read it.")
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
