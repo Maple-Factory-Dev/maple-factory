@@ -60,15 +60,46 @@ import Testing
         #expect(state.parkedDraft == typed)
         #expect(state.toast?.text.hasPrefix("Kept your unsent draft") == true)
 
-        // Findings while that's open: the slot's taken, the person's brief stays the one kept.
+        // Findings while that's open: the slot's taken, so the note's composer stays as it was.
+        let fromNote = state.draft
         state.composeFromFindings([Wire.StatsFindingRow(task: "MF-1", title: "", kind: .code, severity: .major, text: "A finding", area: "(no file)", raisedIn: 1, at: 0)])
         #expect(state.parkedDraft == typed)
+        #expect(state.draft == fromNote)
+        #expect(state.toast?.text.hasPrefix("Finish or discard this draft first") == true)
 
         state.submitDraft(sendToPlanning: false)
         #expect(state.parkedDraft == nil)
         #expect(state.draft == typed)
         state.startCompose()
         #expect(state.draft == typed)
+    }
+
+    /// R1.1: specific, type, Esc, specific — the second brief isn't replaced while the first is set aside.
+    @Test func aFullSlotNeverSilentlyReplacesAnUnsentBrief() {
+        let state = makeState()
+        typeBrief(state)
+        let first = state.draft
+        state.cancelCompose()
+        state.startCompose(goal: "Docs site")
+        #expect(state.parkedDraft == first)
+        state.draft.title = "Second brief"
+        state.draft.body = "Typed into the goal's composer"
+        let second = state.draft
+        state.cancelCompose()
+
+        state.startCompose(goal: "Billing v2")
+        #expect(state.isComposing)
+        #expect(state.draft == second)
+        #expect(state.parkedDraft == first)
+        #expect(state.toast?.text.hasPrefix("Finish or discard this draft first") == true)
+
+        // Discarding the second brings the first back; then a specific composer parks it again.
+        state.discardDraft()
+        #expect(state.draft == first)
+        #expect(state.parkedDraft == nil)
+        state.startCompose(goal: "Billing v2")
+        #expect(state.parkedDraft == first)
+        #expect(state.draft.title.isEmpty)
     }
 
     @Test func aRequestsComposerParksTheBriefAndDiscardBringsItBack() {

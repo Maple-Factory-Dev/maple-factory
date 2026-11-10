@@ -158,6 +158,17 @@ struct ComposeView: View {
                 .accessibilityAddTraits(.isButton)
                 Divider().frame(height: 16)
             }
+            if !(state.parkedDraft?.isEmpty ?? true) {
+                // R1.2: the person's own brief is waiting behind this one.
+                HStack(spacing: 4) {
+                    Image(systemName: "tray.and.arrow.down").font(.system(size: 11))
+                    Text("1 draft set aside")
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Theme.State.drafting)
+                .help("Your unsent draft comes back once this one is sent or discarded")
+                Divider().frame(height: 16)
+            }
             Image(systemName: "info.circle").font(.system(size: 11))
             Text(reading.doneWhen.isEmpty
                  ? "No “Done when” checklist yet. \(agent.name) will propose one with the plan."

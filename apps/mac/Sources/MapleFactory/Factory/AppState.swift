@@ -1109,14 +1109,17 @@ final class AppState {
                 draft.goal = currentGoal
                 draft.goalChosen = inGoal
             }
+        } else if !plain && !draft.isEmpty && parkedDraft != nil {
+            // The one slot's taken and there's another unsent brief in the composer: replacing it would
+            // lose it, so it's reopened as it was, to finish or discard before the new one (MF-404 R1.1).
+            showToast("Finish or discard this draft first. Another one is already set aside", icon: "tray.full", color: Theme.State.drafting)
         } else if !resuming {
             if aiDraftPending, let draft = aiDraft, draft.state == .choosing || draft.state == .reading {
                 showToast("Stopped the Draft with AI that was running", icon: "sparkles", color: Theme.State.planning)
             }
             cancelAIDraft()
             // A composer for something specific starts fresh, but an unsent brief is set aside, not wiped.
-            // One slot: a brief already set aside stays, and is the one that comes back.
-            if !plain && !draft.isEmpty && parkedDraft == nil {
+            if !plain && !draft.isEmpty {
                 parkedDraft = draft
                 showToast("Kept your unsent draft. ⌘N after this one to get it back", icon: "tray.and.arrow.down", color: Theme.State.drafting)
             }
