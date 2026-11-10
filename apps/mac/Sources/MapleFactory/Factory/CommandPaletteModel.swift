@@ -3,7 +3,20 @@ import MapleKit
 
 /// Something the ⌘K palette can run that isn't a place: the menu's common commands.
 enum PaletteAction: String, CaseIterable, Hashable {
-    case newTask, newGoal, newDoc, toggleSidebar, toggleTaskPanel, settings, themeSystem, themeLight, themeDark, sendFeedback
+    case newTask, newGoal, newDoc, toggleSidebar, toggleTaskPanel, settings, themeSystem, themeLight, themeDark, sendFeedback, stopTheLine, restartTheLine
+
+    /// The actions to offer: the task panel only with peeking on; Stop the line only signed in to a factory,
+    /// and Restart the line only while it's stopped.
+    static func available(taskPanel: Bool, signedIn: Bool, holds: Int) -> [PaletteAction] {
+        allCases.filter { action in
+            switch action {
+            case .toggleTaskPanel: taskPanel
+            case .stopTheLine: signedIn
+            case .restartTheLine: signedIn && holds > 0
+            default: true
+            }
+        }
+    }
 
     /// The theme a "Theme: …" action switches to; nil for the rest.
     var appearance: Appearance? {
@@ -27,6 +40,8 @@ enum PaletteAction: String, CaseIterable, Hashable {
         case .themeLight: "Theme: Light"
         case .themeDark: "Theme: Dark"
         case .sendFeedback: "Send feedback…"
+        case .stopTheLine: "Stop the line…"
+        case .restartTheLine: "Restart the line"
         }
     }
 
@@ -40,6 +55,8 @@ enum PaletteAction: String, CaseIterable, Hashable {
         case .settings: "gearshape"
         case .themeSystem, .themeLight, .themeDark: appearance!.icon
         case .sendFeedback: "bubble.left.and.exclamationmark.bubble.right"
+        case .stopTheLine: "hand.raised.fill"
+        case .restartTheLine: "play.fill"
         }
     }
 
@@ -50,8 +67,8 @@ enum PaletteAction: String, CaseIterable, Hashable {
         case .toggleSidebar: "⌃⌘S"
         case .toggleTaskPanel: "⌥⌘I"
         case .settings: "⌘,"
-        case .newDoc, .themeSystem, .themeLight, .themeDark, .sendFeedback: ""
-                }
+        case .newDoc, .themeSystem, .themeLight, .themeDark, .sendFeedback, .stopTheLine, .restartTheLine: ""
+        }
     }
 
     /// Other words people type for it.
@@ -67,6 +84,8 @@ enum PaletteAction: String, CaseIterable, Hashable {
         case .themeLight: ["theme", "appearance", "mode", "color scheme", "light mode"]
         case .themeDark: ["theme", "appearance", "mode", "color scheme", "dark mode"]
         case .sendFeedback: ["bug", "report", "idea", "beta", "help", "contact", "suggestion"]
+        case .stopTheLine: ["hold merges", "freeze", "incident", "andon", "pause merges", "merge hold"]
+        case .restartTheLine: ["lift hold", "release merges", "unfreeze", "resume merges", "andon"]
         }
     }
 }

@@ -238,6 +238,10 @@ final class AppState {
     var goalSheet: MachineSheet? = nil
     /// Help › Send Feedback…'s sheet is up.
     var showsFeedback = false
+    /// The top bar's "Stop the line" popover is open (MF-397).
+    var showsStopTheLine = false
+    /// The palette's "Restart the line" is asking before it lifts every hold.
+    var confirmsRestartLine = false
     /// The CI check whose log is open in the log sheet.
     var checkLogShown: CheckLogRequest? = nil
     /// The mockup's check logs, as they load.
@@ -1187,7 +1191,8 @@ final class AppState {
         let goals = FactoryData.goals.filter { !$0.archived }.map(\.name)
         let pages = PalettePage.all.filter { $0.destination != .statistics || client?.canSeeStats ?? true }
         // The task panel can only be toggled with "Peek in the side panel" on.
-        let actions = PaletteAction.allCases.filter { $0 != .toggleTaskPanel || taskPanelEnabled }
+        let actions = PaletteAction.available(taskPanel: taskPanelEnabled, signedIn: client?.isSignedIn ?? false,
+                                              holds: client?.mergeHolds.count ?? 0)
         let docs = client.map { client in
             DocsIndex.docs(client).map { PaletteDoc(id: $0.id, title: $0.title, goal: DocsIndex.goalName($0.goal, client: client)) }
         } ?? []
@@ -1229,6 +1234,8 @@ final class AppState {
         case .action(.toggleTaskPanel): toggleTaskPanel()
         case .action(.settings): openSettings?()
         case .action(.sendFeedback): showsFeedback = true
+        case .action(.stopTheLine): showsStopTheLine = true
+        case .action(.restartTheLine): confirmsRestartLine = true
         case .action(let action):
             if let appearance = action.appearance { setAppearance(appearance) }
         }
@@ -1239,6 +1246,13 @@ final class AppState {
         AppDefaults.set(appearance.rawValue, forKey: "appearance")
         NSApp.appearance = appearance.nsAppearance
         showToast("Theme: \(appearance.rawValue.capitalized)", icon: appearance.icon)
+    }
+
+    /// The goal on screen (its page, or the task open full size), for "Stop the line"'s preselected repo.
+    var currentGoalName: String? {
+        if let focusedTask { return task(focusedTask).goal }
+        if case .goal(let name) = destination { return name }
+        return nil
     }
 
     /// A task opened full size from anywhere (a maplefactory:// link, the palette): in its goal, with it selected.

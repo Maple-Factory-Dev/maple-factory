@@ -2,6 +2,7 @@ import SwiftUI
 
 struct FactoryTopBar: View {
     @Environment(AppState.self) private var state
+    @Environment(FactoryClient.self) private var client
     @State private var showShare = false
 
     var body: some View {
@@ -67,6 +68,10 @@ struct FactoryTopBar: View {
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("Task panel")
                     .accessibilityAddTraits(.isButton)
+            }
+
+            if client.isSignedIn && !state.isLoadingFactory {
+                StopTheLineButton()
             }
 
             HStack(spacing: 6) {

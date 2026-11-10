@@ -989,7 +989,7 @@ struct RepositoriesSettings: View {
 
     private var list: some View {
         SettingsPane("Repositories",
-                     subtitle: "The ones the GitHub App is installed on come from GitHub: grant or remove its access there. Goals pick from these. Click one for its worktree scripts.",
+                     subtitle: "The ones the GitHub App is installed on come from GitHub: grant or remove its access there. Goals pick from these. Click one for its worktree scripts. To hold merges in a hurry, use Stop the line in the top bar.",
                      accessory: AnyView(refresh)) {
             if !client.isSignedIn {
                 SettingsUnavailable(detail: "Connect to a factory to see its repositories.")

@@ -417,6 +417,9 @@ struct ContentView: View {
     private var slab: some View {
         VStack(spacing: 0) {
             FactoryTopBar()
+            if client.isSignedIn && !state.isLoadingFactory {
+                LineStoppedBanner()
+            }
             HStack(spacing: 0) {
                 Group {
                     if state.isLoadingFactory {
@@ -448,6 +451,15 @@ struct ContentView: View {
                 .strokeBorder(Theme.stroke, lineWidth: 1)
         )
         .shadow(color: Theme.slabShadow, radius: 12, x: -2)
+        .animation(.snappy(duration: 0.2), value: client.mergeHolds.count)
+        .alert("Restart the line?", isPresented: Bindable(state).confirmsRestartLine) {
+            Button("Lift \(client.mergeHolds.count == 1 ? "the hold" : "all \(client.mergeHolds.count) holds")", role: .destructive) {
+                client.restartLine()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Merges into \(client.mergeHolds.map(\.repo).joined(separator: ", ")) go again; the tasks waiting merge on their own.")
+        }
     }
 
     private var inspector: some View {
