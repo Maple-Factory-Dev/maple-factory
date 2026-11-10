@@ -52,7 +52,7 @@ import Foundation
     /// Where each goal's next page of older tasks starts: the last task of its last page.
     private var olderCursor: [String: OlderCursor] = [:]
     /// Tasks asked for by ID (`task.get`) that haven't come yet.
-    private var fetching: Set<String> = []
+    private(set) var fetching: Set<String> = []
     private(set) var factoryGoals: [Goal] = []
     private(set) var online: [Wire.Presence] = []
     private(set) var intakeRequests: [Wire.IntakeRequest] = []
@@ -1218,6 +1218,10 @@ import Foundation
     #if DEBUG
     /// For tests: drives the status without a socket (MF-401).
     func _setStatusForTesting(_ status: Status) { self.status = status }
+    /// For tests: a task.get that went out, so its task.updated joins quietly (no socket here to send it).
+    func _markFetchingForTesting(_ id: String) { fetching.insert(id) }
+    /// For tests: signed in without the Keychain or a socket, so `send` has nowhere to go.
+    func _signInForTesting(server: URL = URL(string: "https://factory.test")!) { self.server = server; token = "test" }
     #endif
 
     /// For tests and headless shots: a store filled without a socket.
