@@ -228,13 +228,18 @@ struct TaskActionsMenu<Label: View>: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .help("Task actions")
-        .popover(isPresented: $scheduling, arrowEdge: .bottom) { SchedulePopover(task: task) }
-        .popover(isPresented: $assigning, arrowEdge: .bottom) { AssignPopover(task: task) }
+        .popover(isPresented: Binding(get: { scheduling || appState.schedulingTask == task.id },
+                                      set: { if !$0 { scheduling = false; appState.schedulingTask = nil } }),
+                 arrowEdge: .bottom) { SchedulePopover(task: task) }
+        .popover(isPresented: Binding(get: { assigning || appState.assigningTask == task.id },
+                                      set: { if !$0 { assigning = false; appState.assigningTask = nil } }),
+                 arrowEdge: .bottom) { AssignPopover(task: task) }
         .cancelTaskConfirmation(task: task, isPresented: Binding(
             get: { confirmCancel || appState.confirmingCancel == task.id },
             set: { if !$0 { confirmCancel = false; appState.confirmingCancel = nil } }
         ))
-        .renameTask(task: task, isPresented: $rename)
+        .renameTask(task: task, isPresented: Binding(get: { rename || appState.renamingTask == task.id },
+                                                      set: { if !$0 { rename = false; appState.renamingTask = nil } }))
     }
 }
 
@@ -253,89 +258,36 @@ struct TaskActionButtons: View {
     /// Shows the Assign… people picker; without it there's no Assign… (Take it over stays).
     var assign: (() -> Void)? = nil
 
-    private var open: Bool { !task.state.isFinished }
-
     var body: some View {
-        if task.queued {
-            Button { appState.moveToTop(task.id) } label: { Label("Move to top", systemImage: "arrow.up.to.line") }
-            Button { appState.moveToBottom(task.id) } label: { Label("Move to bottom", systemImage: "arrow.down.to.line") }
-            if let schedule {
-                Button(action: schedule) { Label("Schedule…", systemImage: "clock") }
-            }
-            Button { appState.startNow(task.id) } label: { Label("Start now", systemImage: "play") }
-            if task.state == .planning || task.state == .building {
-                Button { appState.forceStart(task.id) } label: { Label("Run now, skip the slot wait", systemImage: "bolt") }
-            }
-            Divider()
-        } else if task.state == .drafting {
-            // Its place among the goal's drafts; it stays a draft.
-            Button { appState.moveDraftToTop(task.id) } label: { Label("Move to top", systemImage: "arrow.up.to.line") }
-            Button { appState.moveDraftToBottom(task.id) } label: { Label("Move to bottom", systemImage: "arrow.down.to.line") }
-            Divider()
-            Button { appState.queue(task.id, before: nil) } label: { Label("Queue", systemImage: "list.number") }
-            if let schedule {
-                Button(action: schedule) { Label("Schedule…", systemImage: "clock") }
-            }
-            Divider()
+        let ctx = appState.taskActionContext(for: task, canSchedule: schedule != nil, canAssign: assign != nil)
+        let groups = TaskActions.menu(task, ctx)
+        ForEach(Array(groups.enumerated()), id: \.offset) { index, group in
+            ForEach(group, id: \.self) { action in item(action) }
+            if index < groups.count - 1 { Divider() }
         }
-        if task.state != .merged {
-            if task.state == .drafting {
-                Button { appState.plan(task.id) } label: { Label("Send to planning", systemImage: "paperplane") }
-            }
-            if task.state == .backlog {
-                // Picked up again: planned again (or for the first time), or its plan approved and built.
-                Button { appState.plan(task.id) } label: { Label(task.plan.isEmpty ? "Send to planning" : "Plan again", systemImage: "paperplane") }
-                if !task.plan.isEmpty {
-                    Button { appState.approvePlan(task.id) } label: { Label("Approve & build", systemImage: "hammer") }
-                }
-            }
-            if task.state == .drafting || task.state == .awaitingApproval {
-                Button { appState.sendToBacklog(task.id) } label: { Label("Send to backlog", systemImage: TaskState.backlog.icon) }
-            }
-            // Waiting on its plan's approval or in the backlog, nothing is running to retry; request changes instead.
-            if task.state != .drafting && task.state != .awaitingApproval && task.state != .backlog {
-                Button { appState.retry(task.id) } label: { Label("Retry", systemImage: "arrow.clockwise") }
-            }
-            if task.state != .cancelled && task.state != .closed {
-                Button(role: .destructive) { confirmCancel = true } label: { Label("Cancel task…", systemImage: "xmark.circle") }
-            }
-            Divider()
-        }
-        if open {
-            TaskAssignButtons(task: task, assign: assign)
-            TaskMoveGoalMenu(task: task)
-            Divider()
-            Button { rename = true } label: { Label("Rename…", systemImage: "pencil") }
-            Toggle(isOn: Binding(get: { task.shareable }, set: { appState.setShareable(task.id, $0) })) {
-                Label("Run on teammates' machines", systemImage: "person.3")
-            }
-            Divider()
-        }
-        if let pr = task.pr, !pr.isLocal {
-            Button { appState.openPullRequest(task.id) } label: { Label("Open pull request", systemImage: "arrow.up.right.square") }
-        }
-        if appState.branch(of: task.id) != nil {
-            Button { appState.copyBranch(task.id) } label: { Label("Copy branch name", systemImage: "arrow.triangle.branch") }
-        }
-        Button { appState.copyID(task.id) } label: { Label("Copy ID", systemImage: "number") }
     }
-}
 
-/// Take it over (when it isn't yours) and, for its owner or an admin, Assign…, which opens the people
-/// picker (AssignPopover) where the caller can anchor one.
-struct TaskAssignButtons: View {
-    @Environment(AppState.self) private var appState
-    let task: FactoryTask
-    var assign: (() -> Void)? = nil
-
-    private var mine: Bool { task.owner.github == FactoryData.me.github }
-
-    var body: some View {
-        if !mine, let me = FactoryData.me.github {
-            Button { appState.assign(task.id, to: me) } label: { Label("Take it over", systemImage: "person.crop.circle.badge.checkmark") }
+    @ViewBuilder private func item(_ action: TaskAction) -> some View {
+        switch action {
+        case .moveToGoal:
+            TaskMoveGoalMenu(task: task)
+        case .toggleShareable:
+            Toggle(isOn: Binding(get: { task.shareable }, set: { appState.setShareable(task.id, $0) })) {
+                Label(action.title, systemImage: action.icon)
+            }
+        case .cancel:
+            Button(role: .destructive) { confirmCancel = true } label: { Label(action.title, systemImage: action.icon) }
+        default:
+            Button { run(action) } label: { Label(action.title, systemImage: action.icon) }
         }
-        if let assign, appState.canReassign(task.id) {
-            Button(action: assign) { Label("Assign…", systemImage: "person.badge.plus") }
+    }
+
+    private func run(_ action: TaskAction) {
+        switch action {
+        case .schedule: schedule?()
+        case .assign: assign?()
+        case .rename: rename = true
+        default: appState.perform(action, on: task.id)
         }
     }
 }

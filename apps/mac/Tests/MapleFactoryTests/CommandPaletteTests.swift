@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import MapleFactory
 
@@ -131,5 +132,145 @@ struct CommandPaletteTests {
 
     @Test func themeActionsStayOutOfTheDefaults() {
         #expect(items("", .actions) == [.action(.newTask), .action(.newGoal), .action(.settings)])
+    }
+
+    // MARK: This task
+
+    private func thisTask(_ state: TaskState, _ ctx: TaskActionContext = TaskActionContext(), mine: Bool = true,
+                          pr: Bool = false) -> [PaletteItem] {
+        var open = task("MF-20", "Open task", state, mine: mine)
+        if pr { open.pr = PullRequest(number: 3, state: .open, checks: [], link: URL(string: "https://github.com/a/b/pull/3")) }
+        var ctx = ctx
+        ctx.isMine = mine
+        let sections = CommandPaletteModel.results(query: "", tasks: tasks + [open], goals: goals, me: me.id,
+                                                   openTask: (open, TaskActions.palette(open, ctx)))
+        #expect(sections.first?.kind == .thisTask)
+        #expect(sections.first?.title == "This task · MF-20")
+        return sections.first?.items ?? []
+    }
+
+    private func actions(_ items: [PaletteItem]) -> [TaskAction] {
+        items.compactMap { if case .taskAction(_, let action) = $0 { action } else { nil } }
+    }
+
+    @Test func awaitingApprovalLeadsWithApprovePlan() {
+        let rows = actions(thisTask(.awaitingApproval))
+        #expect(rows.first == .approvePlan)
+        #expect(rows == [.approvePlan, .sendToBacklog, .cancel, .assign, .moveToGoal, .rename, .copyID, .copyLink])
+        #expect(!rows.contains(.retry) && !rows.contains(.merge))
+    }
+
+    @Test func approvedByMeDropsApprovePlan() {
+        #expect(!actions(thisTask(.awaitingApproval, TaskActionContext(iApproved: true))).contains(.approvePlan))
+    }
+
+    @Test func reviewingOffersMergeOnlyWhenClearAndNotMerging() {
+        #expect(actions(thisTask(.reviewing, TaskActionContext(canMerge: true))).first == .merge)
+        #expect(!actions(thisTask(.reviewing, TaskActionContext(canMerge: true, isMerging: true))).contains(.merge))
+        #expect(!actions(thisTask(.reviewing, TaskActionContext(canMerge: false))).contains(.merge))
+    }
+
+    @Test func finishedTasksDropCancelAndRetry() {
+        let merged = actions(thisTask(.merged))
+        #expect(!merged.contains(.cancel) && !merged.contains(.retry))
+        #expect(merged == [.copyID, .copyLink])
+        #expect(!actions(thisTask(.cancelled)).contains(.cancel))
+    }
+
+    @Test func teammatesTaskOffersTakeItOver() {
+        #expect(actions(thisTask(.building, mine: false)).contains(.takeOver))
+        #expect(!actions(thisTask(.building)).contains(.takeOver))
+    }
+
+    @Test func openPullRequestNeedsARemotePR() {
+        #expect(actions(thisTask(.reviewing, pr: true)).contains(.openPullRequest))
+        #expect(!actions(thisTask(.reviewing)).contains(.openPullRequest))
+    }
+
+    @Test func moveToGoalNeedsATarget() {
+        #expect(!actions(thisTask(.building, TaskActionContext(hasMoveTargets: false))).contains(.moveToGoal))
+    }
+
+    @Test func typedQueryRanksThisTaskFirstOnATie() {
+        let open = task("MF-20", "Open task", .awaitingApproval)
+        let sections = CommandPaletteModel.results(query: "approve", tasks: tasks + [open], goals: goals, me: me.id,
+                                                   openTask: (open, TaskActions.palette(open, TaskActionContext())))
+        #expect(sections.first?.kind == .thisTask)
+        #expect(sections.first?.items.first == .taskAction("MF-20", .approvePlan))
+    }
+
+    @Test func moveTargetsListTheGoals() {
+        let sections = CommandPaletteModel.moveTargets(query: "", task: "MF-20", goals: ["Mac app", "Docs"])
+        #expect(sections.first?.items == [.moveTarget("MF-20", "Mac app"), .moveTarget("MF-20", "Docs")])
+        #expect(CommandPaletteModel.moveTargets(query: "mac", task: "MF-20", goals: ["Mac app", "Docs"]).first?.items.count == 1)
+        #expect(CommandPaletteModel.moveTargets(query: "zzqx", task: "MF-20", goals: ["Mac app"]).isEmpty)
+    }
+
+    // MARK: Pages and everyday actions
+
+    @Test func decisionsPageIsFound() {
+        #expect(items("decisions", .pages).first?.id == "page:\(Destination.decisions.encoded)")
+    }
+
+    @Test func snoozeAndResumeFlipWithSnoozed() {
+        let on = PaletteAction.available(taskPanel: true, signedIn: true, holds: 0, notificationsOn: true, snoozed: false)
+        #expect(on.contains(.snoozeNotifications1h) && on.contains(.snoozeUntilTomorrow) && !on.contains(.resumeNotifications))
+        let snoozed = PaletteAction.available(taskPanel: true, signedIn: true, holds: 0, notificationsOn: true, snoozed: true)
+        #expect(!snoozed.contains(.snoozeNotifications1h) && !snoozed.contains(.snoozeUntilTomorrow) && snoozed.contains(.resumeNotifications))
+        let found = CommandPaletteModel.results(query: "snooze", tasks: tasks, goals: goals, actions: on, me: me.id)
+        #expect(found.first { $0.kind == .actions }?.items == [.action(.snoozeNotifications1h), .action(.snoozeUntilTomorrow)])
+    }
+
+    @Test func everydayActionsAreFound() {
+        #expect(items("check for updates", .actions).first == .action(.checkForUpdates))
+        #expect(PaletteAction.checkForUpdates.shortcut == "⇧⌘U")
+        #expect(items("add factory", .actions).first == .action(.addFactory))
+        #expect(items("keyboard shortcuts", .actions).first == .action(.keyboardShortcuts))
+    }
+
+    @Test func factoryAndPaneRowsOnlyWhenSearched() {
+        let factories = [PaletteFactory(id: "acme.dev", name: "Acme")]
+        let panes = OrgSettingsView.sidebarPanes
+        let empty = CommandPaletteModel.results(query: "", tasks: tasks, goals: goals, me: me.id, factories: factories, panes: panes)
+        #expect(!empty.contains { $0.kind == .factories || $0.kind == .settings })
+        let acme = CommandPaletteModel.results(query: "acme", tasks: tasks, goals: goals, me: me.id, factories: factories, panes: panes)
+        #expect(acme.first { $0.kind == .factories }?.items == [.factory("acme.dev")])
+        let merging = CommandPaletteModel.results(query: "merging", tasks: tasks, goals: goals, me: me.id, factories: factories, panes: panes)
+        #expect(merging.first { $0.kind == .settings }?.items.first == .settingsPane(.merging))
+    }
+
+    // MARK: Recent
+
+    @Test func recentIsShownOrderedAndDedupedAgainstTasks() {
+        let recent: [PaletteItem] = [.task("MF-12"), .doc("d1"), .task("MF-10"), .task("MF-12")]
+        let sections = CommandPaletteModel.results(query: "", tasks: tasks, goals: goals, me: me.id, recent: recent)
+        #expect(sections.map(\.kind) == [.recent, .tasks, .actions])
+        #expect(sections[0].items == [.task("MF-12"), .doc("d1"), .task("MF-10")])
+        #expect(!sections[1].items.contains(.task("MF-12")) && !sections[1].items.contains(.task("MF-10")))
+    }
+
+    @Test func recentLeavesOutTheOpenTaskAndIsCapped() {
+        let open = tasks[0]
+        let recent = [PaletteItem.task(open.id)] + (1...8).map { PaletteItem.doc("d\($0)") }
+        let sections = CommandPaletteModel.results(query: "", tasks: tasks, goals: goals, me: me.id,
+                                                   openTask: (open, [.copyID]), recent: recent)
+        #expect(sections.map(\.kind).prefix(2) == [.thisTask, .recent])
+        #expect(!sections[1].items.contains(.task(open.id)))
+        #expect(sections[1].items.count == PaletteSection.Kind.recent.limit)
+    }
+
+    @Test func noRecentNoSection() {
+        #expect(!results("").contains { $0.kind == .recent })
+    }
+
+    @Test func recentListIsNewestFirstDedupedAndCapped() {
+        var list: [PaletteItem] = []
+        for n in 1...12 { list = PaletteRecent.adding(.task("MF-\(n)"), to: list) }
+        list = PaletteRecent.adding(.task("MF-5"), to: list)
+        #expect(list.count == PaletteRecent.cap)
+        #expect(list.first == .task("MF-5"))
+        #expect(list.filter { $0 == .task("MF-5") }.count == 1)
+        #expect(PaletteRecent.adding(.action(.newTask), to: list) == list)
+        #expect(PaletteRecent.decode(PaletteRecent.encode(.doc("x:y"))!) == .doc("x:y"))
     }
 }

@@ -115,6 +115,7 @@ final class AppState {
             goalPrefill = nil
             keyboardCursor = nil
             rememberPage()
+            if case .doc(let id) = destination { rememberRecent(.doc(id)) }
         }
     }
     /// Keyboard navigation (TaskKeyboardNav.swift): the row the arrow keys are on, apart from what's open;
@@ -169,6 +170,8 @@ final class AppState {
     /// The task whose owner chip shows its people picker, when a demo script opened it (`assignask:<id>`),
     /// and what's typed into its filter (`assigntype:<text>`).
     var assigningTask: String? = nil
+    /// The task whose ⋯ menu shows its Rename alert, when ⌘K's "Rename…" asked for it.
+    var renamingTask: String? = nil
     var assignQuery = ""
     /// The task whose Builds on row shows its task picker, when a demo script opened it (`linkask:<id>`),
     /// and what's typed into its filter (`linktype:<text>`).
@@ -199,6 +202,7 @@ final class AppState {
     /// A card or row was clicked: show it in the task panel, or the full view when the panel is off.
     func openTask(_ id: String) {
         guard taskPanelEnabled else { return openFocus(id) }
+        rememberRecent(.task(id))
         rememberNavList(opening: id)
         withAnimation(.snappy(duration: 0.25)) {
             selectedTask = id
@@ -385,6 +389,7 @@ final class AppState {
         closeFocus()
         isComposing = false
         destination = .inbox
+        loadRecent()
     }
 
     /// Signs out of this factory: on to the next saved one, or, the last gone, connect to another
@@ -420,10 +425,15 @@ final class AppState {
     var sidebarFloating: Bool { isCompact && !sidebarCollapsed }
     /// The sidebar's width plus the factory rail's beside it.
     var sidebarSpace: CGFloat { (sidebarCollapsed || isCompact ? 68 : 250) + railSpace }
-    var inspectorInline: Bool {
-        showInspector && !isCompact && !isLoadingFactory && focusedTask == nil && !isComposing && goalSheet == nil
+    /// The task panel is on screen: inline beside the content, or floating over it in a narrow window.
+    var taskPanelVisible: Bool {
+        showInspector && !isLoadingFactory && focusedTask == nil && !isComposing && goalSheet == nil
             && ![.scratchpad, .dayReport, .usage, .statistics, .needsHand, .machines, .intake].contains(destination)
     }
+    var inspectorInline: Bool { taskPanelVisible && !isCompact }
+    /// The task ⌘K's "This task" acts on: the full view, or the panel when it's on screen, so the
+    /// ⋯ menu that shows Schedule…, Assign…, Cancel… and Rename… is there too.
+    var paletteTask: String? { focusedTask ?? (taskPanelVisible ? selectedTask : nil) }
     /// Width left for the main content once the sidebar and an inline inspector take theirs.
     var contentWidth: CGFloat { windowWidth - sidebarSpace - (inspectorInline ? 380 : 0) }
 
@@ -465,6 +475,12 @@ final class AppState {
     /// ⌘1–⌘9: the Nth saved factory, or onboarding when its token is gone.
     func switchToFactory(at number: Int) {
         guard let client, let factory = SavedFactories.factory(forShortcut: number, in: client.savedFactories) else { return }
+        switchToFactory(id: factory.id)
+    }
+
+    /// A saved factory by its id (⌘K's "Switch to …"), or onboarding when its token is gone.
+    func switchToFactory(id: String) {
+        guard let client, let factory = client.savedFactories.first(where: { $0.id == id }) else { return }
         guard client.server.map(SavedFactory.key) != factory.id || !client.isSignedIn else { return }
         if client.switchTo(factory) {
             didSwitchFactory()
@@ -1373,6 +1389,12 @@ final class AppState {
     }
     /// The highlighted row, an index into `paletteItems`.
     var paletteSelection = 0
+    /// ⌘K's "Move to goal…" on this task: the palette lists the goals it can move to instead.
+    var paletteMovingTask: String? = nil {
+        didSet { if paletteMovingTask != oldValue { paletteQuery = ""; paletteSelection = 0 } }
+    }
+    /// ⌘K's "Keyboard shortcuts" sheet.
+    var showsKeyboardShortcuts = false
     /// ⌘K's "New doc": the Docs page opens its New doc sheet.
     var creatingDoc = false
     /// Opens the Settings window; set by the view that can (AppState has no `openSettings`).
@@ -1384,17 +1406,67 @@ final class AppState {
         let pages = PalettePage.all.filter { $0.destination != .statistics || client?.canSeeStats ?? true }
         // The task panel can only be toggled with "Peek in the side panel" on.
         let actions = PaletteAction.available(taskPanel: taskPanelEnabled, signedIn: client?.isSignedIn ?? false,
-                                              holds: client?.mergeHolds.count ?? 0)
+                                              holds: client?.mergeHolds.count ?? 0, notificationsOn: Notifier.shared.enabled,
+                                              snoozed: Notifier.shared.isSnoozed)
         let docs = client.map { client in
             DocsIndex.docs(client).map { PaletteDoc(id: $0.id, title: $0.title, goal: DocsIndex.goalName($0.goal, client: client)) }
         } ?? []
+        if let moving = paletteMovingTask {
+            return CommandPaletteModel.moveTargets(query: paletteQuery, task: moving, goals: moveTargets(moving).map(\.goal.name))
+        }
+        let open = paletteTask.flatMap { id in tasks.first { $0.id == id } }
+        let factories = (client?.savedFactories ?? [])
+            .filter { $0.id != client?.server.map(SavedFactory.key) }
+            .map { PaletteFactory(id: $0.id, name: $0.name) }
         return CommandPaletteModel.results(query: paletteQuery, tasks: tasks, goals: goals, pages: pages, actions: actions, docs: docs,
-                                           me: FactoryData.me.id)
+                                           me: FactoryData.me.id,
+                                           openTask: open.map { ($0, TaskActions.palette($0, taskActionContext(for: $0))) },
+                                           recent: recentPaletteItems.filter(paletteItemExists), factories: factories,
+                                           panes: OrgSettingsView.sidebarPanes)
+    }
+
+    // MARK: Recently opened
+
+    /// Tasks and docs opened lately, newest first, for ⌘K's Recent; kept per factory.
+    var recentPaletteItems: [PaletteItem] = []
+
+    private var recentKey: String { "paletteRecent.\(client?.server.map(SavedFactory.key) ?? "mockup")" }
+
+    /// The factory key the in-memory list was read from: a write never lands on another factory's
+    /// key, and the first open after launch or a switch adds to the saved list, not an empty one.
+    @ObservationIgnored private var recentLoadedKey: String?
+
+    func rememberRecent(_ item: PaletteItem) {
+        if recentLoadedKey != recentKey { loadRecent() }
+        recentPaletteItems = PaletteRecent.adding(item, to: recentPaletteItems)
+        boardDefaults.set(recentPaletteItems.compactMap(PaletteRecent.encode), forKey: recentKey)
+    }
+
+    /// The saved list for the factory now open.
+    func loadRecent() {
+        recentLoadedKey = recentKey
+        recentPaletteItems = (boardDefaults.stringArray(forKey: recentKey) ?? []).compactMap(PaletteRecent.decode)
+    }
+
+    /// A task or doc that's still here.
+    private func paletteItemExists(_ item: PaletteItem) -> Bool {
+        switch item {
+        case .task(let id): tasks.contains { $0.id == id }
+        case .doc(let id): client.map { DocsIndex.docs($0).contains { $0.id == id } } ?? (id == DemoDoc.id)
+        default: false
+        }
     }
     var paletteItems: [PaletteItem] { CommandPaletteModel.flatten(paletteSections) }
 
     func togglePalette() {
+        if !showPalette { loadRecent() }
+        paletteMovingTask = nil
         withAnimation(.snappy(duration: 0.18)) { showPalette.toggle() }
+    }
+
+    /// Esc: out of "Move to goal…" back to the palette, or closes it.
+    func paletteEscape() {
+        if paletteMovingTask != nil { paletteMovingTask = nil } else { togglePalette() }
     }
 
     /// ↑/↓: the highlight moves through every section's rows, wrapping at the ends.
@@ -1413,8 +1485,25 @@ final class AppState {
 
     /// A row was chosen: the palette closes and its task, goal or page opens, or its action runs.
     func perform(_ item: PaletteItem) {
+        // "Move to goal…" stays open on its goal list; a blocked goal does nothing.
+        if case .taskAction(let id, .moveToGoal) = item { paletteMovingTask = id; return }
+        if case .moveTarget(let id, let goal) = item, moveTargets(id).first(where: { $0.goal.name == goal })?.blocked != nil { return }
         withAnimation(.snappy(duration: 0.18)) { showPalette = false }
+        paletteMovingTask = nil
         switch item {
+        case .taskAction(let id, let action): perform(action, on: id)
+        case .moveTarget(let id, let goal): moveToGoal(id, goal: goal)
+        case .factory(let id): switchToFactory(id: id)
+        case .settingsPane(let pane):
+            AppDefaults.set(pane.rawValue, forKey: "settingsTab")
+            openSettings?()
+        case .action(.checkForUpdates): AboutView.checkForUpdates()
+        case .action(.addFactory): startOnboarding()
+        case .action(.snoozeNotifications1h): Notifier.shared.snooze(for: 3600); showToast("Notifications snoozed for 1 hour", icon: "bell.slash")
+        case .action(.snoozeUntilTomorrow):
+            Notifier.shared.snooze(until: Notifier.tomorrowMorning); showToast("Notifications snoozed until tomorrow", icon: "bell.slash")
+        case .action(.resumeNotifications): Notifier.shared.resume(); showToast("Notifications resumed", icon: "bell")
+        case .action(.keyboardShortcuts): showsKeyboardShortcuts = true
         case .task(let id): openFullView(id)
         case .goal(let name): destination = .goal(name)
         case .page(let page): destination = page.destination
@@ -1430,6 +1519,45 @@ final class AppState {
         case .action(.restartTheLine): confirmsRestartLine = true
         case .action(let action):
             if let appearance = action.appearance { setAppearance(appearance) }
+        }
+    }
+
+    /// What `TaskActions.available` needs to know about a task beyond the task itself.
+    func taskActionContext(for task: FactoryTask, canSchedule: Bool = true, canAssign: Bool = true) -> TaskActionContext {
+        let gate = mergeGate(for: task)
+        return TaskActionContext(isMine: task.owner.github == FactoryData.me.github, canTakeOver: FactoryData.me.github != nil,
+                                 canReassign: canReassign(task.id), hasBranch: branch(of: task.id) != nil,
+                                 hasMoveTargets: !moveTargets(task.id).isEmpty,
+                                 iApproved: task.approvals.contains { $0.id == FactoryData.me.id },
+                                 canMerge: gate.canMerge, isMerging: isMerging(task),
+                                 canSchedule: canSchedule, canAssign: canAssign)
+    }
+
+    /// Runs one of a task's actions, for its ⋯ menu and ⌘K alike. The ones that ask first (Schedule…, Assign…,
+    /// Cancel task…, Rename…) raise the hook the open task's views show their popover or dialog from.
+    func perform(_ action: TaskAction, on id: String) {
+        switch action {
+        case .moveToTop: task(id).queued ? moveToTop(id) : moveDraftToTop(id)
+        case .moveToBottom: task(id).queued ? moveToBottom(id) : moveDraftToBottom(id)
+        case .schedule: schedulingTask = id
+        case .startNow: startNow(id)
+        case .runNow: forceStart(id)
+        case .queue: queue(id, before: nil)
+        case .approvePlan, .approveAndBuild: approvePlan(id)
+        case .merge: merge(id)
+        case .sendToPlanning, .planAgain: plan(id)
+        case .sendToBacklog: sendToBacklog(id)
+        case .retry: retry(id)
+        case .cancel: confirmingCancel = id
+        case .takeOver: if let me = FactoryData.me.github { assign(id, to: me) }
+        case .assign: assigningTask = id
+        case .moveToGoal: paletteMovingTask = id
+        case .rename: renamingTask = id
+        case .toggleShareable: setShareable(id, !task(id).shareable)
+        case .openPullRequest: openPullRequest(id)
+        case .copyBranch: copyBranch(id)
+        case .copyID: copyID(id)
+        case .copyLink: copyLink(id)
         }
     }
 
@@ -1455,6 +1583,7 @@ final class AppState {
         goalSheet = nil
         selectedTask = id
         focusedTask = id
+        rememberRecent(.task(id))
     }
 
     // MARK: Navigation actions
@@ -1466,6 +1595,7 @@ final class AppState {
     }
 
     func openFocus(_ id: String) {
+        rememberRecent(.task(id))
         goalSheet = nil
         rememberNavList(opening: id)
         withAnimation(.snappy(duration: 0.3)) {
@@ -2754,6 +2884,8 @@ final class AppState {
             case "addmachine": NotificationCenter.default.post(name: LiveMachinesView.demoAdd, object: parts.count > 1 ? parts[1] : nil)
             case "backlog": sendToBacklog(parts[1])
             case "plan": plan(parts[1])
+            // `queued:<id>` puts a task in planning's queue, waiting on a slot (the mockup never queues one).
+            case "queued": update(parts[1]) { $0.state = .planning; $0.queued = true }
             case "review": approveChanges(parts[1])
             case "pass": passAutoReview(parts[1])
             case "merge": merge(parts[1])
@@ -3100,6 +3232,10 @@ final class AppState {
                 case "down": movePaletteSelection(1)
                 case "up": movePaletteSelection(-1)
                 case "run": runPaletteSelection()
+                // `palette:recent:<id>` remembers a task (or `doc:<id>`) as opened, so Recent has rows to show.
+                case "recent" where parts.count > 2 && parts[2] == "doc": rememberRecent(.doc(parts.dropFirst(3).joined(separator: ":")))
+                case "recent": rememberRecent(.task(parts.dropFirst(2).joined(separator: ":")))
+                case "esc": paletteEscape()
                 default: break
                 }
             // `autofix:off` is Settings › Merging's "Fix merges automatically" toggle.
