@@ -43,6 +43,14 @@ it asked for this doesn't have it: add Workflows → Read and write under the ap
 accept the new permission on each installation. Until then everything else works as before (the factory asks for
 its tokens without it), and a task that changes a workflow fails its push with a message that says so and links there.
 
+Comments people leave on a task's pull request on GitHub show on the task, with a GitHub mark and a link back:
+conversation comments, review summaries (approved, changes requested, commented) and inline review comments. The
+app subscribes to the **Issue comment**, **Pull request review** and **Pull request review comment** events for this,
+and asks for **Issues: read** (GitHub sends `issue_comment` only with it; pull requests: write covers the review
+events). An app made before this doesn't have them: under the app's **Permissions & events**, add Issues → Read-only
+and tick those three events, then accept the new permission on each installation. The factory's own comments (its
+app's `[bot]` login, or any bot's) aren't brought back in.
+
 Worker secrets of the same names (`GITHUB_APP_ID`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`,
 `GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`, `SESSION_SECRET`, `SECRETS_KEY`) take precedence over what `/setup` stored.
 

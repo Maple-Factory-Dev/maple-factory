@@ -180,6 +180,34 @@ export async function deliver(env: Env, replyUrl: string, said: string, integrat
 
 // ---- GitHub ----
 
+const REVIEW_STATES: Record<string, string> = { approved: "approved", changes_requested: "requested changes", commented: "reviewed" };
+
+/** A comment on a pull request (MF-424), from its conversation, a review, or inline on a line,
+ *  as one normalized message the org hub matches to a task by repo and PR number. Null: not one we keep. */
+function githubComment(kind: string, e: any) {
+  const base = (number: unknown, c: any, extra: Record<string, unknown> = {}) =>
+    typeof number === "number" && c && (typeof c.id === "number" || typeof c.id === "string")
+      ? {
+          kind: "comment", number, ghId: String(c.id), author: String(e.sender?.login ?? c.user?.login ?? "github"),
+          bot: e.sender?.type === "Bot" || c.user?.type === "Bot", body: typeof c.body === "string" ? c.body : "",
+          url: typeof c.html_url === "string" ? c.html_url : null, at: Date.parse(c.submitted_at ?? c.created_at ?? "") || null, ...extra,
+        }
+      : null;
+  // Comments on issues come through this event too: only a pull request's count.
+  if (kind === "issue_comment") return e.action === "created" && e.issue?.pull_request ? base(e.issue?.number, e.comment) : null;
+  if (kind === "pull_request_review") {
+    const state = String(e.review?.state ?? "").toLowerCase();
+    // A plain "commented" review with no summary: its inline comments arrive on their own.
+    if (e.action !== "submitted" || (state === "commented" && !e.review?.body?.trim())) return null;
+    return base(e.pull_request?.number, e.review, { review: REVIEW_STATES[state] ?? (state.replace(/_/g, " ") || "reviewed") });
+  }
+  if (kind === "pull_request_review_comment") {
+    const c = e.comment;
+    return e.action === "created" ? base(e.pull_request?.number, c, { path: c?.path ?? null, line: c?.line ?? c?.original_line ?? null }) : null;
+  }
+  return null;
+}
+
 /** POST /integrations/github: the GitHub App's webhook (signed with GITHUB_WEBHOOK_SECRET). */
 export async function githubWebhook(request: Request, env: Env): Promise<Response> {
   if (!env.GITHUB_WEBHOOK_SECRET) return text("GitHub webhooks aren't set up for this factory.", 404);
@@ -204,7 +232,7 @@ export async function githubWebhook(request: Request, env: Env): Promise<Respons
         // In and out of the base branch's merge queue; a dequeue says why (CI_FAILURE, MERGE_CONFLICT, MANUAL…).
         enqueued: e.action === "enqueued", dequeued: e.action === "dequeued", reason: typeof e.reason === "string" ? e.reason : null,
       }
-    : null;
+    : githubComment(kind, e);
   if (!event) return new Response(null, { status: 204 });
   await orgHub(env).fetch("https://org/github", { method: "POST", body: JSON.stringify({ owner, repo, ...event }) });
   return new Response(null, { status: 204 });

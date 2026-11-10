@@ -3167,8 +3167,12 @@ public enum Wire {
         public var mentions: [String]?
         /// The id of the comment that starts its thread. Replies to a reply sit under that same root.
         public var replyTo: String?
+        /// Where it was written, when not in the factory: "github" for a pull request comment or review (MF-424). Old clients ignore it.
+        public var source: String?
+        /// A link to it where it was written, e.g. the comment on GitHub.
+        public var url: String?
 
-        public init(id: String, author: String, text: String, at: UInt64, anchor: String? = nil, via: String? = nil, mentions: [String]? = nil, replyTo: String? = nil) {
+        public init(id: String, author: String, text: String, at: UInt64, anchor: String? = nil, via: String? = nil, mentions: [String]? = nil, replyTo: String? = nil, source: String? = nil, url: String? = nil) {
             self.id = id
             self.author = author
             self.text = text
@@ -3177,6 +3181,8 @@ public enum Wire {
             self.via = via
             self.mentions = mentions
             self.replyTo = replyTo
+            self.source = source
+            self.url = url
         }
     }
 

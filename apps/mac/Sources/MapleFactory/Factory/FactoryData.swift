@@ -16,6 +16,8 @@ enum FactoryData {
     /// You: the signed-in member once the app is connected to a factory (`FactoryClient`).
     nonisolated(unsafe) static var me = Person(name: "Andrea Fomera", color: Color(light: 0xD9488F, dark: 0xF07AB4), isHuman: true, github: "afomera")
     static let chris = Person(name: "Chris", color: Color(light: 0xE0662F, dark: 0xFF8A5B), isHuman: true, github: "excid3")
+    /// A reviewer who isn't in the org: someone commenting on a demo pull request from GitHub.
+    static let octocat = Person(name: "octocat", color: Color(light: 0x59636E, dark: 0x8B949E), isHuman: true, github: "octocat")
 
     /// The org's people: its members when connected, for mentions, facepiles and avatars.
     @MainActor static var people: [Person] { livePeople ?? [me, chris] }
@@ -276,6 +278,15 @@ enum FactoryData {
             activity: [
                 ActivityItem(who: "Maple-2", text: "Attached 4 proofs · ready for review", when: "1h"),
                 ActivityItem(who: "Maple-2", text: "Opened PR #489", when: "1h"),
+            ],
+            // Said on the pull request itself, as the factory brings it in from GitHub (MF-424).
+            comments: [
+                Comment(author: octocat, text: "Looks right overall, but the verify call should pin the algorithm before this ships.",
+                        when: "40m", anchor: "Review · requested changes", id: "gh-2001", source: "github",
+                        url: "https://github.com/\(repo)/pull/489#pullrequestreview-2001"),
+                Comment(author: octocat, text: "Pass `algorithms: [\"RS256\"]` here, or a token signed with another alg could slip through.",
+                        when: "38m", anchor: "lib/auth/jwt.ts:21", id: "gh-2002", source: "github",
+                        url: "https://github.com/\(repo)/pull/489#discussion_r2002"),
             ],
             doneWhen: [
                 DoneCriterion(text: "jsonwebtoken is gone from the dependency tree", proof: .terminal, status: .proven,

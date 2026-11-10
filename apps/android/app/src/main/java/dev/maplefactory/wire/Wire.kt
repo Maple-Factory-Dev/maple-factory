@@ -1327,6 +1327,10 @@ data class Comment(
     val mentions: List<String>? = null,
     /** The id of the comment that starts its thread. Replies to a reply sit under that same root. */
     val replyTo: String? = null,
+    /** Where it was written, when not in the factory: "github" for a pull request comment or review (MF-424). Old clients ignore it. */
+    val source: String? = null,
+    /** A link to it where it was written, e.g. the comment on GitHub. */
+    val url: String? = null,
 )
 
 /** Steering: someone redirecting the planner or builder mid-flight. */

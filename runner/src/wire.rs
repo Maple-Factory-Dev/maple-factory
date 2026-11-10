@@ -1347,6 +1347,12 @@ pub struct Comment {
     /// The id of the comment that starts its thread. Replies to a reply sit under that same root.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_to: Option<String>,
+    /// Where it was written, when not in the factory: "github" for a pull request comment or review (MF-424). Old clients ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// A link to it where it was written, e.g. the comment on GitHub.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 /// Steering: someone redirecting the planner or builder mid-flight.

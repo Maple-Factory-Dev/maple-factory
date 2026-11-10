@@ -536,9 +536,11 @@ export const structs: Record<string, Struct> = {
     fields: { text: "string", proof: "ProofKind", status: "ProofStatus", evidence: "Evidence?" },
   },
   Comment: {
-    fields: { id: "string", author: "string", text: "string", at: "u64", anchor: "string?", via: "string?", mentions: "string[]?", replyTo: "string?" },
+    fields: { id: "string", author: "string", text: "string", at: "u64", anchor: "string?", via: "string?", mentions: "string[]?", replyTo: "string?", source: "string?", url: "string?" },
     fieldDocs: {
       author: "A login, or an agent like \"planner\".",
+      source: "Where it was written, when not in the factory: \"github\" for a pull request comment or review (MF-424). Old clients ignore it.",
+      url: "A link to it where it was written, e.g. the comment on GitHub.",
       replyTo: "The id of the comment that starts its thread. Replies to a reply sit under that same root.",
       via: "Where it came in from, e.g. \"Slack #requests\".",
       mentions: "Logins of the org members this comment @mentions, worked out by the server. Never the author.",
