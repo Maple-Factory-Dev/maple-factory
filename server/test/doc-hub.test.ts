@@ -545,6 +545,50 @@ test("OrgHub: doc.create is in the index the snapshot sends and doc.updated reac
   assert.deepEqual(docCalls, [`${id} https://doc/close`]);
 });
 
+// MF-378: doc.move puts a doc in another goal, or in none; every member hears it, and it persists.
+test("OrgHub doc.move: to a goal and back to none reaches every member and persists; unknown goal, missing or archived docs are refused", async () => {
+  const { client, store } = orgHub();
+  const goals = store as unknown as { saveGoal(g: object): void };
+  goals.saveGoal({ id: "g1", name: "Apps", prefix: "AP", summary: "", lead: "ann", repos: [], repo: "acme/app", archived: false });
+  const docs = store as unknown as { docs(): { id: string; goal: string | null }[] };
+  const ann = client("ann");
+  const bob = client("bob");
+  await ann.say({ type: "doc.create", title: "Plan" });
+  const id = bob.said()[0].doc.id as string;
+  ann.said();
+
+  await ann.say({ type: "doc.move", id, goal: "g1" });
+  const [moved] = bob.said();
+  assert.equal(moved.type, "doc.updated");
+  assert.equal(moved.doc.goal, "g1");
+  assert.equal(ann.said()[0].doc.goal, "g1");
+  assert.equal(docs.docs()[0].goal, "g1");
+  const cara = client("cara");
+  await cara.say({ type: "subscribe" });
+  assert.equal(cara.said().find((m) => m.type === "snapshot").docs[0].goal, "g1");
+
+  // Same goal again: nothing to say.
+  bob.said();
+  await ann.say({ type: "doc.move", id, goal: "g1" });
+  assert.deepEqual(bob.said().filter((m) => m.type === "doc.updated"), []);
+  ann.said();
+
+  await bob.say({ type: "doc.move", id, goal: null });
+  assert.equal(ann.said()[0].doc.goal, null);
+  assert.equal(docs.docs()[0].goal, null);
+  bob.said();
+
+  await bob.say({ type: "doc.move", id, goal: "no-such-goal" });
+  assert.deepEqual(bob.said().at(-1), { type: "error", message: "That goal isn't there any more.", requestId: "doc.move" });
+  await bob.say({ type: "doc.move", id: "99999999-2222-4333-8444-555555555555", goal: "g1" });
+  assert.equal(bob.said().at(-1).message, "That doc isn't there any more.");
+  await bob.say({ type: "doc.archive", id, archived: true });
+  bob.said();
+  await bob.say({ type: "doc.move", id, goal: "g1" });
+  assert.equal(bob.said().at(-1).message, "That doc is archived; bring it back to move it.");
+  assert.equal(docs.docs()[0].goal, null);
+});
+
 // MF-365: an accepted suggestion goes through the real OrgHub → DocHub path: /apply on the live doc, persisted,
 // sent to an open editor as a sync update; a stale one is refused and its thread stays open; the cap holds.
 test("OrgHub doc.suggestion: accept applies through a real DocHub to an open editor; stale and over-cap are refused", async () => {
