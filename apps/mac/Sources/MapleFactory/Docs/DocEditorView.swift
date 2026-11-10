@@ -60,6 +60,7 @@ struct DocEditorView: NSViewRepresentable {
     func makeNSView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.userContentController.add(WeakHandler(context.coordinator), name: "maple")
+        config.userContentController.addUserScript(WKUserScript(source: Self.frameRelay, injectionTime: .atDocumentStart, forMainFrameOnly: false))
         config.setURLSchemeHandler(DocsEmbedScheme(), forURLScheme: DocsEmbedScheme.scheme)
         let web = WKWebView(frame: .zero, configuration: config)
         web.navigationDelegate = context.coordinator
@@ -100,6 +101,22 @@ struct DocEditorView: NSViewRepresentable {
             return URL(string: "\(DocsEmbedScheme.scheme)://embed/embed.html?theme=\(theme)")
         }
     }
+
+    /// Runs in every frame (MF-387): script errors, unhandled rejections and CSP violations, plus the diagram
+    /// frames' `maple.diagram.state` events, go to the `maple` handler as `frame` messages and land in the log as
+    /// `[docs] frame …`, so a blank diagram frame says why.
+    static let frameRelay = """
+    (() => {
+      const post = (detail) => { try { window.webkit.messageHandlers.maple.postMessage({ type: "frame", frame: String(location.href).split("?")[0], detail }); } catch (_) {} };
+      addEventListener("error", (e) => post(`error ${e.message || (e.target && (e.target.src || e.target.href)) || "?"} ${e.filename || ""}:${e.lineno || 0}`), true);
+      addEventListener("unhandledrejection", (e) => post(`unhandledrejection ${e.reason && (e.reason.message || e.reason)}`));
+      addEventListener("securitypolicyviolation", (e) => post(`csp ${e.violatedDirective} blocked ${e.blockedURI || "inline"}`));
+      if (window.top === window) addEventListener("message", (e) => {
+        const d = e.data;
+        if (d && d.type === "maple.diagram.state") post(`diagram ${d.event || ""}${d.message ? " " + String(d.message).split("\\n")[0] : ""}`);
+      });
+    })();
+    """
 
     enum Route: Equatable { case allow, task(String), external }
 
@@ -178,6 +195,7 @@ struct DocEditorView: NSViewRepresentable {
                 view.status.peers = peers.compactMap(DocEditorStatus.Peer.parse)
             case "error": view.status.error = body["message"] as? String ?? "The doc couldn't be opened."
             case "openTask": if let id = body["id"] as? String { view.openTask(id) }
+            case "frame": print("[docs] frame \(body["frame"] as? String ?? "?") \(body["detail"] as? String ?? "")")
             case "command": if let command = body["command"] as? [String: Any] { view.onCommand(command) }
             default: break
             }
@@ -186,8 +204,10 @@ struct DocEditorView: NSViewRepresentable {
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                      decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
             guard let url = action.request.url else { return decisionHandler(.cancel) }
-            print("[docs] navigate \(url.absoluteString)")
-            switch DocEditorView.route(url, embed: embedURL, isMainFrame: action.targetFrame?.isMainFrame ?? true) {
+            let isMainFrame = action.targetFrame?.isMainFrame ?? true
+            let route = DocEditorView.route(url, embed: embedURL, isMainFrame: isMainFrame)
+            print("[docs] navigate \(isMainFrame ? "main" : "subframe") \(url.absoluteString) → \(route)")
+            switch route {
             case .allow: return decisionHandler(.allow)
             case .task(let id): view?.openTask(id); return decisionHandler(.cancel)
             case .external: break
