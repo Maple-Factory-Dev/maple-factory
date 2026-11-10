@@ -53,6 +53,8 @@ export function createDecisions({ state, h, send, icon, ago }) {
     const who = d.status === "proposed"
       ? `proposed by @${d.proposedBy}${d.agent ? ` (${d.agent})` : ""} ${ago(d.proposedAt)}`
       : `${d.status === "rejected" ? "rejected" : "accepted"} by @${d.decidedBy} ${ago(d.decidedAt)}`;
+    // A superseded row says so and links to the decision that replaced it.
+    const replacement = d.supersededBy ? (state.decisions ?? []).find((x) => x.id === d.supersededBy) : null;
     const showing = opened.has(d.id);
     const log = state.decisionLogs?.[d.id];
     return h("div", { class: "item decision-row", "data-decision-row": d.id },
@@ -62,6 +64,11 @@ export function createDecisions({ state, h, send, icon, ago }) {
           chosen && d.status !== "proposed" ? h("strong", {}, `→ ${chosen} · `) : null,
           who, " · in ", h("span", { class: "decision-doc" }, docTitle(d.doc)), d.goal ? ` · ${goalName(d.goal)}` : ""),
         d.why ? h("div", { class: "sub decision-why" }, h("em", {}, "Why: "), d.why) : null),
+      d.status === "superseded" && d.supersededBy
+        ? h("div", { class: "sub decision-superseded" }, "Superseded by ",
+          h("a", { href: `#/docs/${replacement?.doc ?? d.doc}?decision=${d.supersededBy}`, "data-superseded-by": d.supersededBy }, replacement ? `“${replacement.question}”` : "a newer decision"),
+          replacement?.decidedAt ? ` ${ago(replacement.decidedAt)}` : "")
+        : null,
       h("button", { class: "btn ghost decision-history-toggle", type: "button", "aria-expanded": String(showing), onclick: () => {
         if (showing) opened.delete(d.id); else { opened.add(d.id); send({ type: "decision.log", id: d.id }); }
         location.hash = location.hash; // nudge a render

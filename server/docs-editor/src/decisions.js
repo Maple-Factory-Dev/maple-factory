@@ -43,7 +43,9 @@ export function proposeDecision(editor, host, { supersedes = null, at = null, fr
 }
 
 function card(d, id, host, ctx) {
-  if (!d) return el("div", { class: "doc-decision-body" }, el("div", { class: "doc-decision-head" }, el("span", { class: "doc-decision-kind" }, "Decision"), el("span", { class: "muted" }, "Saving…")));
+  // Not in the feed (yet, or the propose was refused): offer to take the orphan card out of the doc.
+  if (!d) return el("div", { class: "doc-decision-body" }, el("div", { class: "doc-decision-head" }, el("span", { class: "doc-decision-kind" }, "Decision"), el("span", { class: "muted" }, "Saving…"),
+    el("button", { type: "button", class: "doc-btn ghost", "data-decision-remove": "", onclick: () => ctx.remove() }, "Remove")));
   const send = (msg) => host?.onEvent?.("decision", msg);
   const head = el("div", { class: "doc-decision-head" },
     el("span", { class: "doc-decision-kind" }, "Decision"),
@@ -122,6 +124,10 @@ export const DecisionEmbed = Node.create({
       let last = "";
       const ctx = {
         redraw: (force) => draw(force),
+        remove: () => {
+          const pos = getPos();
+          if (typeof pos === "number") editor.chain().focus().deleteRange({ from: pos, to: pos + current.nodeSize }).run();
+        },
         supersede: (d) => {
           const pos = getPos();
           if (typeof pos === "number") proposeDecision(editor, host, { supersedes: d.id, at: pos + current.nodeSize, from: d });

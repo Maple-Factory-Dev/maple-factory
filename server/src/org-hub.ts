@@ -1174,8 +1174,8 @@ export class OrgHub extends DurableObject<Env> {
         return;
       }
       case "decision.log": {
-        if (!this.store.decision(msg.id)) return this.send(ws, { type: "error", message: "That decision isn't there any more.", requestId: msg.type });
-        return this.send(ws, { type: "decision.log", id: msg.id, events: this.store.decisionLog(msg.id) });
+        if (typeof msg.id !== "string" || !this.store.decision(msg.id.toLowerCase())) return this.send(ws, { type: "error", message: "That decision isn't there any more.", requestId: msg.type });
+        return this.send(ws, { type: "decision.log", id: msg.id, events: this.store.decisionLog(msg.id.toLowerCase()) });
       }
       case "note.delete": {
         const existing = this.store.note(msg.id);

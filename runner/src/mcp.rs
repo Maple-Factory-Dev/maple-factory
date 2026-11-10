@@ -827,10 +827,9 @@ pub fn validate(tool: &str, args: &Value) -> Result<Value, String> {
                 for o in options {
                     let (label, note) = match o {
                         Value::String(l) => (l.clone(), None),
-                        Value::Object(m) => (
-                            m.get("label").and_then(Value::as_str).unwrap_or("").to_string(),
-                            m.get("note").and_then(Value::as_str).map(str::to_string),
-                        ),
+                        Value::Object(m) => {
+                            (m.get("label").and_then(Value::as_str).unwrap_or("").to_string(), m.get("note").and_then(Value::as_str).map(str::to_string))
+                        }
                         _ => return Err("each option is a {label, note?} object.".into()),
                     };
                     if label.trim().is_empty() || label.chars().count() > 300 {
@@ -1484,7 +1483,10 @@ mod tests {
         assert!(DOC_TOOLS.contains(&"propose_decision"));
         assert!(!DOC_TOOLS.iter().any(|t| t.contains("accept") || t.contains("reject")));
         assert_eq!(
-            ok("propose_decision", json!({"doc": doc, "question": " Ship Friday? ", "options": [{"label": "Yes"}, {"label": "No", "note": "freeze"}], "chosen": "No", "rationale": "Freeze", "block": "b-a-1", "supersedes": sup.to_uppercase()})),
+            ok(
+                "propose_decision",
+                json!({"doc": doc, "question": " Ship Friday? ", "options": [{"label": "Yes"}, {"label": "No", "note": "freeze"}], "chosen": "No", "rationale": "Freeze", "block": "b-a-1", "supersedes": sup.to_uppercase()})
+            ),
             json!({"doc": doc, "question": "Ship Friday?", "options": [{"label": "Yes"}, {"label": "No", "note": "freeze"}], "chosen": "No", "rationale": "Freeze", "block": "b-a-1", "supersedes": sup})
         );
         assert_eq!(ok("propose_decision", json!({"doc": doc, "question": "Q", "options": ["A", "B"]}))["options"], json!([{"label": "A"}, {"label": "B"}]));

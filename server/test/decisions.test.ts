@@ -225,6 +225,15 @@ test("each decision.* path adds exactly one event with by = the member; the doc'
   assert.deepEqual(decisions.fold(store.decisionLog(D1)), store.decision(D1));
 });
 
+test("a proposed decision in an archived doc can still be accepted or rejected, but not edited", async () => {
+  const { store, engine } = factory();
+  await engine.docs.propose("ada", { id: D1, doc: OTHER, question: "Keep it?", options: OPTS, rationale: "" });
+  store.saveDoc({ ...store.doc(OTHER)!, archived: true } as never);
+  assert.throws(() => engine.docs.editDecision("ada", { id: D1, question: "Q", options: OPTS, rationale: "" }), /archived/);
+  engine.docs.decideDecision("grace", { id: D1, accept: false, why: "Archived" });
+  assert.deepEqual([store.decision(D1)!.status, store.decision(D1)!.decidedBy], ["rejected", "grace"]);
+});
+
 test("propose_decision from an agent stays proposed with agent set and inserts the embed through DocHub", async () => {
   const { store, call, ydoc } = factory();
   const para = readDoc(ydoc).blocks[1].id!;

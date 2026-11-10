@@ -161,12 +161,13 @@ export class DocTools {
     this.hooks.broadcast({ type: "decision.updated", decision: change.decision });
   }
 
-  private decisionOf(id: unknown): { d: Decision; doc: Doc } {
+  /** `deciding`: Accept / Reject still work in an archived doc, so its open decisions don't badge forever. */
+  private decisionOf(id: unknown, deciding = false): { d: Decision; doc: Doc } {
     const d = typeof id === "string" && UUID.test(id) ? this.store.decision(id.toLowerCase()) : null;
     if (!d) fail("That decision isn't there any more.");
     const doc = this.store.doc(d!.doc);
     if (!doc) fail("That decision's doc isn't there any more.");
-    if (doc!.archived) fail("That doc is archived; bring it back first.");
+    if (doc!.archived && !deciding) fail("That doc is archived; bring it back first.");
     return { d: d!, doc: doc! };
   }
 
@@ -207,7 +208,7 @@ export class DocTools {
 
   /** A person's Accept / Reject: no agent tool reaches these. */
   decideDecision(by: string, msg: { id: string; accept: boolean; chosen?: string | null; why?: string | null }): Decision {
-    const { d, doc } = this.decisionOf(msg.id);
+    const { d, doc } = this.decisionOf(msg.id, true);
     let changes: decisions.Change[];
     if (msg.accept) {
       const target = d.supersedes ? this.store.decision(d.supersedes) : null;
