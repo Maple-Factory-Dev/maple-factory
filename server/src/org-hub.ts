@@ -1095,12 +1095,13 @@ export class OrgHub extends DurableObject<Env> {
         this.broadcast({ type: "doc.thread.updated", thread });
         this.broadcast({ type: "doc.updated", doc: this.store.doc(doc.id)! });
         if (msg.type === "doc.comment") {
-          // A reply where an agent is still running is typed into its session; a reply on a finished run,
-          // or an @planner / @researcher mention, asks a fresh one with the thread so far (MF-366).
+          // A reply while the thread's agent session is open (working, or answered and still open for
+          // follow-ups) is typed into it. Otherwise only an @planner / @researcher mention asks a fresh one with
+          // the thread so far, so a person answering a person doesn't start an agent by surprise (MF-366).
           try {
             const typed = msg.thread ? await this.engine.typeIntoAsk(thread, me, msg.text) : false;
             const named = docAgentsIn(msg.text);
-            if (!typed && (named.length || (msg.thread && thread.agent))) await this.engine.ask(me, thread.id, named[0] ?? (thread.agent?.role === "researcher" ? "researcher" : "planner"));
+            if (!typed && named.length) await this.engine.ask(me, thread.id, named[0]);
           } catch (e) {
             fail(e instanceof Error ? e.message : String(e));
           }

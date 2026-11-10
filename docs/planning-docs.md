@@ -222,11 +222,14 @@ interactive session:
   proposes wording (or a mermaid diagram) with `suggest_doc_edit`, which a person accepts or rejects. Other
   factory tools are refused. It can read code and the web; the prompt tells it never to edit files.
 - **Status:** `DocThread.agent` (`DocAgentRun`) follows the session: Starting → Thinking/Working (from
-  `session.activity`) → Done when it exits, Stopped, or Failed. The card shows it as a chip that pulses while
+  `session.activity`) → Done when its turn ends (runner state `done`) or it exits, Stopped, or Failed. An
+  answered ask stops counting toward the live limit and the budget; its session stays open for follow-ups for
+  15 minutes of quiet (`IDLE_GRACE_MS`), then the sweep closes it. The card shows it as a chip that pulses while
   it runs, with Stop (`doc.agentStop`: the asker, the machine's owner or an admin).
-- **Follow-ups:** a reply in a thread whose agent is live is typed into its session (MachineHub `/input`) as
-  "<who> in doc thread <id>: …". A reply after it finished, or a comment that mentions `@planner` /
-  `@researcher` (`docAgentsIn`, doc threads only), asks a fresh run with the transcript.
+- **Follow-ups:** a reply in a thread whose agent session is open (working, or answered and within its grace
+  period) is typed into it (MachineHub `/input`) as "<who> in doc thread <id>: …", turning the chip back to
+  Thinking. Otherwise only a comment that mentions `@planner` / `@researcher` (`docAgentsIn`, doc threads
+  only) or the Ask action starts a fresh run with the transcript; a plain reply between people doesn't.
 - **Budget:** each ask is held to the policy's per-task minutes and cost (`taskMinutes`, `taskCostUsd`); the
   alarm's sweep (`checkAskBudgets`) kills one past it and says so in the thread. Asks are kept in the OrgHub kv
   (`docask:<session>`).

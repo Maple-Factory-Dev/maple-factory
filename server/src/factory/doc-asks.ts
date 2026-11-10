@@ -23,8 +23,23 @@ export interface AskRecord {
   agent: string;
   startedAt: number;
   costUsd: number;
+  /** The session is gone (ended, stopped, killed). */
   ended: boolean;
+  /** When the agent's turn ended and it went quiet (null while it works): the thread shows Done, and the
+   *  session stays open for follow-ups until IDLE_GRACE_MS passes. */
+  idleSince?: number | null;
+  /** Time spent idle before the current turn, left out of the minute budget. */
+  idleMs?: number;
 }
+
+/** How long an answered ask's session stays open for follow-up replies before it's closed. */
+export const IDLE_GRACE_MS = 15 * 60_000;
+
+/** Whether an ask is working (counts toward the live limit and the budget): open and not idle. */
+export const working = (r: AskRecord): boolean => !r.ended && !r.idleSince;
+
+/** Whether an answered ask's session has been idle past the grace period. */
+export const idleExpired = (r: AskRecord, at = Date.now(), grace = IDLE_GRACE_MS): boolean => !r.ended && !!r.idleSince && at - r.idleSince >= grace;
 
 export const role = (r: unknown): AskRole => (r === "researcher" ? "researcher" : "planner");
 
@@ -64,13 +79,14 @@ export function pickMachine(machines: Machine[], asker: string, agent: string, d
 
 /** Why a member can't start another ask, or null. */
 export function overLimit(records: AskRecord[], by: string, max = MAX_LIVE_ASKS): string | null {
-  const mine = records.filter((r) => r.by === by && !r.ended).length;
+  const mine = records.filter((r) => r.by === by && working(r)).length;
   return mine >= max ? `You already have ${mine} agents running in docs; stop one or wait for it to finish.` : null;
 }
 
 /** Whether a run is past the budget: minutes since it started, or what it spent. */
 export function overBudget(r: AskRecord, limits: { minutes: number | null; costUsd: number | null }, at = Date.now()): "time" | "cost" | null {
-  if (limits.minutes != null && at - r.startedAt >= limits.minutes * 60_000) return "time";
+  const busy = at - r.startedAt - (r.idleMs ?? 0) - (r.idleSince ? at - r.idleSince : 0);
+  if (limits.minutes != null && busy >= limits.minutes * 60_000) return "time";
   if (limits.costUsd != null && r.costUsd >= limits.costUsd) return "cost";
   return null;
 }
@@ -79,7 +95,8 @@ export function overBudget(r: AskRecord, limits: { minutes: number | null; costU
 export function statusFor(state: AgentState, message?: string | null): DocAgentStatus {
   if (state === "waiting") return "waiting";
   if (state === "working") return message ? "working" : "thinking";
-  return "thinking"; // done / idle: the turn ended; the session ending marks it done
+  if (state === "done") return "done"; // the turn ended: answered; the session stays open for follow-ups
+  return "thinking"; // idle: not started on it yet
 }
 
 /** The thread's transcript, oldest first. */

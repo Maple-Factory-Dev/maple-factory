@@ -50,6 +50,8 @@ test("status mapping, live, budget and per-member limit", () => {
   assert.equal(asks.statusFor("working", "Reading src/app.ts"), "working");
   assert.equal(asks.statusFor("working", null), "thinking");
   assert.equal(asks.statusFor("waiting", "Allow?"), "waiting");
+  assert.equal(asks.statusFor("done", null), "done");
+  assert.equal(asks.statusFor("idle", null), "thinking");
   assert.equal(asks.live({ status: "thinking" } as never), true);
   assert.equal(asks.live({ status: "done" } as never), false);
   const r = { startedAt: 0, costUsd: 0, by: "sam", ended: false } as asks.AskRecord;
@@ -58,6 +60,7 @@ test("status mapping, live, budget and per-member limit", () => {
   assert.equal(asks.overBudget({ ...r, costUsd: 3 }, { minutes: null, costUsd: 2 }), "cost");
   assert.match(asks.overLimit([r, r, r], "sam")!, /already have 3/);
   assert.equal(asks.overLimit([r, { ...r, ended: true }], "sam"), null);
+  assert.equal(asks.overLimit([r, r, { ...r, idleSince: 5 }], "sam"), null);
 });
 
 test("docAgentsIn: @planner and @researcher in docs only; task comments keep their roles", () => {
@@ -229,4 +232,33 @@ test("the budget sweep kills an ask past policy minutes and says so in the threa
   assert.equal(after.agent!.status, "stopped");
   assert.match(after.comments.at(-1)!.text, /stopped because it ran past 10 min/);
   assert.equal(engine.liveAsks().length, 0);
+});
+
+test("an answered ask turns Done without the session ending, stops counting, takes follow-ups, and closes after the grace", async () => {
+  const { engine, store, thread, commands, inputs } = factory();
+  store.savePolicy({ ...DEFAULT_POLICY, taskMinutes: 10 });
+  const t = await engine.ask("sam", thread.id, "planner");
+  const session = commands[0].id, start = t.agent!.startedAt;
+  await engine.fromRunner("mac", { type: "session.activity", id: session, activity: { state: "working", message: null, at: 1 } } as never);
+  await engine.fromRunner("mac", { type: "session.activity", id: session, activity: { state: "done", message: null, at: 2 } } as never);
+  assert.equal(store.thread(thread.id)!.agent!.status, "done");
+  assert.equal(engine.liveAsks().length, 0, "an answered ask isn't counted as running");
+  // No budget note for an answered thread, however long it sits.
+  await engine.checkAskBudgets(start + 11 * 60_000);
+  assert.equal(commands.filter((c) => c.type === "session.kill").length, 0);
+  assert.ok(!store.thread(thread.id)!.comments.some((c) => /stopped because/.test(c.text)));
+  // A follow-up is typed into the still-open session and turns it back to Thinking.
+  assert.equal(await engine.typeIntoAsk(store.thread(thread.id)!, "kim", "And Thursday?"), true);
+  assert.equal(inputs.at(-1).session, session);
+  assert.equal(store.thread(thread.id)!.agent!.status, "thinking");
+  assert.equal(engine.liveAsks().length, 1);
+  await engine.fromRunner("mac", { type: "session.activity", id: session, activity: { state: "done", message: null, at: 3 } } as never);
+  assert.equal(store.thread(thread.id)!.agent!.status, "done");
+  // Quiet past the grace period: the session is closed, the thread keeps Done, and a reply no longer types in.
+  await engine.checkAskBudgets(Date.now() + asks.IDLE_GRACE_MS + 1000);
+  const kills = commands.filter((c) => c.type === "session.kill");
+  assert.equal(kills.length, 1);
+  assert.equal(kills[0].id, session);
+  assert.equal(store.thread(thread.id)!.agent!.status, "done");
+  assert.equal(await engine.typeIntoAsk(store.thread(thread.id)!, "kim", "Tuesday?"), false);
 });

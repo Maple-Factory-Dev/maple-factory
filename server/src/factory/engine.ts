@@ -4170,6 +4170,11 @@ export class Engine {
 
   /** Asks still running. */
   liveAsks(): asks.AskRecord[] {
+    return this.openAsks().filter(asks.working);
+  }
+
+  /** Asks whose session is still open, answered (idle) ones included. */
+  private openAsks(): asks.AskRecord[] {
     return this.askSessions().map((id) => this.askRecord(id)).filter((r): r is asks.AskRecord => !!r && !r.ended);
   }
 
@@ -4207,6 +4212,8 @@ export class Engine {
     const doc = this.store.doc(thread.doc) ?? fail("That doc isn't there any more.");
     if (asks.live(thread.agent)) fail("An agent is already working in this thread; reply to it, or stop it first.");
     const { machine } = await this.askPreflight(by, agent);
+    const previous = thread.agent && this.askRecord(thread.agent.session);
+    if (previous) await this.closeIdleAsk(previous);
     const goal = doc.goal ? this.store.goal(doc.goal) : null;
     const repo = goal?.repos?.[0] ?? goal?.repo ?? null;
     let markdown: string | null = null;
@@ -4240,10 +4247,18 @@ export class Engine {
 
   private askActivity(session: string, state: AgentState, step: string | null) {
     const r = this.askRecord(session)!;
+    if (r.ended) return;
     const t = this.store.thread(r.thread);
     if (!t?.agent || t.agent.session !== session || !asks.live(t.agent)) return;
     const status = asks.statusFor(state, step);
     const message = step ? unwrapPasted(step).slice(0, 200) : null;
+    if (status === "done") {
+      // Its turn ended: show the thread answered and stop counting it as running; the session stays open so a
+      // reply in the thread is typed into it, until it's been quiet for IDLE_GRACE_MS (checkAskBudgets).
+      if (!r.idleSince) this.saveAsk({ ...r, idleSince: now() });
+      this.setRun(r.thread, { status, message: null, endedAt: now() });
+      return;
+    }
     if (status !== t.agent.status || message !== (t.agent.message ?? null)) this.setRun(r.thread, { status, message });
   }
 
@@ -4253,6 +4268,13 @@ export class Engine {
     this.saveAsk({ ...r, ended: true });
     const t = this.store.thread(r.thread);
     if (t?.agent?.session === session && asks.live(t.agent)) this.setRun(r.thread, { status, message, endedAt: now() });
+  }
+
+  /** Closes an answered ask's open session (a new ask in its thread, or its grace period ran out); the thread keeps Done. */
+  private async closeIdleAsk(r: asks.AskRecord) {
+    if (r.ended) return;
+    await this.toRunner(r.machine, { type: "session.kill", id: r.session }, "factory");
+    this.saveAsk({ ...r, ended: true });
   }
 
   /** Who may stop a thread's agent: the asker, the machine's owner or an admin. */
@@ -4266,19 +4288,24 @@ export class Engine {
     this.askEnded(run!.session, "stopped", `Stopped by ${by}.`);
   }
 
-  /** Types a reply into the thread's live ask. False when no ask is running there. */
+  /** Types a reply into the thread's ask while its session is open (working, or answered and waiting for
+   *  follow-ups), which turns it back to Thinking. False when no session is open there. */
   async typeIntoAsk(thread: DocThread, by: string, text: string): Promise<boolean> {
     const run = thread.agent;
-    if (!run || !asks.live(run)) return false;
+    const r = run && this.askRecord(run.session);
+    if (!run || !r || r.ended || r.thread !== thread.id) return false;
     const res = await machineHub(this.env, run.machine).fetch("https://hub/input", { method: "POST", body: JSON.stringify({ session: run.session, text: asks.followUp(by, thread.id, thread.doc, text) }) });
-    if (res.ok && run.status === "waiting") this.setRun(thread.id, { status: "thinking", message: null });
-    return res.ok;
+    if (!res.ok) return false;
+    if (r.idleSince) this.saveAsk({ ...r, idleSince: null, idleMs: (r.idleMs ?? 0) + (now() - r.idleSince) });
+    if (run.status === "waiting" || run.status === "done") this.setRun(thread.id, { status: "thinking", message: null, endedAt: null });
+    return true;
   }
 
   /** Kills asks past the per-run budget (policy budgetMinutes / budgetCostUsd) and says so in the thread. */
   async checkAskBudgets(at = now()) {
     const policy = this.store.policy();
     const limits = { minutes: budgetMinutes(policy), costUsd: budgetCostUsd(policy) };
+    for (const r of this.openAsks().filter((r) => asks.idleExpired(r, at))) await this.closeIdleAsk(r);
     for (const r of this.liveAsks()) {
       const over = asks.overBudget(r, limits, at);
       if (!over) continue;
