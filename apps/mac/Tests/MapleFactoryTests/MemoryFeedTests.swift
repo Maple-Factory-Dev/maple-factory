@@ -2,8 +2,8 @@ import Foundation
 import Testing
 @testable import MapleFactory
 
-/// Shared memories (MF-391): the Mac has no screen for them yet, so memory.updated and memory.removed
-/// decode and go through FactoryClient.apply without touching anything the app shows.
+/// Shared memories (MF-391): memory.updated and memory.removed decode, and FactoryClient.apply keeps
+/// `memories` up (MF-394) without touching anything else.
 @MainActor struct MemoryFeedTests {
     private func decode(_ json: String) throws -> Wire.ServerToClient {
         try JSONDecoder().decode(Wire.ServerToClient.self, from: Data(json.utf8))
@@ -63,5 +63,27 @@ import Testing
         #expect(client.members == members)
         #expect(client.members.count == 2)
         #expect(client.me?.login == "bob")
+    }
+
+    @Test func snapshotUpdatedAndRemovedKeepMemories() throws {
+        let client = FactoryClient()
+        client.apply(try decode(snapshot))
+        #expect(client.memories.isEmpty)
+
+        client.apply(try decode(updated))
+        #expect(client.memories.map(\.id) == ["mem_1"])
+        #expect(client.memories.first?.uses == 3)
+
+        let archived = updated.replacingOccurrences(of: #""status":"active""#, with: #""status":"archived""#)
+        client.apply(try decode(archived))
+        #expect(client.memories.count == 1, "an update replaces, not appends")
+        #expect(client.memories.first?.status == .archived)
+
+        client.apply(try decode(removed))
+        #expect(client.memories.isEmpty)
+
+        let withMemories = snapshot.replacingOccurrences(of: #""secrets":[],"#, with: #""secrets":[],"memories":[{"id":"mem_9","scope":{"kind":"org"},"kind":"fact","text":"x","tags":[],"status":"proposed","source":{"by":"bob"},"createdAt":1,"updatedAt":1,"uses":0}],"#)
+        client.apply(try decode(withMemories))
+        #expect(client.memories.map(\.id) == ["mem_9"], "the snapshot replaces the list, proposed ones too")
     }
 }

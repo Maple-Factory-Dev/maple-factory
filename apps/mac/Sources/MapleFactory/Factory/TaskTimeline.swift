@@ -4,6 +4,7 @@ import SwiftUI
 /// comments, change requests to the agent, and pipeline events.
 struct TaskTimeline: View {
     @Environment(AppState.self) private var appState
+    @Environment(FactoryClient.self) private var client
     let task: FactoryTask
     let comments: [Comment]
     let requests: [ChangeRequest]
@@ -21,9 +22,12 @@ struct TaskTimeline: View {
         case comment(Comment)
         case request(ChangeRequest)
         case event(ActivityItem)
+        /// What this task remembered (MF-394), when it has no "remembered N things" event to stand in for.
+        case memories(String)
 
         var when: String {
             switch self {
+            case .memories(let when): when
             case .comment(let comment): comment.when
             case .request(let request): request.when
             case .event(let item): item.when
@@ -44,10 +48,13 @@ struct TaskTimeline: View {
         // Replies sit inside their thread's card, not on the rail.
         let ids = Set(comments.compactMap(\.id))
         let roots = comments.filter { $0.replyTo.map(ids.contains) != true }
-        let all = roots.map(Entry.comment) + requests.map(Entry.request) + events
+        var all = roots.map(Entry.comment) + requests.map(Entry.request) + events
+        if !written.isEmpty, !task.activity.contains(where: Self.isRemembered) {
+            all.append(.memories(task.activity.last?.when ?? "now"))
+        }
         let filtered = all.filter { entry in
             switch (filter, entry) {
-            case (.all, _), (.discussion, .comment), (.changes, .request), (.events, .event): true
+            case (.all, _), (.discussion, .comment), (.changes, .request), (.events, .event), (.events, .memories): true
             default: false
             }
         }
@@ -115,7 +122,9 @@ struct TaskTimeline: View {
                 switch entry {
                 case .comment(let comment): commentCard(comment)
                 case .request(let request): requestCard(request)
-                case .event(let item): eventLine(item)
+                case .event(let item):
+                    if Self.isRemembered(item), !written.isEmpty { MemoryTimelineCard(goal: task.goal, memories: written) } else { eventLine(item) }
+                case .memories: MemoryTimelineCard(goal: task.goal, memories: written)
                 }
             }
             .padding(.bottom, last ? 0 : 16)
@@ -149,6 +158,13 @@ struct TaskTimeline: View {
                     .background(Circle().fill(Theme.fill))
             }
             .frame(height: 22)
+        case .memories:
+            Image(systemName: "brain")
+                .font(.system(size: 9.5, weight: .semibold))
+                .foregroundStyle(Theme.textMuted)
+                .frame(width: 20, height: 20)
+                .background(Circle().fill(Theme.fill))
+                .frame(height: 22)
         }
     }
 
@@ -335,6 +351,16 @@ struct TaskTimeline: View {
             .padding(12)
         }
         .background(card(Theme.State.awaitingApproval.opacity(0.35)))
+    }
+
+    /// The memories this task wrote (`source.task`), oldest first.
+    private var written: [Wire.Memory] {
+        client.memories.filter { $0.source.task == task.id }.sorted { $0.createdAt < $1.createdAt }
+    }
+
+    /// The server's one "remembered N things" line per session (MF-392).
+    static func isRemembered(_ item: ActivityItem) -> Bool {
+        item.text.range(of: #"^remembered \d+ things?$"#, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     private func eventLine(_ item: ActivityItem) -> some View {

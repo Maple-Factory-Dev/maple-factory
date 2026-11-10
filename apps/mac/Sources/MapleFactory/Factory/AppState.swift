@@ -200,6 +200,9 @@ final class AppState {
     var openedTask: String? { showInspector ? selectedTask : nil }
 
     /// A card or row was clicked: show it in the task panel, or the full view when the panel is off.
+    /// A memory opened from a task's timeline (MF-394): its goal's Memory section shows it lit.
+    var highlightedMemory: String?
+
     func openTask(_ id: String) {
         guard taskPanelEnabled else { return openFocus(id) }
         rememberRecent(.task(id))

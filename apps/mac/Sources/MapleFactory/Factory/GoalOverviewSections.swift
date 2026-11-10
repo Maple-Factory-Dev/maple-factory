@@ -123,7 +123,7 @@ struct GoalOverviewSections {
 
 /// A section of the Overview a person can collapse to its header.
 enum OverviewSection: String, CaseIterable {
-    case needsYou, upNext, queue, drafts, planning, inMotion, landed
+    case needsYou, upNext, queue, drafts, planning, inMotion, landed, memory
 }
 
 /// Which Overview sections are collapsed, kept as a comma-joined string so @AppStorage can hold it.

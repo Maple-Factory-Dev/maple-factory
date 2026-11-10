@@ -70,6 +70,8 @@ import Foundation
     private(set) var docThreads: [String: [Wire.DocThread]] = [:]
     /// Doc decisions (MF-367): from the snapshot and `decision.updated`.
     private(set) var decisions: [Wire.Decision] = []
+    /// Every shared memory (MF-391), of any status: the snapshot's, kept up by memory.updated and memory.removed (MF-394).
+    private(set) var memories: [Wire.Memory] = []
     /// Your Draft with AI runs, by id.
     private(set) var drafts: [String: Wire.Draft] = [:]
     /// Goals you chose to follow (true) or stop following (false), by id.
@@ -510,6 +512,7 @@ import Foundation
             notes = snapshot.notes.map(LiveAdapter.note)
             docs = snapshot.docs ?? []
             decisions = snapshot.decisions ?? []
+            memories = snapshot.memories ?? []
             follows = Dictionary(snapshot.follows.map { ($0.goal, $0.following) }, uniquingKeysWith: { _, last in last })
             quietHours = snapshot.quietHours
             intakeRequests = snapshot.intake
@@ -712,9 +715,10 @@ import Foundation
         case .pushDevices:
             // Phone push devices: only the iPhone and Android apps register or list them.
             break
-        case .memoryUpdated, .memoryRemoved:
-            // Shared memories (MF-391) have no Mac screen yet, so the feed deltas are ignored.
-            break
+        case .memoryUpdated(let update):
+            FeedState.upsertMemory(update.memory, into: &memories)
+        case .memoryRemoved(let gone):
+            memories.removeAll { $0.id == gone.id }
         case .unknown:
             break
         }
@@ -1126,6 +1130,16 @@ import Foundation
     /// Sends a message if it can go out now, and says whether it did (MF-401). Nothing is queued for a reconnect:
     /// replaying a merge or a task.create later could do it twice, so a caller refuses it out loud instead.
     /// A write that fails after this returns reaches `onSendFailed`.
+    /// Change a memory's text, kind or tags (MF-394); people only. A refusal comes back as the usual error toast.
+    func editMemory(_ id: String, text: String? = nil, kind: Wire.MemoryKind? = nil, tags: [String]? = nil) {
+        send(.memoryEdit(.init(id: id, text: text, kind: kind, tags: tags)))
+    }
+
+    /// Accept (active), archive or restore a memory (MF-394).
+    func setMemoryStatus(_ id: String, _ status: Wire.MemoryStatus) {
+        send(.memoryStatus(.init(id: id, status: status)))
+    }
+
     @discardableResult func send(_ message: Wire.ClientMessage) -> Bool {
         guard canSend, write(message) else {
             if !Self.isBackground(message) { onRefused?(message) }

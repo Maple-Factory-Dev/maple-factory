@@ -5,6 +5,7 @@ import SwiftUI
 /// beside what's moving, and what landed lately below.
 struct GoalOverview: View {
     @Environment(AppState.self) private var state
+    @Environment(FactoryClient.self) private var client
     let goal: Goal
     let tasks: [FactoryTask]
 
@@ -41,6 +42,7 @@ struct GoalOverview: View {
                     }
                     recentlyLanded(sections.recentlyLanded)
                 }
+                memorySection
                 GoalDocsSection(goalName: goal.name)
             }
             .padding(.horizontal, 24)
@@ -214,6 +216,24 @@ struct GoalOverview: View {
                         ForEach(landed) { OverviewRow(task: $0) }
                     }
                 }
+            }
+        }
+    }
+
+    // MARK: Memory (MF-394)
+
+    /// What agents remember for this goal and its repos, or the whole org.
+    private var memorySection: some View {
+        let wire = client.goals.first { $0.name == goal.name }
+        let repos = wire.map { $0.repos.isEmpty ? ($0.repo.map { [$0] } ?? []) : $0.repos } ?? []
+        let count = client.memories.filter { m in
+            m.status == .active && ((m.scope.kind == .goal && m.scope.key == wire?.id) || (m.scope.kind == .repo && m.scope.key.map(repos.contains) == true))
+        }.count
+        return VStack(alignment: .leading, spacing: 10) {
+            header(icon: "brain", title: "Memory", count: count, color: Theme.textMuted, section: .memory)
+            if isOpen(.memory) {
+                MemoryList(filter: MemoryFilter(scope: count > 0 && !client.memories.contains { $0.scope.kind == .goal && $0.scope.key == wire?.id } ? .repos : .goal, goalId: wire?.id, repos: repos))
+                    .id(goal.name)
             }
         }
     }
