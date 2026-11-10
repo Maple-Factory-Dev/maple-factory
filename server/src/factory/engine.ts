@@ -113,6 +113,11 @@ const MERGE_FIX = "Send it back to fix";
 const MERGE_RETRY = "Try the merge again";
 /** Times the factory sends a task that didn't merge back to fix it before asking a person. */
 const MERGE_FIX_TRIES = 2;
+/** Times the factory sends a task in review back to fix its failed CI on its own (autoFixChecks). */
+const CHECK_FIX_TRIES = 2;
+/** The most failed checks one CI change request quotes, and the log lines it keeps of each. */
+const CHECK_FIX_MAX = 3;
+const CHECK_FIX_LINES = 60;
 /** Finishes in a row the repo's checks can stop before the builder raises a hand instead of trying again. */
 const CHECK_TRIES = 3;
 /** The runner's check for a branch that doesn't merge into origin/<base> (its finish committed, but didn't push). */
@@ -1185,6 +1190,18 @@ export class Engine {
         this.event(task, who, `ran ${failed.map((c) => c.name).join(", ")} again`);
         this.save(task);
         await audit(this.env, who, "task.rerunChecks", task.id, { asked });
+        return;
+      }
+      case "task.fixChecks": {
+        // A person's own "fix CI": no try cap, and it goes even with autoFixChecks off.
+        const priv = this.store.private(task.id);
+        if (!githubApp(this.env) || !priv.gh || !task.pr) fail("Its checks aren't on GitHub.");
+        const failed = (priv.checks ?? []).filter((c) => c.status === "failed");
+        if (!failed.length) fail("No checks have failed.");
+        this.event(task, who, `sent it back to fix ${failed.map((c) => c.name).join(", ")}`);
+        this.store.savePrivate(task.id, { ...priv, checkFixedHead: task.pr!.head ?? null });
+        await this.sendBackToFixChecks(task, who, failed);
+        await audit(this.env, who, "task.fixChecks", task.id, { checks: failed.map((c) => c.name) });
         return;
       }
       case "task.recheckGitHub": {
@@ -2575,10 +2592,72 @@ export class Engine {
     }
     const failed = found.filter((c) => c.status === "failed");
     if (failed.length) this.event(now_, "factory", `CI failed: ${failed.map((c) => c.name).join(", ")}`);
-    else if (found.length && found.every((c) => c.status === "passed")) this.event(now_, "factory", "CI passed");
+    else if (found.length && found.every((c) => c.status === "passed")) {
+      this.event(now_, "factory", "CI passed");
+      if (this.store.private(id).checkFixes) this.store.savePrivate(id, { ...this.store.private(id), checkFixes: 0 });
+    }
     this.save(now_);
+    if (failed.length && (await this.autoFixChecks(now_, found))) return true;
     await this.autoMerge(now_);
     return true;
+  }
+
+  /** CI settled on the head with a failure: a task in review goes back to its builder to fix it, at most
+   *  CHECK_FIX_TRIES times and once per head. True when it was sent back. */
+  private async autoFixChecks(task: Task, found: Check[]): Promise<boolean> {
+    if (found.some((c) => c.status === "queued" || c.status === "running")) return false;
+    const failed = found.filter((c) => c.status === "failed");
+    const priv = this.store.private(task.id);
+    const head = task.pr?.head ?? null;
+    if (!failed.length || task.state !== "reviewing" || task.hand || priv.merging) return false;
+    if (this.store.policy().autoFixChecks === false || !head || priv.checkFixedHead === head) return false;
+    const tries = priv.checkFixes ?? 0;
+    if (tries >= CHECK_FIX_TRIES) {
+      this.store.savePrivate(task.id, { ...priv, checkFixedHead: head });
+      this.event(task, "factory", `CI failed again after ${CHECK_FIX_TRIES} fixes; left for a person`);
+      this.hooks.broadcast({ type: "toast", text: `${task.id}: CI failed again after ${CHECK_FIX_TRIES} fixes. It's yours to look at.`, taskId: task.id });
+      this.save(task);
+      return false;
+    }
+    this.store.savePrivate(task.id, { ...priv, checkFixes: tries + 1, checkFixedHead: head });
+    this.event(task, "factory", `CI failed: sent it back to fix ${failed.map((c) => c.name).join(", ")} (try ${tries + 1} of ${CHECK_FIX_TRIES})`);
+    this.hooks.broadcast({ type: "toast", text: `${task.id}: CI failed; a builder is fixing it (try ${tries + 1} of ${CHECK_FIX_TRIES}).`, taskId: task.id });
+    await this.sendBackToFixChecks(task, "factory", failed);
+    return true;
+  }
+
+  /** A task whose CI failed goes back to a builder with one change request naming each failed check,
+   *  the step that failed and the end of its log (read from GitHub, best effort). */
+  private async sendBackToFixChecks(task: Task, who: string, failed: Check[]) {
+    const app = githubApp(this.env);
+    const gh = this.store.private(task.id).gh;
+    const parts: string[] = [];
+    for (const c of failed.slice(0, CHECK_FIX_MAX)) {
+      let part = `- ${c.name}`;
+      const log = app && gh ? await checkLog(app, gh.owner, gh.repo, c).catch(() => null) : null;
+      if (log?.failedStep) part += ` (failed step: ${log.failedStep})`;
+      if (c.url) part += ` ${c.url}`;
+      if (log?.text) {
+        const tail = log.text.trimEnd().split("\n").slice(-CHECK_FIX_LINES).join("\n");
+        part += `\n\n\`\`\`\n${tail}\n\`\`\``;
+      }
+      parts.push(part);
+    }
+    if (failed.length > CHECK_FIX_MAX) parts.push(`- and ${failed.length - CHECK_FIX_MAX} more: ${failed.slice(CHECK_FIX_MAX).map((c) => c.name).join(", ")}`);
+    const change: ChangeRequest = {
+      id: `C${task.changes.length + 1}`,
+      author: who,
+      text: `CI failed on the pull request:\n\n${parts.join("\n\n")}\n\nReproduce each failure locally, fix it, keep the tests passing and push.`,
+      at: now(),
+      anchor: "CI",
+      status: "queued",
+      timing: null,
+    };
+    task.changes.push(change);
+    await this.backToBuilding(task);
+    this.store.savePrivate(task.id, { ...this.store.private(task.id), restarts: 0 });
+    this.save(task);
+    await this.pump();
   }
 
   /** A GitHub webhook about a repo's checks or pull requests: the tasks it's about read their CI again. */
