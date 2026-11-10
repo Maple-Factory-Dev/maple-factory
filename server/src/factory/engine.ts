@@ -2647,14 +2647,16 @@ export class Engine {
     if (e.bot || /\[bot\]$/i.test(e.author) || (slug && e.author.toLowerCase() === slug)) return;
     const repo = `${e.owner}/${e.repo}`.toLowerCase();
     const id = `gh-${e.ghId}`;
-    for (const task of this.store.tasks()) {
-      const gh = this.store.private(task.id).gh;
-      if (!gh || `${gh.owner}/${gh.repo}`.toLowerCase() !== repo || task.pr?.number !== e.number) continue;
-      if (task.comments.some((c) => c.id === id)) continue;
-      const anchor = e.path ? (e.line ? `${e.path}:${e.line}` : e.path) : e.review ? `Review · ${e.review}` : null;
-      const text = e.body.trim() || (e.review ? `${e.review[0].toUpperCase()}${e.review.slice(1)}.` : "");
-      if (!text) continue;
+    const anchor = e.path ? (e.line ? `${e.path}:${e.line}` : e.path) : e.review ? `Review · ${e.review}` : null;
+    const text = e.body.trim() || (e.review ? `${e.review[0].toUpperCase()}${e.review.slice(1)}.` : "");
+    if (!text) return;
+    for (const { id: taskId } of this.store.tasks()) {
+      const gh = this.store.private(taskId).gh;
+      if (!gh || `${gh.owner}/${gh.repo}`.toLowerCase() !== repo || this.store.task(taskId)?.pr?.number !== e.number) continue;
       const comment = await this.comment(e.author, text, { at: e.at ?? undefined, anchor });
+      // Read it again after the await: anything saved meanwhile stays.
+      const task = this.store.task(taskId);
+      if (!task || task.comments.some((c) => c.id === id)) continue;
       task.comments.push({ ...comment, id, source: "github", url: e.url ?? null });
       this.save(task);
     }

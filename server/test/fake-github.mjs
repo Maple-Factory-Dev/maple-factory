@@ -57,7 +57,9 @@
 // POST /_queue { owner, repo, branch = "main", then: "merge"|"dequeue"|"hold"|"off", reason?, delayMs? }: that branch requires
 // a merge queue (not with "off"), and what the queue does with each pull request added to it a moment later, and
 // POST /_reviews { owner, repo, branch = "main", count }: that branch's rules require `count` approving reviews, and
-// POST /_private { owner, repo, private: false }: the app's repo list says that repo is public (repos are private until then).
+// POST /_private { owner, repo, private: false }: the app's repo list says that repo is public (repos are private until then), and
+// POST /_comment { owner, repo, number, on: "conversation"|"review"|"line", author, bot?, body, state?, path?, line?, id?, badSignature? }:
+// someone comments on that pull request; it answers { status, kind, payload } with the webhook's status.
 
 import { execFileSync } from "node:child_process";
 import { createHmac, createPublicKey, createVerify, randomBytes } from "node:crypto";
@@ -211,18 +213,31 @@ function restart(owner, repo, sha, r) {
   }, 1500);
 }
 
-async function deliver(kind, payload) {
+async function deliver(kind, payload, secret = values["webhook-secret"]) {
   if (!values["webhook-url"]) return null;
   const body = JSON.stringify(payload);
   const res = await fetch(values["webhook-url"], {
     method: "POST",
     headers: {
       "content-type": "application/json", "x-github-event": kind, "x-github-delivery": crypto.randomUUID(),
-      "x-hub-signature-256": `sha256=${createHmac("sha256", values["webhook-secret"]).update(body).digest("hex")}`,
+      "x-hub-signature-256": `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`,
     },
     body,
   });
   return res.status;
+}
+/** What GitHub sends when someone comments on a pull request (MF-424): `on` is "conversation"
+ *  (issue_comment), "review" (pull_request_review, with `state`) or "line" (pull_request_review_comment). */
+let lastCommentId = 1000;
+function commentEvent({ owner, repo, number, on = "conversation", author = "octocat", bot = false, body = "", state = "commented", path, line, id }) {
+  const ghId = id ?? ++lastCommentId;
+  const user = { login: author, type: bot ? "Bot" : "User" };
+  const prUrl = `https://github.com/${owner}/${repo}/pull/${number}`;
+  const at = new Date().toISOString();
+  const base = { sender: user, repository: repository(owner, repo) };
+  if (on === "review") return ["pull_request_review", { ...base, action: "submitted", pull_request: { number }, review: { id: ghId, user, body, state, html_url: `${prUrl}#pullrequestreview-${ghId}`, submitted_at: at } }];
+  if (on === "line") return ["pull_request_review_comment", { ...base, action: "created", pull_request: { number }, comment: { id: ghId, user, body, path, line, html_url: `${prUrl}#discussion_r${ghId}`, created_at: at } }];
+  return ["issue_comment", { ...base, action: "created", issue: { number, pull_request: { url: prUrl } }, comment: { id: ghId, user, body, html_url: `${prUrl}#issuecomment-${ghId}`, created_at: at } }];
 }
 const repository = (owner, repo) => ({ name: repo, full_name: `${owner}/${repo}`, owner: { login: owner } });
 
@@ -291,6 +306,11 @@ createServer((req, res) => {
       if (body.then === "off") queues.delete(key);
       else queues.set(key, { then: body.then ?? "merge", reason: body.reason, delayMs: body.delayMs });
       return send(res, 204);
+    }
+    if (req.method === "POST" && url.pathname === "/_comment") {
+      // Someone comments on a pull request on GitHub: the signed webhook goes out (a wrong secret with `badSignature`).
+      const [kind, payload] = commentEvent(body);
+      return send(res, 200, { status: await deliver(kind, payload, body.badSignature ? "not-the-secret" : undefined), kind, payload });
     }
     if (req.method === "POST" && url.pathname === "/_reviews") {
       reviewRules.set(`${body.owner}/${body.repo}:${body.branch ?? "main"}`.toLowerCase(), body.count);

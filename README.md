@@ -370,8 +370,8 @@ GITHUB_WEBHOOK_SECRET=…      # webhook URL: https://<factory>/integrations/git
 ```
 
 The app needs Contents, Pull requests, Checks and Actions (read & write) and Commit statuses (read), and
-webhook events Check run, Check suite, Status and Pull request. `server/test/e2e-github.mjs` runs the
-whole path against `server/test/fake-github.mjs`.
+webhook events Check run, Check suite, Status, Pull request, Issue comment, Pull request review and Pull request review comment (and Issues: read). `server/test/e2e-github.mjs` runs the
+whole path against `server/test/fake-github.mjs`; `server/test/e2e-github-comments.mjs` covers pull request comments and reviews.
 
 **Merge queues.** When a pull request's base branch requires a merge queue (a `merge_queue` rule in its
 rulesets, read from `/repos/{owner}/{repo}/rules/branches/{base}`), the factory adds the pull request to
