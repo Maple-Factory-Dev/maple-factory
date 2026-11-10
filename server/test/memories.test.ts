@@ -326,7 +326,7 @@ class FakeSocket {
   deserializeAttachment() { return structuredClone(this.attachment); }
 }
 
-test("OrgHub: a new connection's snapshot lists active memories only; members get memory.updated and memory.removed", async () => {
+test("OrgHub: a new connection's snapshot lists every memory, archived and proposed too; members get memory.updated and memory.removed", async () => {
   const { OrgHub } = await import("../src/org-hub.ts");
   const sockets: FakeSocket[] = [];
   const ctx = {
@@ -369,12 +369,12 @@ test("OrgHub: a new connection's snapshot lists active memories only; members ge
   assert.equal(toArchive.status, "active");
   ann.said();
 
-  // A member who connects now gets active memories only.
+  // A member who connects now gets every memory, whatever its status (MF-394).
   const cara = client("cara");
   await cara.say({ type: "subscribe" });
   const snapshot = cara.said().find((m) => m.type === "snapshot");
   assert.ok(snapshot, "a snapshot");
-  assert.deepEqual(snapshot.memories, [edited], "no proposed or archived ones");
+  assert.deepEqual(snapshot.memories, [edited, proposed, archived], "proposed and archived ones too");
   assert.equal(proposed.status, "proposed");
   ann.said();
   bob.said();
@@ -384,5 +384,86 @@ test("OrgHub: a new connection's snapshot lists active memories only; members ge
   for (const who of [ann, bob, cara]) assert.deepEqual(who.said(), [{ type: "memory.removed", id: id(1) }]);
   const dan = client("dan");
   await dan.say({ type: "subscribe" });
-  assert.deepEqual(dan.said().find((m) => m.type === "snapshot").memories, []);
+  assert.deepEqual(dan.said().find((m) => m.type === "snapshot").memories.map((m: Memory) => m.id), [id(2), id(3)]);
+});
+
+// ---- MF-394: people edit, archive, restore and accept memories through the hub ----
+
+test("OrgHub: memory.edit and memory.status from a member edit, archive, restore and accept, broadcast, and log the member", async () => {
+  const { OrgHub } = await import("../src/org-hub.ts");
+  const sockets: FakeSocket[] = [];
+  const audits: unknown[][] = [];
+  const ctx = {
+    storage: { sql: sqlStorage(), list: async () => new Map(), get: async () => undefined, put: async () => {}, getAlarm: async () => null, setAlarm: async () => {} },
+    blockConcurrencyWhile: (fn: () => Promise<void>) => fn(),
+    waitUntil: () => {},
+    getWebSockets: () => sockets,
+  };
+  const env = {
+    DB: { prepare: (q: string) => ({ all: async () => ({ results: [] }), bind: (...args: unknown[]) => ({ all: async () => ({ results: [] }), first: async () => null, run: async () => { if (q.includes("audit")) audits.push(args); } }) }) },
+    DOC: { idFromName: (n: string) => n, get: () => ({ fetch: async () => new Response(null, { status: 204 }) }) },
+  };
+  const org = new OrgHub(ctx as never, env as never);
+  const client = (login: string) => {
+    const ws = new FakeSocket();
+    ws.peer = new FakeSocket();
+    ws.serializeAttachment({ member: { login, name: login, role: "member", teams: [] }, subscribed: true });
+    sockets.push(ws);
+    const said = () => ws.peer.inbox.splice(0).map((m) => JSON.parse(m));
+    const say = (msg: object) => org.webSocketMessage(ws as never, JSON.stringify(msg));
+    return { said, say };
+  };
+  const engine = (org as unknown as { engine: { memories: Memories } }).engine;
+  const store = (org as unknown as { store: Store }).store;
+  const ann = client("ann");
+  const bob = client("bob");
+  ok(engine.memories.create(id(1), input({ text: "Run npm test before pushing.", source: { by: "ann", task: "MF-391", agent: "MF-391 builder" } })));
+  ok(engine.memories.create(id(2), input({ text: "Proposed by an agent.", status: "proposed" })));
+  ann.said(); bob.said();
+
+  // Edit: text, kind and tags; bob hears it; the log records ann and the text it replaced.
+  await ann.say({ type: "memory.edit", id: id(1), text: "Run npm test and npm run gen:check before pushing.", kind: "convention", tags: ["CI"] });
+  const [edited] = bob.said();
+  ann.said();
+  assert.equal(edited.type, "memory.updated");
+  assert.equal(edited.memory.text, "Run npm test and npm run gen:check before pushing.");
+  assert.equal(edited.memory.kind, "convention");
+  assert.deepEqual(edited.memory.tags, ["ci"]);
+  assert.equal(edited.memory.scope.kind, "org", "left-out fields stay");
+  const editLog = store.memoryLog(id(1)).at(-1)!;
+  assert.equal(editLog.by, "ann");
+  assert.equal(editLog.textBefore, "Run npm test before pushing.");
+
+  // Archive, then restore.
+  await bob.say({ type: "memory.status", id: id(1), status: "archived" });
+  assert.equal(ann.said()[0].memory.status, "archived");
+  assert.equal(store.memoryLog(id(1)).at(-1)!.by, "bob");
+  await new Promise((r) => setTimeout(r, 0));
+  assert.ok(audits.some((a) => a[1] === "bob" && a[2] === "memory.archived" && a[3] === id(1)), "an audit entry for a person archiving");
+  const cara = client("cara");
+  await cara.say({ type: "subscribe" });
+  assert.equal(cara.said().find((m) => m.type === "snapshot").memories.find((m: Memory) => m.id === id(1)).status, "archived", "archived memories are in the snapshot");
+  ann.said(); bob.said();
+  await bob.say({ type: "memory.status", id: id(1), status: "active" });
+  assert.equal(ann.said()[0].memory.status, "active");
+  bob.said(); cara.said();
+
+  // Accept a proposed one.
+  await ann.say({ type: "memory.status", id: id(2), status: "active" });
+  assert.equal(bob.said()[0].memory.status, "active");
+  assert.equal(store.memory(id(2))!.status, "active");
+  ann.said();
+
+  // A refusal comes back to the sender only, as an error.
+  await ann.say({ type: "memory.edit", id: id(9), text: "nope" });
+  assert.deepEqual(ann.said(), [{ type: "error", message: "That memory isn't there any more.", requestId: "memory.edit" }]);
+  await ann.say({ type: "memory.edit", id: id(1), text: "" });
+  assert.equal(ann.said()[0].type, "error");
+  assert.deepEqual(bob.said(), []);
+});
+
+test("Agents can't send memory.edit or memory.status: only the member socket's ClientMessage carries them", async () => {
+  const { unions } = await import("../../protocol/schema.ts");
+  const carriers = Object.entries(unions).filter(([, u]) => "memory.edit" in u.variants || "memory.status" in u.variants).map(([name]) => name);
+  assert.deepEqual(carriers, ["ClientMessage"], "no agent or machine message can edit or archive a memory");
 });
