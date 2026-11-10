@@ -4182,11 +4182,8 @@ export class Engine {
     this.hooks.broadcast({ type: "doc.thread.updated", thread });
   }
 
-  /** Opens an agent session that answers in `thread` (already saved). Throws FactoryError when it can't. */
-  async ask(by: string, threadId: string, role: asks.AskRole, agent = "claude"): Promise<DocThread> {
-    const thread = this.store.thread(threadId) ?? fail("That thread isn't there any more.");
-    const doc = this.store.doc(thread.doc) ?? fail("That doc isn't there any more.");
-    if (asks.live(thread.agent)) fail("An agent is already working in this thread; reply to it, or stop it first.");
+  /** The machine a new ask of `by`'s runs on; throws FactoryError with why there's none (or they're at their limit). */
+  async askPreflight(by: string, agent = "claude"): Promise<asks.Pick> {
     const limit = asks.overLimit(this.liveAsks(), by);
     if (limit) fail(limit);
     const machines = await this.hooks.machines();
@@ -4201,7 +4198,15 @@ export class Engine {
       busy: (m) => busy(m.id),
     });
     if (typeof picked === "string") fail(picked);
-    const { machine } = picked as asks.Pick;
+    return picked as asks.Pick;
+  }
+
+  /** Opens an agent session that answers in `thread` (already saved). Throws FactoryError when it can't. */
+  async ask(by: string, threadId: string, role: asks.AskRole, agent = "claude"): Promise<DocThread> {
+    const thread = this.store.thread(threadId) ?? fail("That thread isn't there any more.");
+    const doc = this.store.doc(thread.doc) ?? fail("That doc isn't there any more.");
+    if (asks.live(thread.agent)) fail("An agent is already working in this thread; reply to it, or stop it first.");
+    const { machine } = await this.askPreflight(by, agent);
     const goal = doc.goal ? this.store.goal(doc.goal) : null;
     const repo = goal?.repos?.[0] ?? goal?.repo ?? null;
     let markdown: string | null = null;

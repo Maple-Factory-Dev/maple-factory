@@ -12,6 +12,8 @@ import { docHub } from "./doc-routes.ts";
 import { maySignIn, recheckEvery, revoked, revokeMember, stillMember, toMember, userToken, type MemberRow } from "./auth.ts";
 import { Store } from "./factory/store.ts";
 import * as threads from "./factory/doc-threads.ts";
+import * as asks from "./factory/doc-asks.ts";
+import { docAgentsIn } from "./factory/mentions.ts";
 import { Secrets } from "./secrets.ts";
 import { Push, deviceId } from "./push.ts";
 import { Integrations } from "./integrations/store.ts";
@@ -1092,6 +1094,58 @@ export class OrgHub extends DurableObject<Env> {
         this.store.saveThread(thread);
         this.broadcast({ type: "doc.thread.updated", thread });
         this.broadcast({ type: "doc.updated", doc: this.store.doc(doc.id)! });
+        if (msg.type === "doc.comment") {
+          // A reply where an agent is still running is typed into its session; a reply on a finished run,
+          // or an @planner / @researcher mention, asks a fresh one with the thread so far (MF-366).
+          try {
+            const typed = msg.thread ? await this.engine.typeIntoAsk(thread, me, msg.text) : false;
+            const named = docAgentsIn(msg.text);
+            if (!typed && (named.length || (msg.thread && thread.agent))) await this.engine.ask(me, thread.id, named[0] ?? (thread.agent?.role === "researcher" ? "researcher" : "planner"));
+          } catch (e) {
+            fail(e instanceof Error ? e.message : String(e));
+          }
+        }
+        return;
+      }
+      case "doc.ask": {
+        const fail = (message: string) => this.send(ws, { type: "error", message, requestId: msg.type });
+        const doc = this.store.doc(msg.doc);
+        if (!doc) return fail("That doc isn't there any more.");
+        if (doc.archived) return fail("That doc is archived; bring it back to ask about it.");
+        const me = client.member.login;
+        const why = threads.invalid(msg.text, msg.anchor);
+        if (why) return fail(why);
+        let thread = msg.thread ? this.store.thread(msg.thread) : null;
+        if (msg.thread && (!thread || thread.doc !== doc.id)) return fail("That thread isn't there any more.");
+        const members = await this.members();
+        if (thread) {
+          if (thread.agent && asks.live(thread.agent)) return fail("An agent is already working in this thread; reply to it, or stop it first.");
+          thread = threads.addComment(thread, me, msg.text, members);
+        } else {
+          if (!msg.anchor) return fail("Select some text to ask about.");
+          if (this.store.threadCount(doc.id) >= threads.MAX_THREADS) return fail(`A doc holds at most ${threads.MAX_THREADS} threads.`);
+          thread = threads.newThread(doc.id, me, msg.text, msg.anchor, members);
+        }
+        try {
+          // Checked before the thread is saved, so a refusal leaves nothing behind.
+          await this.engine.askPreflight(me);
+          this.store.saveThread(thread);
+          this.broadcast({ type: "doc.thread.updated", thread });
+          this.broadcast({ type: "doc.updated", doc: this.store.doc(doc.id)! });
+          await this.engine.ask(me, thread.id, asks.role(msg.role));
+        } catch (e) {
+          fail(e instanceof Error ? e.message : String(e));
+        }
+        return;
+      }
+      case "doc.agentStop": {
+        try {
+          const t = this.store.thread(msg.thread);
+          if (!t || t.doc !== msg.doc) throw new Error("That thread isn't there any more.");
+          await this.engine.stopAsk(client.member.login, client.member.role === "admin", msg.thread);
+        } catch (e) {
+          this.send(ws, { type: "error", message: e instanceof Error ? e.message : String(e), requestId: msg.type });
+        }
         return;
       }
       case "doc.suggestion": {
