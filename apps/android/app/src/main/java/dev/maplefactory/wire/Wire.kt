@@ -3541,6 +3541,12 @@ sealed class ClientMessage {
         val id: String,
         val archived: Boolean,
     ) : ClientMessage()
+    /** Move a doc to another goal, or out of any goal (goal left out or null). */
+    @Serializable
+    data class DocMove(
+        val id: String,
+        val goal: String? = null,
+    ) : ClientMessage()
     /** Comment on a doc: start a thread on an anchored range, or reply to one (a reply reopens a resolved thread). */
     @Serializable
     data class DocComment(
@@ -4210,6 +4216,7 @@ sealed class ClientMessage {
             "doc.create" -> json.decodeFromJsonElement(DocCreate.serializer(), body)
             "doc.rename" -> json.decodeFromJsonElement(DocRename.serializer(), body)
             "doc.archive" -> json.decodeFromJsonElement(DocArchive.serializer(), body)
+            "doc.move" -> json.decodeFromJsonElement(DocMove.serializer(), body)
             "doc.comment" -> json.decodeFromJsonElement(DocComment.serializer(), body)
             "doc.ask" -> json.decodeFromJsonElement(DocAsk.serializer(), body)
             "doc.agentStop" -> json.decodeFromJsonElement(DocAgentStop.serializer(), body)
@@ -4322,6 +4329,7 @@ sealed class ClientMessage {
             is DocCreate -> "doc.create" to json.encodeToJsonElement(DocCreate.serializer(), value)
             is DocRename -> "doc.rename" to json.encodeToJsonElement(DocRename.serializer(), value)
             is DocArchive -> "doc.archive" to json.encodeToJsonElement(DocArchive.serializer(), value)
+            is DocMove -> "doc.move" to json.encodeToJsonElement(DocMove.serializer(), value)
             is DocComment -> "doc.comment" to json.encodeToJsonElement(DocComment.serializer(), value)
             is DocAsk -> "doc.ask" to json.encodeToJsonElement(DocAsk.serializer(), value)
             is DocAgentStop -> "doc.agentStop" to json.encodeToJsonElement(DocAgentStop.serializer(), value)

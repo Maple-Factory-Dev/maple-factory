@@ -3889,6 +3889,13 @@ pub enum ClientMessage {
         id: Uuid,
         archived: bool,
     },
+    /// Move a doc to another goal, or out of any goal (goal left out or null).
+    #[serde(rename = "doc.move")]
+    DocMove {
+        id: Uuid,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        goal: Option<String>,
+    },
     /// Comment on a doc: start a thread on an anchored range, or reply to one (a reply reopens a resolved thread).
     #[serde(rename = "doc.comment")]
     DocComment {

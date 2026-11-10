@@ -796,6 +796,7 @@ details.fold[open] > .card { margin-top: 10px; }
 /* ---- Docs (MF-361) ---- */
 .docs-filters { gap: 12px; margin: 4px 0 12px; }
 .item.doc .nav-icon { color: var(--muted); margin-right: 10px; }
+.item.doc .doc-move { margin-left: 8px; max-width: 160px; font-size: 12px; }
 .doc-page .doc-title { width: 100%; font-size: 30px; font-weight: 700; border: 0; background: none; color: var(--text); padding: 12px 0 2px; outline: none; }
 .doc-page .sub { font-size: 12px; margin-bottom: 18px; }
 .doc-page > .row { gap: 8px; align-items: center; }

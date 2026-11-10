@@ -1104,6 +1104,8 @@ import Foundation
     }
     func renameDoc(id: String, title: String) { send(.docRename(.init(id: id, title: title))) }
     func archiveDoc(id: String, archived: Bool = true) { send(.docArchive(.init(id: id, archived: archived))) }
+    /// Into another goal, or out of any goal with nil (MF-378).
+    func moveDoc(id: String, goal: String?) { send(.docMove(.init(id: id, goal: goal))) }
     /// A doc's comment threads (MF-364): answered with doc.threads, then kept current by doc.thread.updated.
     func askDocThreads(_ id: String) { send(.docThreads(.init(doc: id))) }
     /// Relays the docs embed's `command` event: only doc.comment / doc.resolve / doc.reopen / doc.suggestion / doc.ask / doc.agentStop get through.

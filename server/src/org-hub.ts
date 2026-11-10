@@ -1036,7 +1036,8 @@ export class OrgHub extends DurableObject<Env> {
       }
       case "doc.create":
       case "doc.rename":
-      case "doc.archive": {
+      case "doc.archive":
+      case "doc.move": {
         const fail = (message: string) => this.send(ws, { type: "error", message, requestId: msg.type });
         const now = Date.now();
         let doc;
@@ -1044,6 +1045,14 @@ export class OrgHub extends DurableObject<Env> {
           const existing = this.store.doc(msg.id);
           if (!existing) return fail("That doc isn't there any more.");
           doc = { ...existing, archived: msg.archived || null, updatedAt: now };
+        } else if (msg.type === "doc.move") {
+          const existing = this.store.doc(msg.id);
+          if (!existing) return fail("That doc isn't there any more.");
+          if (existing.archived) return fail("That doc is archived; bring it back to move it.");
+          const goal = msg.goal || null;
+          if (goal && !this.store.goal(goal)) return fail("That goal isn't there any more.");
+          if ((existing.goal || null) === goal) return;
+          doc = { ...existing, goal, updatedAt: now };
         } else {
           const title = msg.title.trim();
           if (!title || title.length > 200) return fail("A doc's title is 1 to 200 characters.");

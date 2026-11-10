@@ -7450,6 +7450,17 @@ public enum Wire {
         }
     }
 
+    /// Move a doc to another goal, or out of any goal (goal left out or null).
+    public struct ClientMessageDocMove: Codable, Hashable, Sendable {
+        public var id: String
+        public var goal: String?
+
+        public init(id: String, goal: String? = nil) {
+            self.id = id
+            self.goal = goal
+        }
+    }
+
     /// Comment on a doc: start a thread on an anchored range, or reply to one (a reply reopens a resolved thread).
     public struct ClientMessageDocComment: Codable, Hashable, Sendable {
         public var doc: String
@@ -8730,6 +8741,7 @@ public enum Wire {
         case docCreate(ClientMessageDocCreate)
         case docRename(ClientMessageDocRename)
         case docArchive(ClientMessageDocArchive)
+        case docMove(ClientMessageDocMove)
         case docComment(ClientMessageDocComment)
         case docAsk(ClientMessageDocAsk)
         case docAgentStop(ClientMessageDocAgentStop)
@@ -8846,6 +8858,7 @@ public enum Wire {
             case "doc.create": self = .docCreate(try ClientMessageDocCreate(from: decoder))
             case "doc.rename": self = .docRename(try ClientMessageDocRename(from: decoder))
             case "doc.archive": self = .docArchive(try ClientMessageDocArchive(from: decoder))
+            case "doc.move": self = .docMove(try ClientMessageDocMove(from: decoder))
             case "doc.comment": self = .docComment(try ClientMessageDocComment(from: decoder))
             case "doc.ask": self = .docAsk(try ClientMessageDocAsk(from: decoder))
             case "doc.agentStop": self = .docAgentStop(try ClientMessageDocAgentStop(from: decoder))
@@ -8977,6 +8990,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .docArchive(let body):
                 try c.encode("doc.archive", forKey: .type)
+                try body.encode(to: encoder)
+            case .docMove(let body):
+                try c.encode("doc.move", forKey: .type)
                 try body.encode(to: encoder)
             case .docComment(let body):
                 try c.encode("doc.comment", forKey: .type)
