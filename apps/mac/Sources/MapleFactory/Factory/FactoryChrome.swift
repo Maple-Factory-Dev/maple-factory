@@ -75,9 +75,11 @@ struct FactoryTopBar: View {
                 StopTheLineButton()
             }
 
+            // An unsent brief is waiting (MF-404): ⌘N picks it back up, so say so.
+            let resumes = state.hasUnsentDraft
             HStack(spacing: 6) {
-                Image(systemName: "plus").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.accent)
-                Text("New task")
+                Image(systemName: resumes ? "pencil.line" : "plus").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.accent)
+                Text(resumes ? "Resume draft" : "New task")
             }
             .font(.system(size: 13, weight: .medium))
             .foregroundStyle(Theme.text)
@@ -88,9 +90,15 @@ struct FactoryTopBar: View {
                     .fill(Theme.fill)
                     .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.stroke))
             )
+            .overlay(alignment: .topTrailing) {
+                if resumes {
+                    Circle().fill(Theme.accent).frame(width: 7, height: 7).offset(x: 2, y: -2)
+                        .accessibilityHidden(true)
+                }
+            }
             .contentShape(Rectangle())
             .onTapGesture { state.startCompose() }
-            .help("New task (⌘N)")
+            .help(resumes ? "Resume your unsent draft (⌘N)" : "New task (⌘N)")
             .padding(.leading, 4)
         }
         .padding(.horizontal, 16)

@@ -5,8 +5,8 @@ import MapleKit
 
 /// A ticket in the team's tracker. Tasks link to tickets (often several) rather than being them;
 /// linked tickets are handed to the agent as context.
-struct TicketLink: Identifiable, Hashable {
-    enum System: String {
+struct TicketLink: Identifiable, Hashable, Codable {
+    enum System: String, Codable {
         case linear = "Linear", jira = "Jira"
 
         var color: Color {

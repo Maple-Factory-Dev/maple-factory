@@ -85,6 +85,19 @@ import Testing
         #expect(state.toast?.text != "Sent to planning")
     }
 
+    /// MF-404: the refused brief is still the unsent draft, kept for a relaunch.
+    @Test func aRefusedSendKeepsTheStoredDraft() throws {
+        let (state, _) = try offlineState()
+        state.taskGoalDefaults = UserDefaults(suiteName: "OfflineSendTests.\(UUID().uuidString)")!
+        state.isComposing = true
+        state.draft.goal = "Goal"
+        state.draft.title = "Offline brief"
+        state.submitDraft(sendToPlanning: true)
+        #expect(state.draft.title == "Offline brief")
+        let key = try #require(state.unsentDraftKey)
+        #expect(UnsentDraft.load(key: key, defaults: state.taskGoalDefaults)?.title == "Offline brief")
+    }
+
     @Test func approveAndMergeFailFastOffline() throws {
         let (state, _) = try offlineState()
         state.approvePlan("MF-1")
