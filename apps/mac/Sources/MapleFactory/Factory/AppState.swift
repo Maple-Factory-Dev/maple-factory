@@ -2599,6 +2599,7 @@ final class AppState {
             case "stopline" where parts[1] == "reason": stopLineReason = parts.dropFirst(2).joined(separator: ":")
             case "stopline" where parts[1] == "repo": stopLineTarget = .repo(parts.dropFirst(2).joined(separator: ":"))
             case "stopline" where parts[1] == "go": NotificationCenter.default.post(name: StopTheLinePopover.demoSubmit, object: nil)
+            case "stopline" where parts[1] == "liftask": NotificationCenter.default.post(name: LineStoppedBanner.demoLift, object: nil)
             case "stopline" where parts[1] == "lift": if let hold = client?.mergeHolds.first { client?.releaseMerges(repo: hold.repo) }
             // The ⋯ menu's Cancel task…, then its confirmation's Cancel Task.
             case "cancelask": confirmingCancel = parts[1]

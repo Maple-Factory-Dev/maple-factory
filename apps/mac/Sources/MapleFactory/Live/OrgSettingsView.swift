@@ -1104,6 +1104,8 @@ struct RepositoriesSettings: View {
 struct MergeHoldBanner: View {
     let hold: Wire.MergeHold
     let lift: () -> Void
+    /// "Lift hold" asks first (MF-412).
+    @State private var confirmsLift = false
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -1118,10 +1120,11 @@ struct MergeHoldBanner: View {
                 .foregroundStyle(Theme.textMuted)
                 .lineLimit(2)
             Spacer(minLength: 8)
-            Button("Lift hold", action: lift)
+            Button("Lift hold") { confirmsLift = true }
                 .controlSize(.small)
                 .help("Let merges into \(hold.repo) go again; the tasks waiting merge on their own")
         }
+        .liftConfirmation(isPresented: $confirmsLift, hold: hold, lift: lift)
     }
 }
 

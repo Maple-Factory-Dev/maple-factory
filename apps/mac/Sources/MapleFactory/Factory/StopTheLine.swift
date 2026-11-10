@@ -145,6 +145,10 @@ struct StopTheLinePopover: View {
 struct LineStoppedBanner: View {
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
+    /// A headless script's `stopline:liftask`: opens the Lift confirmation.
+    static let demoLift = Notification.Name("LineStoppedBanner.demoLift")
+    /// "Lift" asks first (MF-412).
+    @State private var confirmsLift = false
 
     var body: some View {
         let holds = client.mergeHolds
@@ -157,8 +161,9 @@ struct LineStoppedBanner: View {
                     .truncationMode(.tail)
                 Spacer(minLength: 8)
                 if holds.count == 1 {
-                    bannerButton("Lift") { client.releaseMerges(repo: holds[0].repo) }
+                    bannerButton("Lift") { confirmsLift = true }
                         .help("Let merges into \(holds[0].repo) go again; the tasks waiting merge on their own")
+                        .liftConfirmation(isPresented: $confirmsLift, hold: holds[0]) { client.releaseMerges(repo: holds[0].repo) }
                 } else {
                     bannerButton("Show") { state.showsStopTheLine = true }
                         .help("See every hold and lift them")
@@ -172,6 +177,9 @@ struct LineStoppedBanner: View {
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Line stopped")
             .transition(.move(edge: .top).combined(with: .opacity))
+            .onReceive(NotificationCenter.default.publisher(for: Self.demoLift)) { _ in
+                if client.mergeHolds.count == 1 { confirmsLift = true }
+            }
         }
     }
 
@@ -187,5 +195,17 @@ struct LineStoppedBanner: View {
             .accessibilityAddTraits(.isButton)
             .accessibilityLabel(Text(title))
             .accessibilityAction { action() }
+    }
+}
+
+extension View {
+    /// "Lift the hold on acme/api?" before a Lift sends repos.releaseMerges: the banner's, the popover's and Settings'.
+    func liftConfirmation(isPresented: Binding<Bool>, hold: Wire.MergeHold, lift: @escaping () -> Void) -> some View {
+        alert(LineStop.liftTitle(repos: [hold.repo]), isPresented: isPresented) {
+            Button(LineStop.liftButton(count: 1), role: .destructive, action: lift)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(LineStop.liftMessage(holds: [hold]))
+        }
     }
 }

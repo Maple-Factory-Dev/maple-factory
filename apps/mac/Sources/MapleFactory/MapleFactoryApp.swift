@@ -484,13 +484,13 @@ struct ContentView: View {
         )
         .shadow(color: Theme.slabShadow, radius: 12, x: -2)
         .animation(.snappy(duration: 0.2), value: client.mergeHolds.count)
-        .alert("Restart the line?", isPresented: Bindable(state).confirmsRestartLine) {
-            Button("Lift \(client.mergeHolds.count == 1 ? "the hold" : "all \(client.mergeHolds.count) holds")", role: .destructive) {
+        .alert(LineStop.liftTitle(repos: client.mergeHolds.map(\.repo)), isPresented: Bindable(state).confirmsRestartLine) {
+            Button(LineStop.liftButton(count: client.mergeHolds.count), role: .destructive) {
                 client.restartLine()
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Merges into \(client.mergeHolds.map(\.repo).joined(separator: ", ")) go again; the tasks waiting merge on their own.")
+            Text(LineStop.liftMessage(holds: client.mergeHolds))
         }
     }
 
