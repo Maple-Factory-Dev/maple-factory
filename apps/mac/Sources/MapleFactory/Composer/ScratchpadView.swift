@@ -13,7 +13,13 @@ struct ScratchpadView: View {
                 NoteEditor(index: index)
                     .id(state.notes[index].id)
             } else {
-                PlaceholderView(title: "No note selected", icon: "note.text")
+                if state.notes.isEmpty {
+                    EmptyState(title: "No notes yet", icon: "note.text",
+                               detail: "Jot down loose ideas here. Any note can become a task later.",
+                               action: .init(title: "New Note", icon: "plus") { state.newNote() })
+                } else {
+                    EmptyState(title: "No note selected", icon: "note.text", detail: "Pick a note on the left to edit it.")
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
