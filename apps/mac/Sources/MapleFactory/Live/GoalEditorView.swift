@@ -770,7 +770,12 @@ struct GoalEditorView: View {
         failure = nil
         saving = true
         client.savingGoal = true
-        client.send(.goalSave(.init(goal: goal)))
+        // Offline, nothing will answer: don't spin, say so (MF-401).
+        if !client.send(.goalSave(.init(goal: goal))) {
+            saving = false
+            client.savingGoal = false
+            failure = AppState.offlineToast
+        }
     }
 
     private static let dayFormat: DateFormatter = {

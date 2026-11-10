@@ -415,7 +415,46 @@ final class AppState {
     /// The connected factory. Signed in, tasks and goals are its, and actions go to it; otherwise
     /// everything here is the design mockup's.
     var client: FactoryClient? {
-        didSet { client?.onDocCreated = { [weak self] id in self?.openCreatedDoc(id) } }
+        didSet {
+            client?.onDocCreated = { [weak self] id in self?.openCreatedDoc(id) }
+            client?.onRefused = { [weak self] _ in self?.showOfflineToast() }
+            client?.onSendFailed = { [weak self] message in self?.sendFailed(message) }
+        }
+    }
+
+    /// Every action that couldn't leave the Mac says so (MF-401): nothing is queued for later.
+    static let offlineToast = "You're offline: not sent"
+
+    func showOfflineToast() {
+        showToast(Self.offlineToast, icon: "wifi.slash", color: Theme.State.awaitingApproval)
+    }
+
+    /// Sends a person's action, showing the offline toast when it can't go out; false then.
+    @discardableResult func sendOrRefuse(_ message: Wire.ClientMessage) -> Bool {
+        guard let client else { return false }
+        return client.send(message)  // A refusal toasts through `onRefused`.
+    }
+
+    /// The socket took a message and then failed to write it: a spinner waiting on it stops, with the reason.
+    func sendFailed(_ message: Wire.ClientMessage) {
+        let id: String? = switch message {
+        case .taskApprovePlan(let m): m.id
+        case .taskApproveChanges(let m): m.id
+        case .taskMerge(let m): m.id
+        case .taskHoldMerge(let m): m.id
+        default: nil
+        }
+        if let id { endInFlight(id) }
+        guard !FactoryClient.isBackground(message) else { return }
+        showToast("Couldn't send: the connection dropped", icon: "wifi.slash", color: Theme.State.cancelled)
+    }
+
+    /// Live actions with a spinner check the connection first, so offline they refuse at once instead of
+    /// spinning until the in-flight timeout (MF-401).
+    private func canSendNow(_ client: FactoryClient) -> Bool {
+        if client.canSend { return true }
+        showOfflineToast()
+        return false
     }
     /// A doc to focus once its editor syncs (MF-382): the one we just created, so it opens ready to type.
     var focusDoc: String?
@@ -1068,9 +1107,10 @@ final class AppState {
                 return
             }
             let body = draft.body.trimmingCharacters(in: .whitespacesAndNewlines)
-            client.send(.taskCreate(.init(goal: goal.id, title: title, brief: body.isEmpty ? title : body, shareable: draft.shareable,
-                                          plan: sendToPlanning, tickets: draft.tickets.map(\.wire), agent: draft.agent, intake: draft.intakeID,
-                                          repo: draft.repo.flatMap { goal.repos.contains($0) ? $0 : nil })))
+            // Offline, the composer stays open with the brief as typed: the offline toast says it wasn't sent (MF-401).
+            guard client.send(.taskCreate(.init(goal: goal.id, title: title, brief: body.isEmpty ? title : body, shareable: draft.shareable,
+                                                plan: sendToPlanning, tickets: draft.tickets.map(\.wire), agent: draft.agent, intake: draft.intakeID,
+                                                repo: draft.repo.flatMap { goal.repos.contains($0) ? $0 : nil }))) else { return }
             LastTaskGoal.store(draft.goal, factory: taskGoalFactory, defaults: taskGoalDefaults)
             // The task's sent: a draft still running (or failed, or waiting on a goal) is done with.
             cancelAIDraft()
@@ -1922,7 +1962,9 @@ final class AppState {
             let stillWaiting = !self.landed(kind, on: self.task(id))
             withAnimation(.snappy(duration: 0.2)) { self.inFlight[id] = nil }
             if stillWaiting {
-                self.showToast("Still waiting on the factory for \(id)…", icon: "hourglass", color: Theme.State.awaitingApproval)
+                let offline = self.isLive && self.client?.canSend == false
+                self.showToast("Still waiting on the factory for \(id)…\(offline ? " (offline)" : "")", icon: offline ? "wifi.slash" : "hourglass",
+                               color: Theme.State.awaitingApproval)
             }
         }
         return true
@@ -1953,7 +1995,7 @@ final class AppState {
     /// `keepTitle` turns down the plan's suggested title.
     func approvePlan(_ id: String, keepTitle: Bool = false) {
         if let client, isLive {
-            guard beginInFlight(id, .approvePlan) else { return }
+            guard canSendNow(client), beginInFlight(id, .approvePlan) else { return }
             client.send(.taskApprovePlan(.init(id: id, keepTitle: keepTitle ? true : nil)))
             return
         }
@@ -2068,7 +2110,7 @@ final class AppState {
             return
         }
         if let client, isLive {
-            guard beginInFlight(id, .approveChanges) else { return }
+            guard canSendNow(client), beginInFlight(id, .approveChanges) else { return }
             client.send(.taskApproveChanges(.init(id: id)))
             return
         }
@@ -2133,7 +2175,7 @@ final class AppState {
 
     func merge(_ id: String, byFactory: Bool = false) {
         if let client, isLive {
-            if !byFactory, beginInFlight(id, .merge) { client.send(.taskMerge(.init(id: id))) }
+            if !byFactory, canSendNow(client), beginInFlight(id, .merge) { client.send(.taskMerge(.init(id: id))) }
             return
         }
         if !byFactory { update(id) { $0.mergeAt = nil } }
@@ -2376,7 +2418,7 @@ final class AppState {
     /// Stops the auto-merge counting down on a task; a person merges it instead.
     func holdMerge(_ id: String) {
         if let client, isLive {
-            if beginInFlight(id, .holdMerge) { client.send(.taskHoldMerge(.init(id: id))) }
+            if canSendNow(client), beginInFlight(id, .holdMerge) { client.send(.taskHoldMerge(.init(id: id))) }
             return
         }
         withAnimation(.snappy(duration: 0.25)) {
