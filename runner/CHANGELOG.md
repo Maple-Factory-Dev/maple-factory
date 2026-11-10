@@ -5,6 +5,10 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.111.0 — 2026-11-10
+
+Agents can propose decisions in docs through the runner's tools, and the runner understands agents asked from doc threads.
+
 ## 0.110.0 — 2026-11-09
 
 Agents can read shared docs, comment on them and suggest edits through the runner's MCP server; a person accepts or rejects each suggestion in the editor.

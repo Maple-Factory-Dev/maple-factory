@@ -268,3 +268,43 @@ test("typing in the language picker filters by name, id or alias (C1)", async ()
   assert.ok(filterLanguages("script").some((l) => l.id === "javascript"), "matches inside names");
   assert.deepEqual(filterLanguages("zzzz-nope"), []);
 });
+
+// MF-389: the diagram block's Preview | Code toggle (+ opt-in side preview, "split"), a per-viewer pref.
+const memStore = () => { const m = new Map<string, string>(); return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, String(v)) }; };
+const throwingStore = { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); } };
+
+test("diagramMode: preview by default, stored pref wins, read-only previews, a fresh insert opens in code", async () => {
+  const { diagramMode } = await import("../docs-editor/src/nodes.js");
+  assert.equal(diagramMode({}), "preview");
+  assert.equal(diagramMode({ stored: null, editable: true }), "preview");
+  assert.equal(diagramMode({ stored: "bogus", editable: true }), "preview");
+  for (const m of ["preview", "split", "code"]) assert.equal(diagramMode({ stored: m, editable: true }), m);
+  for (const m of [null, "split", "code"]) assert.equal(diagramMode({ stored: m, editable: false }), "preview");
+  assert.equal(diagramMode({ stored: "preview", editable: true, fresh: true }), "code");
+  assert.equal(diagramMode({ stored: "code", editable: false, fresh: true }), "preview");
+});
+
+test("diagram prefs round-trip through storage and fall back when storage throws or is missing", async () => {
+  const { readDiagramPref, writeDiagramPref, readDiagramSide, writeDiagramSide, diagramMode, DIAGRAM_PREF_KEY } = await import("../docs-editor/src/nodes.js");
+  const s = memStore();
+  assert.equal(readDiagramPref(s), null);
+  assert.equal(writeDiagramPref("code", s), true);
+  assert.equal(s.getItem(DIAGRAM_PREF_KEY), "code");
+  assert.equal(readDiagramPref(s), "code");
+  assert.equal(writeDiagramPref("nope", s), false);
+  assert.equal(readDiagramPref(s), "code");
+  s.setItem(DIAGRAM_PREF_KEY, "garbage");
+  assert.equal(readDiagramPref(s), null);
+  assert.equal(readDiagramSide(s), false);
+  assert.equal(writeDiagramSide(true, s), true);
+  assert.equal(readDiagramSide(s), true);
+  writeDiagramSide(false, s);
+  assert.equal(readDiagramSide(s), false);
+  // Blocked or absent storage: no throw, just the default.
+  assert.equal(readDiagramPref(throwingStore), null);
+  assert.equal(writeDiagramPref("split", throwingStore), false);
+  assert.equal(readDiagramSide(throwingStore), false);
+  assert.equal(writeDiagramSide(true, throwingStore), false);
+  assert.equal(readDiagramPref(undefined), null);
+  assert.equal(diagramMode({ stored: readDiagramPref(throwingStore), editable: true }), "preview");
+});
