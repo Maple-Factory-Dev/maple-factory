@@ -35,7 +35,7 @@ export function checksBadge(checks) {
 export function mergeLine(task) {
   if (task.pr) {
     const s = checkSummary(task.pr.checks);
-    if (s.tone === "running") return `Checks running · ${s.passed} of ${s.total}`;
+    if (s.tone === "running") return `Checks running · ${s.passed}/${s.total}`;
     if (s.tone === "failed") return s.failed === 1 ? "1 check failing" : `${s.failed} checks failing`;
     if (s.tone === "none") return "Waiting for checks";
   }

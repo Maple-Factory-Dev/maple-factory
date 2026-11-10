@@ -20,9 +20,9 @@ import Testing
 
     @Test func runningChecksAreNotReady() throws {
         let t = try task(checks: ["passed", "passed", "passed", "running", "queued"])
-        #expect(LiveAdapter.mergeLine(t) == "Checks running · 3 of 5")
+        #expect(LiveAdapter.mergeLine(t) == "Checks running · 3/5")
         let mapped = LiveAdapter.task(t, goals: [], members: [], me: nil)
-        #expect(mapped.detail == "Checks running · 3 of 5")
+        #expect(mapped.detail == "Checks running · 3/5")
         #expect(!mapped.checksFailing)
     }
 

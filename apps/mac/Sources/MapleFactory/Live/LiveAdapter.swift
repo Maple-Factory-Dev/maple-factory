@@ -240,7 +240,7 @@ import SwiftUI
         if let pr = t.pr {
             let summary = CheckSummary(pr.checks.map(check))
             switch summary.tone {
-            case .running: return "Checks running · \(summary.passed) of \(summary.total)"
+            case .running: return "Checks running · \(summary.passed)/\(summary.total)"
             case .failed: return summary.failed == 1 ? "1 check failing" : "\(summary.failed) checks failing"
             case .none: return "Waiting for checks"
             case .passed: break

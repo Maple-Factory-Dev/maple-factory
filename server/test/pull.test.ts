@@ -85,7 +85,7 @@ test("checksBadge: icon, tone and a passed/total count", () => {
 });
 
 test("mergeLine: running checks are not ready to merge", () => {
-  assert.equal(mergeLine(passedTask([check("passed"), check("passed"), check("passed"), check("running"), check("queued")])), "Checks running · 3 of 5");
+  assert.equal(mergeLine(passedTask([check("passed"), check("passed"), check("passed"), check("running"), check("queued")])), "Checks running · 3/5");
 });
 
 test("mergeLine: failing checks", () => {
