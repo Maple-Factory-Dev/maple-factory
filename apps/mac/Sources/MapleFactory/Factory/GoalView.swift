@@ -37,8 +37,8 @@ struct GoalView: View {
 
             controls(shown: shown.count)
 
-            if state.goalTaskFilter == .mine && shown.isEmpty && !allTasks.isEmpty {
-                noTasksOfYours
+            if let kind = Self.emptyKind(all: allTasks.count, shown: shown.count, filter: state.goalTaskFilter) {
+                emptyState(kind)
             } else {
                 switch state.layout {
                 case .overview: GoalOverview(goal: goal, tasks: shown)
@@ -88,21 +88,30 @@ struct GoalView: View {
         .padding(.bottom, 12)
     }
 
-    /// 'You' is on and none of the goal's tasks are yours.
-    private var noTasksOfYours: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "person.crop.circle.badge.questionmark")
-                .font(.system(size: 26))
-                .foregroundStyle(Theme.textMuted)
-            Text("No tasks of yours in this goal")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(Theme.text)
-            Button("Show everyone's") { state.goalTaskFilter = .everyone }
-                .controlSize(.regular)
+    /// Why a goal's layout has nothing to draw (MF-406): no tasks at all, or a filter hiding every one.
+    enum EmptyKind: Equatable {
+        case none
+        case filtered(GoalTaskFilter)
+    }
+
+    /// Nil when there's something to show.
+    static func emptyKind(all: Int, shown: Int, filter: GoalTaskFilter) -> EmptyKind? {
+        if all == 0 { return EmptyKind.none }
+        if shown == 0 { return .filtered(filter) }
+        return nil
+    }
+
+    @ViewBuilder private func emptyState(_ kind: EmptyKind) -> some View {
+        switch kind {
+        case .none:
+            EmptyState(title: "No tasks in this goal yet", icon: "square.stack.3d.up",
+                       detail: "Tasks you start in \(goal.name) show up here as agents plan and build them.",
+                       action: .init(title: "New Task", icon: "plus") { state.startCompose(goal: goal.name) })
+        case .filtered(let filter):
+            EmptyState(title: "No tasks match \(filter.rawValue)", icon: "person.crop.circle.badge.questionmark",
+                       detail: "None of this goal's \(allTasks.count) tasks are yours.",
+                       action: .init(title: "Clear filter") { state.goalTaskFilter = .everyone })
         }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 60)
-        .frame(maxHeight: .infinity, alignment: .top)
     }
 
     private var header: some View {
@@ -437,16 +446,6 @@ struct BoardColumns: View {
                 Rectangle()
                 LinearGradient(colors: [.black, .black.opacity(moreTrailing ? 0 : 1)], startPoint: .leading, endPoint: .trailing)
                     .frame(width: 24)
-            }
-        }
-        .overlay(alignment: .topLeading) {
-            if columns.isEmpty {
-                Text("No tasks in this goal")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.textMuted)
-                    .padding(.horizontal, 24)
-                    .padding(.top, 12)
-                    .transition(.opacity)
             }
         }
         .animation(.snappy, value: state.boardHidesEmptyColumns)

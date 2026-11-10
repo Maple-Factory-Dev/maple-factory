@@ -686,13 +686,14 @@ struct NeedsHandView: View {
                 }
 
                 if hands.isEmpty {
-                    VStack(spacing: 8) {
-                        Image(systemName: "hand.thumbsup").font(.system(size: 26)).foregroundStyle(Theme.textFaint)
-                        Text("No one's stuck").font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.text)
-                        Text("Agents will show up here when they need you.").font(.system(size: 12.5)).foregroundStyle(Theme.textMuted)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 60)
+                    EmptyState(title: "No one's stuck", icon: "hand.thumbsup",
+                               detail: mineOnly && !state.handRaises.isEmpty
+                                   ? "No agent is asking you for help. Others are waiting on someone else."
+                                   : "Agents will show up here when they need you.",
+                               secondary: mineOnly && !state.handRaises.isEmpty
+                                   ? .init(title: "Show everyone's (\(state.handRaises.count))") { mineOnly = false }
+                                   : nil)
+                        .padding(.vertical, 60)
                 }
 
                 ForEach(hands) { task in

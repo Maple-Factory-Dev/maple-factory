@@ -5,6 +5,8 @@ struct TaskListView: View {
     @Environment(AppState.self) private var state
     let tasks: [FactoryTask]
     var showGoal = false
+    /// Shown in place of the rows when `tasks` is empty, so the list never renders blank (MF-406).
+    var empty: EmptyState? = nil
     @SwiftUI.State private var collapsed: Set<TaskState> = []
     /// The task whose row's context menu asked to cancel it.
     @SwiftUI.State private var cancelling: FactoryTask?
@@ -13,6 +15,14 @@ struct TaskListView: View {
     @SwiftUI.State private var scheduling: String?
 
     var body: some View {
+        if tasks.isEmpty, let empty {
+            empty
+        } else {
+            list
+        }
+    }
+
+    private var list: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0, pinnedViews: .sectionHeaders) {
                 ForEach(TaskState.allCases) { taskState in
@@ -153,7 +163,10 @@ struct MyTasksView: View {
             .padding(.top, 22)
             .padding(.bottom, 20)
 
-            TaskListView(tasks: state.tasks.filter { $0.owner.id == FactoryData.me.id }, showGoal: true)
+            TaskListView(tasks: state.tasks.filter { $0.owner.id == FactoryData.me.id }, showGoal: true,
+                         empty: EmptyState(title: "Nothing assigned to you", icon: "person.crop.circle.badge.checkmark",
+                                           detail: "Tasks you own show up here, across every goal.",
+                                           action: .init(title: "New Task", icon: "plus") { state.startCompose() }))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
