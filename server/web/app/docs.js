@@ -92,8 +92,22 @@ export function createDocs({ state, h, send, render, toast, icon, ago, allTasks 
               h("div", { class: "title" }, d.title || "Untitled doc"),
               h("div", { class: "sub" }, d.goal ? `${goalName(d.goal) ?? d.goal} · ` : "", `edited ${ago(d.updatedAt)} · by ${memberOf(d.createdBy)?.name || d.createdBy}`)),
             d.openThreads ? h("span", { class: "pill tag doc-threads-count", title: `${d.openThreads} open comment thread${d.openThreads === 1 ? "" : "s"}` }, icon("message-square", { size: 12 }), ` ${d.openThreads}`) : null,
-            d.archived && h("span", { class: "pill tag" }, "archived"))))
+            d.archived && h("span", { class: "pill tag" }, "archived"),
+            state.me && !d.archived ? moveSelect(d) : null)))
         : h("div", { class: "card empty" }, icon("file-text", { size: 28 }), archived ? "No archived docs." : "No docs yet."));
+  }
+
+  /** A row's "Move to goal" picker (MF-378): No goal plus the live goals; picking one sends doc.move. */
+  function moveSelect(d) {
+    // Inside the row's link: keep clicks on the picker from opening the doc.
+    const hold = (e) => { e.stopPropagation(); e.preventDefault(); };
+    return h("select", {
+      class: "doc-move", "data-move-doc": d.id, "aria-label": "Move to goal", title: "Move to goal",
+      onclick: hold, onkeydown: (e) => { if (e.key === "Enter") hold(e); },
+      onchange: (e) => { if (!send({ type: "doc.move", id: d.id, goal: e.target.value || null })) toast("Not connected; try again in a moment."); },
+    },
+      h("option", { value: "", selected: !d.goal }, "No goal"),
+      state.goals.filter((g) => !g.archived || g.id === d.goal).map((g) => h("option", { value: g.id, selected: g.id === d.goal }, g.name)));
   }
 
   function mountEditor(id, host) {
