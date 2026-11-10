@@ -5,7 +5,8 @@ import Testing
 
 /// The Dock's icon: the factory's when it has one and the setting is on, Maple's otherwise, and
 /// FactoryClient puts it there itself when a switch loads a factory's cached icon.
-@MainActor struct DockIconTests {
+/// Serialized: it checks the global DockIcon.shown, which only this suite reads.
+@MainActor @Suite(.serialized) struct DockIconTests {
     private let icon = NSImage(size: NSSize(width: 64, height: 64), flipped: false) { rect in
         NSColor.systemBlue.setFill()
         rect.fill()
@@ -29,11 +30,13 @@ import Testing
     }
 
     @Test func switchingToAFactoryWithACachedIconPutsItInTheDock() throws {
-        let keys = [SavedFactories.defaultsKey, "factoryURL", "factoryOrg", "devFactoryTokens", DockIcon.settingKey]
-        let kept = keys.map { AppDefaults.object(forKey: $0) }
+        // Per-test suite: a signed-in factory in the shared AppDefaults would reach every FactoryClient()
+        // made by suites running alongside. (Tests write a private UserDefaults(suiteName:), never AppDefaults.)
+        let suite = "DockIconTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
         let folder = FileManager.default.temporaryDirectory.appending(path: "DockIconTests-\(UUID().uuidString)")
         defer {
-            for (key, value) in zip(keys, kept) { AppDefaults.set(value, forKey: key) }
+            defaults.removePersistentDomain(forName: suite)
             try? FileManager.default.removeItem(at: folder)
         }
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -45,11 +48,10 @@ import Testing
         // Nothing port 9 answers: the switch only needs the saved factory and its token.
         let server = try #require(URL(string: "http://localhost:9"))
         let saved = SavedFactory(server: server, org: "acme", name: "acme", lastUsed: Date(), icon: file.path)
-        for key in keys { AppDefaults.removeObject(forKey: key) }
-        SavedFactories.store([saved])
-        AppDefaults.set([server.absoluteString: "token"], forKey: "devFactoryTokens")
+        SavedFactories.store([saved], defaults)
+        defaults.set([server.absoluteString: "token"], forKey: "devFactoryTokens")
 
-        let client = FactoryClient()
+        let client = FactoryClient(defaults: defaults)
         #expect(client.icon == nil)
         #expect(client.switchTo(saved))
         let loaded = try #require(client.icon)

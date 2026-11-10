@@ -43,8 +43,17 @@ enum PageViewport: String, CaseIterable, Identifiable {
     static let defaultsKey = "pageviewport"
 
     static var saved: PageViewport {
-        get { AppDefaults.string(forKey: defaultsKey).flatMap { PageViewport(rawValue: $0.lowercased()) } ?? .desktop }
-        set { AppDefaults.set(newValue.rawValue, forKey: defaultsKey) }
+        get { saved(AppDefaults) }
+        set { save(newValue, AppDefaults) }
+    }
+
+    /// The remembered preset in `defaults` (tests pass their own suite).
+    static func saved(_ defaults: UserDefaults) -> PageViewport {
+        defaults.string(forKey: defaultsKey).flatMap { PageViewport(rawValue: $0.lowercased()) } ?? .desktop
+    }
+
+    static func save(_ viewport: PageViewport, _ defaults: UserDefaults) {
+        defaults.set(viewport.rawValue, forKey: defaultsKey)
     }
 
     /// Where the page goes in the room it has.

@@ -65,8 +65,10 @@ enum LastTaskGoal {
     static func key(_ factory: URL?) -> String { "lastTaskGoal.\(factory.map(SavedFactory.key) ?? "mockup")" }
 
     /// Nil once that goal is archived or gone, so New Task falls back to the usual one.
-    @MainActor static func load(factory: URL?, defaults: UserDefaults = AppDefaults) -> String? {
-        defaults.string(forKey: key(factory)).flatMap { name in FactoryData.activeGoals.contains { $0.name == name } ? name : nil }
+    /// `goals` is the active goals to check against (FactoryData's when nil; tests pass their own).
+    @MainActor static func load(factory: URL?, defaults: UserDefaults = AppDefaults, goals: [Goal]? = nil) -> String? {
+        let active = goals ?? FactoryData.activeGoals
+        return defaults.string(forKey: key(factory)).flatMap { name in active.contains { $0.name == name } ? name : nil }
     }
 
     static func store(_ goal: String, factory: URL?, defaults: UserDefaults = AppDefaults) {
@@ -147,13 +149,13 @@ final class AppState {
     var linkingTask: String? = nil
     var linkQuery = ""
     /// The task panel opens when a task is clicked, or when it was left open with the toolbar toggle.
-    var showInspector = AppState.panelLeftOpen
+    var showInspector = false
     /// Whether the panel was left open in a full-width window. Its own key: the old "taskPanel" was
     /// written on every toggle while the panel opened by default, so it's true for most people.
     private static let panelKey = "taskPanelOpen"
-    private static var panelLeftOpen: Bool {
-        AppDefaults.removeObject(forKey: "taskPanel")
-        return TaskOpening.stored() == .panel && AppDefaults.bool(forKey: panelKey)
+    private static func panelLeftOpen(_ defaults: UserDefaults) -> Bool {
+        defaults.removeObject(forKey: "taskPanel")
+        return TaskOpening.stored(defaults) == .panel && defaults.bool(forKey: panelKey)
     }
     /// The task the panel shows. Following the goal on screen never opens the panel; `openTask` does.
     var selectedTask = "ATL-147" {
@@ -179,9 +181,9 @@ final class AppState {
     }
 
     /// What a click on a card or row does: the full task view by default, or a peek in the panel.
-    var taskOpening = TaskOpening.stored() {
+    var taskOpening = TaskOpening.fullView {
         didSet {
-            AppDefaults.set(taskOpening.rawValue, forKey: TaskOpening.key)
+            boardDefaults.set(taskOpening.rawValue, forKey: TaskOpening.key)
             // Nothing can toggle the panel once it's off, so one that's open would be stuck.
             if !taskPanelEnabled && showInspector { closeTaskPanel() }
         }
@@ -210,7 +212,7 @@ final class AppState {
     /// ×, Esc or clicking the open card again; in a full-width window the close sticks across launches.
     func closeTaskPanel() {
         withAnimation(.snappy(duration: 0.25)) { showInspector = false }
-        if !isCompact { AppDefaults.set(false, forKey: AppState.panelKey) }
+        if !isCompact { boardDefaults.set(false, forKey: AppState.panelKey) }
     }
 
     /// The toolbar toggle and the menu item: the one choice that sticks across launches
@@ -218,7 +220,7 @@ final class AppState {
     func toggleTaskPanel() {
         guard taskPanelEnabled else { return }
         withAnimation(.snappy(duration: 0.25)) { showInspector.toggle() }
-        if !isCompact { AppDefaults.set(showInspector, forKey: AppState.panelKey) }
+        if !isCompact { boardDefaults.set(showInspector, forKey: AppState.panelKey) }
     }
 
     // MARK: Machines
@@ -409,7 +411,7 @@ final class AppState {
                 showInspector = false
             } else {
                 sidebarCollapsed = sidebarPreference
-                showInspector = taskPanelEnabled && AppDefaults.bool(forKey: AppState.panelKey)
+                showInspector = taskPanelEnabled && boardDefaults.bool(forKey: AppState.panelKey)
             }
         }
     }
@@ -1010,19 +1012,21 @@ final class AppState {
 
     /// Where the last task was made from, per factory; tests swap in their own suite.
     var taskGoalDefaults = AppDefaults
+    /// For tests: the goals New Task picks from instead of FactoryData's, so a suite needn't write the global liveGoals.
+    var taskGoalGoals: [Goal]?
     private var taskGoalFactory: URL? { isLive ? client?.server : nil }
 
     /// The goal New Task starts on, and whether that's the goal you're in (so it counts as chosen):
     /// the goal page on screen, else the goal of the task open in full view or the panel, else the
     /// goal you last made a task in, else the first goal you follow (or the first goal).
     var newTaskGoal: (name: String, inGoal: Bool) {
-        let active = FactoryData.activeGoals
+        let active = taskGoalGoals?.filter { !$0.archived } ?? FactoryData.activeGoals
         func isActive(_ name: String) -> Bool { active.contains { $0.name == name } }
         if case let .goal(name) = destination, isActive(name) { return (name, true) }
         if let id = focusedTask ?? openedTask, let task = tasks.first(where: { $0.id == id }), isActive(task.goal) {
             return (task.goal, true)
         }
-        if let last = LastTaskGoal.load(factory: taskGoalFactory, defaults: taskGoalDefaults) { return (last, false) }
+        if let last = LastTaskGoal.load(factory: taskGoalFactory, defaults: taskGoalDefaults, goals: active) { return (last, false) }
         return ((active.first(where: isFollowing) ?? active.first)?.name ?? "", false)
     }
 
@@ -2539,6 +2543,9 @@ final class AppState {
     /// Launch arguments like `-destination inbox -layout timeline -inspector NO` jump straight to a view.
     init(boardDefaults: UserDefaults = AppDefaults) {
         self.boardDefaults = boardDefaults
+        // Set in init, so didSet doesn't write them back.
+        taskOpening = TaskOpening.stored(boardDefaults)
+        showInspector = Self.panelLeftOpen(boardDefaults)
         boardHidesEmptyColumns = boardDefaults.bool(forKey: "boardHidesEmptyColumns")
         goalTaskFilter = boardDefaults.string(forKey: "goalTaskFilter").flatMap(GoalTaskFilter.init(rawValue:)) ?? .everyone
         // Set in init, so didSet doesn't run: the `-layout` override below isn't saved.

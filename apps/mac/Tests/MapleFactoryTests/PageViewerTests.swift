@@ -1,3 +1,4 @@
+import Foundation
 import CoreGraphics
 import Testing
 @testable import MapleFactory
@@ -52,18 +53,19 @@ struct PageViewerTests {
         #expect(state.lightbox == nil)
     }
 
-    @Test func presetRoundTripsThroughDefaults() {
-        let before = AppDefaults.object(forKey: PageViewport.defaultsKey)
-        defer { AppDefaults.set(before, forKey: PageViewport.defaultsKey) }
-        AppDefaults.removeObject(forKey: PageViewport.defaultsKey)
-        #expect(PageViewport.saved == .desktop)
-        PageViewport.saved = .tablet
-        #expect(AppDefaults.string(forKey: "pageviewport") == "tablet")
-        #expect(PageViewport.saved == .tablet)
+    @Test func presetRoundTripsThroughDefaults() throws {
+        // Its own suite, not the shared AppDefaults. (Tests write a private UserDefaults(suiteName:), never AppDefaults.)
+        let suite = "PageViewerTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        #expect(PageViewport.saved(defaults) == .desktop)
+        PageViewport.save(.tablet, defaults)
+        #expect(defaults.string(forKey: "pageviewport") == "tablet")
+        #expect(PageViewport.saved(defaults) == .tablet)
         // As a launch argument would set it, any case.
-        AppDefaults.set("Mobile", forKey: "pageviewport")
-        #expect(PageViewport.saved == .mobile)
-        AppDefaults.set("huge", forKey: "pageviewport")
-        #expect(PageViewport.saved == .desktop)
+        defaults.set("Mobile", forKey: "pageviewport")
+        #expect(PageViewport.saved(defaults) == .mobile)
+        defaults.set("huge", forKey: "pageviewport")
+        #expect(PageViewport.saved(defaults) == .desktop)
     }
 }
