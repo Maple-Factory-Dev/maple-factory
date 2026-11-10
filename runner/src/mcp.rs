@@ -771,7 +771,7 @@ pub fn validate(tool: &str, args: &Value) -> Result<Value, String> {
             }
             out
         }
-        "read_doc" | "comment_on_doc" | "reply_to_doc_thread" | "resolve_doc_thread" | "suggest_doc_edit" => {
+        "read_doc" | "comment_on_doc" | "reply_to_doc_thread" | "resolve_doc_thread" | "suggest_doc_edit" | "propose_decision" => {
             let uuid = |k: &str, what: &str| -> Result<String, String> {
                 let v = s(k, 64, true)?.unwrap();
                 Uuid::parse_str(v.trim())
@@ -785,7 +785,7 @@ pub fn validate(tool: &str, args: &Value) -> Result<Value, String> {
             if matches!(tool, "comment_on_doc" | "reply_to_doc_thread") {
                 out["text"] = json!(s("text", MAX_DOC_TEXT, true)?);
             }
-            if matches!(tool, "comment_on_doc" | "suggest_doc_edit") {
+            if matches!(tool, "comment_on_doc" | "suggest_doc_edit" | "propose_decision") {
                 if let Some(block) = s("block", 64, false)?.map(|b| b.trim().to_string()).filter(|b| !b.is_empty()) {
                     let ok = block.strip_prefix("b-").and_then(|r| r.split_once('-')).is_some_and(|(c, k)| {
                         !c.is_empty()
@@ -807,6 +807,49 @@ pub fn validate(tool: &str, args: &Value) -> Result<Value, String> {
                     }
                     Some(Value::String(q)) => out["quote"] = json!(q),
                     Some(_) => return Err("quote must be a string.".into()),
+                }
+            }
+            if tool == "propose_decision" {
+                // MF-367: agents only propose; a person accepts or rejects in the editor.
+                let question = s("question", 500, true)?.unwrap();
+                if question.trim().is_empty() {
+                    return Err("question can't be empty.".into());
+                }
+                out["question"] = json!(question.trim());
+                let options = match obj.get("options") {
+                    Some(Value::Array(a)) => a,
+                    _ => return Err("options is required: a list of 2–10 options, each {label, note?}.".into()),
+                };
+                if options.len() < 2 || options.len() > 10 {
+                    return Err("options must have 2 to 10 options.".into());
+                }
+                let mut cleaned = Vec::new();
+                for o in options {
+                    let (label, note) = match o {
+                        Value::String(l) => (l.clone(), None),
+                        Value::Object(m) => (
+                            m.get("label").and_then(Value::as_str).unwrap_or("").to_string(),
+                            m.get("note").and_then(Value::as_str).map(str::to_string),
+                        ),
+                        _ => return Err("each option is a {label, note?} object.".into()),
+                    };
+                    if label.trim().is_empty() || label.chars().count() > 300 {
+                        return Err("each option needs a label of at most 300 characters.".into());
+                    }
+                    let mut v = json!({ "label": label.trim() });
+                    if let Some(n) = note.filter(|n| !n.trim().is_empty()) {
+                        v["note"] = json!(n);
+                    }
+                    cleaned.push(v);
+                }
+                out["options"] = json!(cleaned);
+                out["rationale"] = json!(s("rationale", MAX_DOC_TEXT, false)?.unwrap_or_default());
+                if let Some(c) = s("chosen", 300, false)?.filter(|c| !c.trim().is_empty()) {
+                    out["chosen"] = json!(c.trim());
+                }
+                if let Some(sup) = s("supersedes", 64, false)?.filter(|x| !x.trim().is_empty()) {
+                    let u = Uuid::parse_str(sup.trim()).map_err(|_| "supersedes must be a decision id (a uuid) from read_doc.".to_string())?;
+                    out["supersedes"] = json!(u.to_string());
                 }
             }
             if tool == "suggest_doc_edit" {
@@ -1112,7 +1155,7 @@ fn list_tools(backend: &dyn Backend) -> Value {
 }
 
 /// The factory's doc tools (MF-365): listed by the factory, but their arguments are checked here first.
-const DOC_TOOLS: &[&str] = &["list_docs", "read_doc", "comment_on_doc", "reply_to_doc_thread", "resolve_doc_thread", "suggest_doc_edit"];
+const DOC_TOOLS: &[&str] = &["list_docs", "read_doc", "comment_on_doc", "reply_to_doc_thread", "resolve_doc_thread", "suggest_doc_edit", "propose_decision"];
 /// A doc comment's or suggestion's longest text, as the server's MAX_COMMENT / MAX_REPLACEMENT.
 const MAX_DOC_TEXT: usize = 10_000;
 /** The most text a doc anchor holds (the server's anchors keep 2,000 characters of their quote). */
@@ -1430,6 +1473,27 @@ mod tests {
         assert!(err("suggest_doc_edit", json!({"doc": doc, "quote": "x"})).contains("replacement is required"));
         assert!(err("suggest_doc_edit", json!({"doc": doc, "quote": "x", "replacement": "y".repeat(MAX_DOC_TEXT + 1)})).contains("too long"));
         assert!(err("suggest_doc_edit", json!({"doc": "x", "quote": "x", "replacement": "y"})).contains("doc must be a doc id"));
+    }
+
+    #[test]
+    fn validates_propose_decision() {
+        let ok = |t: &str, a: Value| validate(t, &a).unwrap();
+        let err = |t: &str, a: Value| validate(t, &a).unwrap_err();
+        let doc = "11111111-1111-4111-8111-111111111111";
+        let sup = "22222222-2222-4222-8222-222222222222";
+        assert!(DOC_TOOLS.contains(&"propose_decision"));
+        assert!(!DOC_TOOLS.iter().any(|t| t.contains("accept") || t.contains("reject")));
+        assert_eq!(
+            ok("propose_decision", json!({"doc": doc, "question": " Ship Friday? ", "options": [{"label": "Yes"}, {"label": "No", "note": "freeze"}], "chosen": "No", "rationale": "Freeze", "block": "b-a-1", "supersedes": sup.to_uppercase()})),
+            json!({"doc": doc, "question": "Ship Friday?", "options": [{"label": "Yes"}, {"label": "No", "note": "freeze"}], "chosen": "No", "rationale": "Freeze", "block": "b-a-1", "supersedes": sup})
+        );
+        assert_eq!(ok("propose_decision", json!({"doc": doc, "question": "Q", "options": ["A", "B"]}))["options"], json!([{"label": "A"}, {"label": "B"}]));
+        assert!(err("propose_decision", json!({"doc": doc, "question": "Q", "options": ["A"]})).contains("2 to 10"));
+        assert!(err("propose_decision", json!({"doc": doc, "question": "Q"})).contains("options is required"));
+        assert!(err("propose_decision", json!({"doc": doc, "question": "  ", "options": ["A", "B"]})).contains("question"));
+        assert!(err("propose_decision", json!({"doc": doc, "question": "Q", "options": ["A", " "]})).contains("label"));
+        assert!(err("propose_decision", json!({"doc": doc, "question": "Q", "options": ["A", "B"], "supersedes": "x"})).contains("supersedes"));
+        assert!(err("propose_decision", json!({"doc": "x", "question": "Q", "options": ["A", "B"]})).contains("doc must be a doc id"));
     }
 
     #[test]

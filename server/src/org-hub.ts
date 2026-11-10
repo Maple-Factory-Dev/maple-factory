@@ -795,6 +795,7 @@ export class OrgHub extends DurableObject<Env> {
           online: this.online(),
           notes: this.store.notes(client.member.login),
           docs: this.store.docs(),
+          decisions: this.store.decisions(),
           follows: this.store.follows(client.member.login),
           quietHours: this.store.quietHours(client.member.login),
           intake: this.intake.list(),
@@ -1100,6 +1101,25 @@ export class OrgHub extends DurableObject<Env> {
           this.send(ws, { type: "error", message: e instanceof Error ? e.message : String(e), requestId: msg.type });
         }
         return;
+      }
+      case "decision.propose":
+      case "decision.edit":
+      case "decision.accept":
+      case "decision.reject": {
+        // Members only (this socket is a signed-in member's), recorded as them; agents only ever propose.
+        const by = client.member.login;
+        try {
+          if (msg.type === "decision.propose") await this.engine.docs.propose(by, msg);
+          else if (msg.type === "decision.edit") this.engine.docs.editDecision(by, msg);
+          else this.engine.docs.decideDecision(by, { id: msg.id, accept: msg.type === "decision.accept", chosen: msg.type === "decision.accept" ? msg.chosen : null, why: msg.why });
+        } catch (e) {
+          this.send(ws, { type: "error", message: e instanceof Error ? e.message : String(e), requestId: msg.type });
+        }
+        return;
+      }
+      case "decision.log": {
+        if (!this.store.decision(msg.id)) return this.send(ws, { type: "error", message: "That decision isn't there any more.", requestId: msg.type });
+        return this.send(ws, { type: "decision.log", id: msg.id, events: this.store.decisionLog(msg.id) });
       }
       case "note.delete": {
         const existing = this.store.note(msg.id);
