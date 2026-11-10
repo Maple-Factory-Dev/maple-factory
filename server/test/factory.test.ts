@@ -680,3 +680,64 @@ test("a pasted answer shows in the live status without Claude Code's <pasted_con
   assert.equal(await activity('<\\pasted_content id="c2">\nKeep going <\\/pasted_con…'), "Keep going");
   assert.equal(await activity("Editing hub.ts"), "Editing hub.ts");
 });
+
+// MF-393: a session prompt carries the memories for the task's org, repo and goal, and counts the ones it gave.
+function remembering() {
+  const f = building(60_000);
+  f.store.saveRepos([{ name: "Acme/App", isPrivate: true, source: "manual" }, { name: "acme/web", isPrivate: true, source: "manual" }] as never);
+  f.store.saveGoal({ id: "g2", name: "Other", prefix: "OT", color: "#000000", summary: "", lead: "me", repos: ["acme/app"], repo: "acme/app" } as never);
+  const at = Date.now() - 86_400_000;
+  const add = (text: string, scope: { kind: string; key?: string | null }, more: Record<string, unknown> = {}) => {
+    const m = f.engine.memories.create(crypto.randomUUID(), { scope, kind: "gotcha", text, source: { by: "me", task: "MF-9" }, ...more } as never, { at });
+    assert.ok(!("error" in m), JSON.stringify(m));
+    return (m as { id: string }).id;
+  };
+  const ids = {
+    org: add("ORG NOTE about release tags", { kind: "org", key: null }),
+    repo: add("REPO NOTE run the server tests from server/", { kind: "repo", key: "Acme/App" }),
+    goal: add("GOAL NOTE learned building acme/web, the goal's other repo", { kind: "goal", key: "g" }, { source: { by: "me", task: "MF-8", role: "builder" } }),
+    otherGoal: add("OTHER GOAL NOTE", { kind: "goal", key: "g2" }),
+    otherRepo: add("OTHER REPO NOTE", { kind: "repo", key: "acme/web" }),
+    proposed: add("PROPOSED NOTE", { kind: "org", key: null }, { status: "proposed" }),
+  };
+  return { ...f, ids };
+}
+
+test("a builder session's prompt has only the active memories of its org, repo and goal, and counts those", async () => {
+  const f = remembering();
+  const task = f.store.task("MF-1")!;
+  task.worker = null;
+  f.store.saveTask(task);
+  const before = Date.now();
+  await f.engine.pump();
+  await f.settle();
+  const [open] = f.opens() as Extract<ServerToRunner, { type: "session.open" }>[];
+  assert.ok(open, "opened");
+  assert.equal(open.resumeFrom, undefined);
+  const prompt = open.prompt ?? "";
+  assert.match(prompt, /## What the factory remembers/);
+  for (const text of ["ORG NOTE", "REPO NOTE", "GOAL NOTE learned building acme/web"]) assert.ok(prompt.includes(text), text);
+  for (const text of ["OTHER GOAL NOTE", "OTHER REPO NOTE", "PROPOSED NOTE"]) assert.ok(!prompt.includes(text), text);
+  assert.ok(prompt.indexOf("## What the factory remembers") < prompt.indexOf("## Approved plan"));
+  assert.match(prompt, /Before `finish`, `remember`/);
+  const included = [f.ids.org, f.ids.repo, f.ids.goal];
+  for (const id of included) {
+    const m = f.store.memory(id)!;
+    assert.equal(m.uses, 1, id);
+    assert.ok((m.lastUsedAt ?? 0) >= before, id);
+  }
+  for (const id of [f.ids.otherGoal, f.ids.otherRepo, f.ids.proposed]) {
+    const m = f.store.memory(id)!;
+    assert.equal(m.uses, 0, id);
+    assert.equal(m.lastUsedAt ?? null, null, id);
+  }
+});
+
+test("a session that resumes its own conversation isn't sent the prompt, so its memories aren't counted", async () => {
+  const f = remembering();
+  await f.engine.fromRunner("mac", ended(f.session, "tmuxLost"));
+  await f.settle();
+  const [open] = f.opens() as Extract<ServerToRunner, { type: "session.open" }>[];
+  assert.equal(open?.resumeFrom?.session, f.session);
+  for (const id of Object.values(f.ids)) assert.equal(f.store.memory(id)!.uses, 0, id);
+});

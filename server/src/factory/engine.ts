@@ -13,13 +13,13 @@ import { ArtifactKindValues, PriorityValues, RoleValues, TaskStateValues } from 
 import type {
   Artifact, ArtifactKind, ChangeRequest, CheckRun, ClientMessage, Comment, DiffCommit, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
   AgentState, Classification, Decision, DocAgentRun, DocThread, McpConnector, NotRunCheck, Priority, PromptAdditions, RiskLevel, ServerToRunner, SessionEnd, SessionInfo, Task, WorktreeScripts,
-  TaskDocSource,
+  TaskDocSource, Memory, MemoryScope,
 } from "../wire.ts";
 import { audit, machineHub } from "../util.ts";
 import { cleanTags, TAG } from "../machines.ts";
 import { isAttachmentKey, pullAttachments } from "../attachments.ts";
 import { byRank, needsSession, Store, type TaskSession } from "./store.ts";
-import { builderPrompt, cleanPrompts, MERGE_ANCHOR, type Moving, plannerPrompt, resumePrompt, reviewerPrompt } from "./prompts.ts";
+import { builderPrompt, cleanPrompts, memorySection, MERGE_ANCHOR, type Moving, pickMemories, plannerPrompt, resumePrompt, reviewerPrompt } from "./prompts.ts";
 import { goalRepos, OWNER, REPO, taskRepo } from "./repos.ts";
 import { affectedBy, emptyForecast, inFlight, refreshOverlaps, type Lane } from "./forecast.ts";
 import { allowed, isDocTool, isMemoryTool, isPersonalTool, personalTools, toolsFor } from "./tools.ts";
@@ -1848,10 +1848,12 @@ export class Engine {
     const org = this.store.prompts();
     const others = role === "reviewer" ? [] : this.moving(task);
     const repoPrompts = this.store.repoPrompts(taskRepo(task, goal));
+    const remembered = this.memoriesFor(task, goal);
+    const memory = memorySection(role, remembered);
     const prompt = role === "planner" ? plannerPrompt(task, goal, org, others, repoPrompts, this.store.policy().areas, {
       rules: pathRules(this.store.scriptsFor(taskRepo(task, goal))).map((r) => `${r.glob} ${r.tags.join(",")}`),
       machines: machines.filter((m) => m.owner === task.owner).map((m) => ({ name: m.name, tags: m.tags ?? [], online: m.online })),
-    }, task.fromDoc?.decision ? this.store.decision(task.fromDoc.decision) ?? null : null) : role === "builder" ? builderPrompt(task, goal, resumed, org, others, repoPrompts, checksFor(this.store.scriptsFor(taskRepo(task, goal)), machine.tags ?? []), this.budget(task)) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main", org, repoPrompts, this.budget(task), this.store.policy().classifier ?? null);
+    }, task.fromDoc?.decision ? this.store.decision(task.fromDoc.decision) ?? null : null, memory) : role === "builder" ? builderPrompt(task, goal, resumed, org, others, repoPrompts, checksFor(this.store.scriptsFor(taskRepo(task, goal)), machine.tags ?? []), this.budget(task), memory) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main", org, repoPrompts, this.budget(task), this.store.policy().classifier ?? null, memory);
     const existing = Boolean(priv.worktree && task.machine === machine.id);
     // A restart on the same machine and worktree picks the agent's own conversation up; elsewhere it starts afresh.
     const from = priv.resumeFrom;
@@ -1885,6 +1887,8 @@ export class Engine {
     }
     Object.assign(task, now_);
     this.store.addSession({ id, task: task.id, role, machine: machine.id, agent: task.agent, started: now(), ended: null, cause: null, kind });
+    // The memories went out in the prompt: count them. A resumed conversation isn't sent the prompt.
+    if (!resumeFrom) this.store.touchMemories(remembered.map((m) => m.id), now());
     if (priv.movedFrom || priv.resumeFrom) this.store.savePrivate(task.id, { ...this.store.private(task.id), movedFrom: null, resumeFrom: null });
     task.worker = { role, agent: task.agent, machine: machine.id, session: id, startedAt: now() };
     task.startAt = null;
@@ -4170,6 +4174,19 @@ export class Engine {
     const repo = taskRepo(task, goal) ?? goal?.folder ?? null;
     if (!repo) return null;
     return { repo, base: task.pr?.base ?? this.store.private(task.id).base ?? goal?.base ?? "main" };
+  }
+
+  /** The candidates for a session prompt's "What the factory remembers" (MF-393): active memories for the org,
+   *  the task's repo (as the org spells it) and its goal, so a goal memory reaches every repo in the goal. */
+  private memoriesFor(task: Task, goal: Goal): Memory[] {
+    const scopes: MemoryScope[] = [{ kind: "org", key: null }];
+    const name = taskRepo(task, goal);
+    if (name) scopes.push({ kind: "repo", key: this.store.repos().find((r) => r.name.toLowerCase() === name.toLowerCase())?.name ?? name });
+    scopes.push({ kind: "goal", key: goal.id });
+    const candidates = this.store.searchMemories({ scopes, status: "active", limit: 200 });
+    if (!candidates.length) return [];
+    const matched = this.store.searchMemories({ scopes, query: `${task.title} ${task.brief ?? ""}`, status: "active", any: true, limit: 50 });
+    return pickMemories(candidates, matched.map((m) => m.id));
   }
 
   /** The other tasks building or in review where this one merges, for its planner's and builder's prompts:
