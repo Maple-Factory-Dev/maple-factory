@@ -6,6 +6,9 @@ struct InboxView: View {
     @SwiftUI.State private var filter: InboxItem.Kind? = nil
     @SwiftUI.State private var mineOnly = true
 
+    /// Headless runs switch scope with `inbox:team` or `inbox:mine`.
+    static let demo = Notification.Name("InboxView.demo")
+
     private var items: [InboxItem] { mineOnly ? state.myInbox : state.inbox }
 
     private var goalCount: Int {
@@ -48,6 +51,9 @@ struct InboxView: View {
         // A kind filter left on a group that's emptied (or isn't in this scope) falls back to All.
         .onChange(of: filter.map { state.inbox($0, mine: mineOnly).isEmpty } ?? false) { _, empty in
             if empty { filter = nil }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Self.demo)) { note in
+            if let scope = note.object as? String { mineOnly = scope != "team"; filter = nil }
         }
         .taskKeyboardNav(.list(rowTasks), primary: { id in
             if let item = shownItems.first(where: { $0.taskID == id }) { state.performInboxAction(item) }

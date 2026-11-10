@@ -235,6 +235,8 @@ final class AppState {
     private(set) var demoEmpty = false
     /// Headless `empty:goals`: also no goals, as a brand-new factory has.
     private(set) var demoNoGoals = false
+    /// Headless `empty:inbox`: the team's inbox stays, with nothing in it for you.
+    private(set) var demoInboxTeamOnly = false
 
     /// A factory that's loaded and has no goals yet: a connected one with an empty snapshot, or `empty:goals`.
     var hasNoGoals: Bool {
@@ -889,6 +891,7 @@ final class AppState {
                 && !(task.state == .reviewing ? task.reviews : task.approvals).contains { $0.id == me.id }
         }.map { InboxItem(kind: $0.state == .reviewing ? .review : .approval, taskID: $0.id, assignee: me, message: "Your review is requested", when: $0.updated) }
         if demoEmpty { return asked }
+        if demoInboxTeamOnly { return FactoryData.seedInbox.filter { $0.assignee.id != me.id && $0.kind != .mention } }
         return asked + FactoryData.seedInbox.filter { item in
             if [.approval, .review].contains(item.kind), asked.contains(where: { $0.taskID == item.taskID }) { return false }
             let task = task(item.taskID)
@@ -2615,6 +2618,8 @@ final class AppState {
             switch parts[0] {
             case "approve": approvePlan(parts[1])
             // `empty` clears the mockup's tasks, inbox, hand raises, notes, requests and activity; `empty:goals` its goals too.
+            case "inbox": NotificationCenter.default.post(name: InboxView.demo, object: parts[1])
+            case "empty" where parts.count > 1 && parts[1] == "inbox": demoInboxTeamOnly = true
             case "empty": clearForDemo(goals: parts.count > 1 && parts[1] == "goals")
             // The Detail panel's Reviewers row: `request:<id>:<login>`, and `reviewersask:<id>` opens its picker.
             case "request" where parts.count > 2: requestReviewers(parts[1], add: [parts[2]])
