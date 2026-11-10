@@ -61,21 +61,30 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
     /// A tapped notification: its `ref` (a task key, like MF-12) opens that task.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-        let ref = response.notification.request.content.userInfo["ref"] as? String
-        await MainActor.run { Self.open(ref: ref, in: store) }
+        let info = response.notification.request.content.userInfo
+        let ref = info["ref"] as? String, reason = info["reason"] as? String
+        await MainActor.run { Self.open(ref: ref, reason: reason, in: store) }
     }
 
     /// While the app is open, still a banner, unless it's about the task already on screen.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
         let ref = notification.request.content.userInfo["ref"] as? String
-        let onScreen = await MainActor.run { ref != nil && store.visibleTask == ref }
+        let onScreen = await MainActor.run { ref != nil && (store.visibleTask == ref || store.visibleDoc.map { "doc:\($0)" } == ref) }
         return onScreen ? [] : [.banner, .list, .sound]
     }
 
-    /// What a tap does, and what `-pushRef <id>` runs at launch: RootView's pendingLink opens the TaskRoute.
-    static func open(ref: String?, in store: FactoryStore) {
-        // A doc @mention (MF-364) is `doc:<id>`: iOS has no docs yet, so it just opens the app.
-        guard let ref, !ref.isEmpty, !ref.hasPrefix("doc:") else { return }
-        store.pendingLink = .task(ref)
+    /// What a tap does, and what `-pushRef <id>` (with `-pushReason`) runs at launch: RootView's pendingLink opens
+    /// the TaskRoute, or for `doc:<id>` (a doc @mention, MF-364, or a decision waiting on you, MF-370) that doc's
+    /// screen, on Decisions for a `decision` push and Comments for a `mention`.
+    static func open(ref: String?, reason: String? = nil, in store: FactoryStore) {
+        guard let ref, !ref.isEmpty else { return }
+        if ref.hasPrefix("doc:") {
+            let id = String(ref.dropFirst(4))
+            guard !id.isEmpty else { return }
+            store.pendingDocTab = reason == "decision" ? .decisions : reason == "mention" ? .comments : nil
+            store.pendingLink = .doc(id)
+        } else {
+            store.pendingLink = .task(ref)
+        }
     }
 }

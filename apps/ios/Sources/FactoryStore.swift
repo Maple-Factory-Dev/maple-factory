@@ -73,6 +73,10 @@ final class FactoryStore {
     var notificationStatus: NotificationStatus = .notAsked
     /// The task whose detail is on screen, so its own notification needn't show a banner.
     var visibleTask: String?
+    /// The doc whose screen is open (MF-370), so its own push needn't show a banner.
+    var visibleDoc: String?
+    /// The tab a doc link opens on: Decisions for a `decision` push, Comments for a `mention` (MF-370).
+    var pendingDocTab: DocTab?
     /// Asks iOS for permission and a token; called when a real factory goes live (AppDelegate sets it).
     @ObservationIgnored var askForPush: (() -> Void)?
 
@@ -1278,9 +1282,56 @@ final class FactoryStore {
             quietHours = m.quietHours
         case .policySave, .adminsGrant, .adminsRevoke, .membersRevoke, .reposHoldMerges, .reposReleaseMerges, .secretsSet, .secretsDelete:
             demoSettings(message)
+        case .docThreads, .docComment, .docResolve, .docReopen, .decisionAccept, .decisionReject:
+            demoDocs(message)
         default:
             break
         }
+    }
+
+    /// The doc screens' actions (MF-370), answered the way the server would: the changed thread or decision comes back.
+    private func demoDocs(_ message: Wire.ClientMessage) {
+        func thread(_ doc: String, _ id: String, _ change: (inout Wire.DocThread) -> Void) {
+            guard var t = feed.docThreads[doc]?.first(where: { $0.id == id }) else { return }
+            change(&t)
+            feed.apply(.docThreadUpdated(.init(thread: t)))
+        }
+        func decision(_ id: String, _ change: (inout Wire.Decision) -> Void) {
+            guard var d = feed.decisions.first(where: { $0.id == id }) else { return }
+            change(&d)
+            d.decidedBy = me; d.decidedAt = DemoData.now
+            feed.apply(.decisionUpdated(.init(decision: d)))
+        }
+        switch message {
+        case .docThreads(let m):
+            feed.apply(.docThreads(.init(doc: m.doc, threads: feed.docThreads[m.doc] ?? [])))
+        case .docComment(let m):
+            guard let id = m.thread else { return }
+            thread(m.doc, id) { $0.comments.append(.init(id: UUID().uuidString, author: me, text: m.text, at: DemoData.now)); $0.resolved = false }
+        case .docResolve(let m):
+            thread(m.doc, m.thread) { $0.resolved = true; $0.resolvedBy = me; $0.resolvedAt = DemoData.now }
+        case .docReopen(let m):
+            thread(m.doc, m.thread) { $0.resolved = false; $0.resolvedBy = nil; $0.resolvedAt = nil }
+        case .decisionAccept(let m):
+            decision(m.id) { $0.status = .accepted; $0.chosen = m.chosen ?? $0.chosen; $0.why = m.why }
+        case .decisionReject(let m):
+            decision(m.id) { $0.status = .rejected; $0.why = m.why }
+        default: break
+        }
+    }
+
+    /// The editor's `command` events (doc.comment, doc.resolve, decision.*), decoded and sent like any other message.
+    func sendDocCommand(_ command: [String: Any]) {
+        guard let type = command["type"] as? String, ["doc.comment", "doc.resolve", "doc.reopen", "doc.suggestion", "doc.ask", "doc.agentStop", "decision.propose", "decision.edit", "decision.accept", "decision.reject"].contains(type),
+              let data = try? JSONSerialization.data(withJSONObject: command),
+              let message = try? JSONDecoder().decode(Wire.ClientMessage.self, from: data) else { return }
+        send(message)
+    }
+
+    /// The docs editor host's page (no token, the host adds `?theme=`) and the token it hands over through the bridge.
+    func docEmbed() -> (url: URL, token: String)? {
+        guard status != .demo, let server, let token else { return nil }
+        return (server.appendingPathComponent("app/docs/embed"), token)
     }
 
     /// The settings screens' actions, answered the way the server would: the changed list comes back as its delta.

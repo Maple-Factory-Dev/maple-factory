@@ -48,7 +48,7 @@ struct MapleFactoryApp: App {
                     store.restore()
                 }
                 // `-pushRef <id>`: as if that task's notification were tapped (NotificationSettingsTests).
-                AppDelegate.open(ref: UserDefaults.standard.string(forKey: "pushRef"), in: store)
+                AppDelegate.open(ref: UserDefaults.standard.string(forKey: "pushRef"), reason: UserDefaults.standard.string(forKey: "pushReason"), in: store)
             }
             .onOpenURL { url in
                 // maplefactory://task/<id> or maplefactory://session/<machine>/<id>; RootView opens it
