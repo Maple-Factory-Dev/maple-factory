@@ -105,6 +105,7 @@ function factory(opts: { config?: Record<string, string> | null; db?: D1Database
     const api = /^https:\/\/slack\.com\/api\/([\w.]+)/.exec(url)?.[1];
     if (api === "chat.postMessage") return Response.json({ ok: true, ts: `${ts++}.0` });
     if (api === "chat.update") return Response.json({ ok: true });
+    if (api === "chat.delete") return Response.json({ ok: true });
     if (api === "chat.postEphemeral") return Response.json({ ok: true, message_ts: "1.0" });
     if (api === "auth.test") return Response.json({ ok: true, team: "Acme", user_id: "UBOT" });
     if (api === "conversations.replies") return Response.json({ ok: true, messages: thread });
@@ -119,7 +120,8 @@ function factory(opts: { config?: Record<string, string> | null; db?: D1Database
   const posts = () => calls.filter((c) => c.url.endsWith("/chat.postMessage")).map((c) => c.body);
   const updates = () => calls.filter((c) => c.url.endsWith("/chat.update")).map((c) => c.body);
   const whispers = () => calls.filter((c) => c.url.endsWith("/chat.postEphemeral")).map((c) => c.body);
-  return { store, engine, intake, env, sent, r2, events, calls, posts, updates, whispers, asks, ctx, settle, restore: () => (globalThis.fetch = realFetch) };
+  const deletes = () => calls.filter((c) => c.url.endsWith("/chat.delete")).map((c) => c.body);
+  return { store, engine, intake, env, sent, r2, events, calls, posts, updates, whispers, deletes, asks, ctx, settle, restore: () => (globalThis.fetch = realFetch) };
 }
 
 /** A request signed as Slack signs them (`v0:<timestamp>:<body>`). */
@@ -133,7 +135,7 @@ const mention = (id = "Ev1", text = "<@UBOT> can you look into it?") =>
   JSON.stringify({ type: "event_callback", event_id: id, authorizations: [{ user_id: "UBOT" }], event: { type: "app_mention", user: "U2", text, ts: "50.0002", thread_ts: "50.0001", channel: "C1" } });
 
 const click = (action: string, value: string | null, extra: Record<string, unknown> = {}) =>
-  `payload=${encodeURIComponent(JSON.stringify({ type: "block_actions", user: { id: "U2", name: "sam" }, channel: { id: "C1", name: "support" }, message: { ts: "100.0" }, actions: [{ action_id: action, value, ...extra }] }))}`;
+  `payload=${encodeURIComponent(JSON.stringify({ type: "block_actions", user: { id: "U2", name: "sam" }, channel: { id: "C1", name: "support" }, message: { ts: "101.0" }, actions: [{ action_id: action, value, ...extra }] }))}`;
 
 const PROPOSAL = {
   answer: "It's `exportAll` in *web/src/export.ts*: it loads every row at once.",
@@ -209,7 +211,7 @@ test("a retried event_id is taken once; the bot's own mentions are ignored", asy
 
 // ---- A mention, answered ----
 
-test("a mention: 'Looking into it…' in the thread, a draft.run on the machine, and the answer replaces it with the proposal's card", async () => {
+test("a mention: 'Looking into it…' in the thread, a draft.run on the machine, and the answer is a new reply with the proposal's card; 'Looking into it…' is deleted", async () => {
   const f = factory();
   try {
     const run = await asked(f);
@@ -220,11 +222,13 @@ test("a mention: 'Looking into it…' in the thread, a draft.run on the machine,
     assert.match(run.prompt, /- web · Website/);
     assert.match(run.prompt, /- mob · Mobile app/);
     assert.match(run.prompt, /"proposal"/);
-    const [looking] = f.posts();
+    const [looking, answer] = f.posts();
     assert.deepEqual([looking.channel, looking.thread_ts, looking.text], ["C1", "50.0001", "Looking into it…"]);
-    const [answer] = f.updates();
-    assert.equal(answer.ts, "100.0", "it replaces the 'Looking into it…' message");
+    assert.deepEqual([answer.channel, answer.thread_ts], ["C1", "50.0001"], "the answer is a new reply in the thread, so Slack notifies");
     assert.match(answer.text, /exportAll/);
+    assert.deepEqual(f.deletes(), [{ channel: "C1", ts: "100.0" }], "'Looking into it…' is removed");
+    assert.equal(f.updates().length, 0, "nothing is edited");
+    assert.equal(JSON.parse(f.store.get(`slack:ask:${run.id}`)!).answerTs, "101.0");
     const blocks = JSON.stringify(answer.blocks);
     assert.match(blocks, /Proposed task\* in Website/);
     assert.match(blocks, /Stream the export instead of loading every row/);
@@ -244,7 +248,7 @@ test("a plain answer has no card; a runner's token request reads only the ask's 
   const f = factory();
   try {
     const run = await asked(f, { answer: "It's in web/src/export.ts." });
-    const [answer] = f.updates();
+    const answer = f.posts()[1];
     assert.equal(answer.text, "It's in web/src/export.ts.");
     assert.ok(!answer.blocks.some((b: any) => b.type === "actions"));
     // Answered: no more fetching for it.
@@ -375,6 +379,7 @@ test("Create task makes exactly one task in the proposed goal, its brief linking
     const request = f.store.intake()[0];
     assert.deepEqual([request.source, request.channel, request.requester, request.taskId], ["slack", "#support", "sam", "WEB-1"]);
     const card = f.updates().at(-1)!;
+    assert.equal(card.ts, "101.0", "the answer's own message holds the card, not the deleted 'Looking into it…'");
     assert.match(JSON.stringify(card.blocks), /Created WEB-1 in Website · planning/);
     assert.ok(!card.blocks.some((b: any) => b.type === "actions"), "the buttons are gone");
     const said = f.posts().map((p) => p.text);
@@ -396,8 +401,9 @@ test("Not now sets the proposal aside; Create task on an expired ask says so", a
     const run = await asked(f);
     await slackActions(signed("/integrations/slack/actions", click("slack.dismiss", run.id), { type: "application/x-www-form-urlencoded" }), f.env, f.ctx);
     await f.settle();
+    assert.equal(f.updates().at(-1)!.ts, "101.0");
     assert.match(JSON.stringify(f.updates().at(-1)!.blocks), /sam said not now; no task made/);
-    await f.engine.slack.action({ action: "slack.create", value: run.id, selected: [], user: { id: "U2", name: "sam" }, channel: { id: "C1", name: "support" }, messageTs: "100.0" });
+    await f.engine.slack.action({ action: "slack.create", value: run.id, selected: [], user: { id: "U2", name: "sam" }, channel: { id: "C1", name: "support" }, messageTs: "101.0" });
     assert.equal(f.store.tasks().length, 0);
 
     const g = factory();
@@ -405,7 +411,7 @@ test("Not now sets the proposal aside; Create task on an expired ask says so", a
       const again = await asked(g);
       const saved = JSON.parse(g.store.get(`slack:ask:${again.id}`)!);
       g.store.set(`slack:ask:${again.id}`, JSON.stringify({ ...saved, expiresAt: Date.now() - 1 }));
-      await g.engine.slack.action({ action: "slack.create", value: again.id, selected: [], user: { id: "U2", name: "sam" }, channel: { id: "C1", name: "support" }, messageTs: "100.0" });
+      await g.engine.slack.action({ action: "slack.create", value: again.id, selected: [], user: { id: "U2", name: "sam" }, channel: { id: "C1", name: "support" }, messageTs: "101.0" });
       assert.equal(g.store.tasks().length, 0);
       assert.match(g.posts().at(-1)!.text, /expired/);
     } finally {
@@ -421,7 +427,7 @@ test("Create task refuses a goal archived since the proposal", async () => {
   try {
     const run = await asked(f);
     f.store.saveGoal(goal("web", { archived: true }));
-    await f.engine.slack.action({ action: "slack.create", value: run.id, selected: [], user: { id: "U2", name: "sam" }, channel: { id: "C1", name: "support" }, messageTs: "100.0" });
+    await f.engine.slack.action({ action: "slack.create", value: run.id, selected: [], user: { id: "U2", name: "sam" }, channel: { id: "C1", name: "support" }, messageTs: "101.0" });
     assert.equal(f.store.tasks().length, 0);
     assert.match(f.posts().at(-1)!.text, /I couldn't create it: Website is archived/);
   } finally {
@@ -436,7 +442,7 @@ test("Create task whose planning fails after the task is made: the ask stays cre
     (f.engine as any).startPlanning = async () => {
       throw new Error("planning broke.");
     };
-    const create = () => f.engine.slack.action({ action: "slack.create", value: run.id, selected: [], user: { id: "U2", name: "sam" }, channel: { id: "C1", name: "support" }, messageTs: "100.0" });
+    const create = () => f.engine.slack.action({ action: "slack.create", value: run.id, selected: [], user: { id: "U2", name: "sam" }, channel: { id: "C1", name: "support" }, messageTs: "101.0" });
     await create();
     assert.equal(f.store.tasks().length, 1);
     const saved = JSON.parse(f.store.get(`slack:ask:${run.id}`)!);
@@ -461,21 +467,23 @@ async function running(f: ReturnType<typeof factory>) {
   return f.sent.find((c) => c.type === "draft.run") as Extract<ServerToRunner, { type: "draft.run" }>;
 }
 
-test("a running ask whose machine goes offline: 'Looking into it…' says so, once", async () => {
+test("a running ask whose machine goes offline: a new reply in the thread says so, once, and 'Looking into it…' is deleted", async () => {
   const f = factory();
   try {
     const run = await running(f);
     await f.engine.slack.machineGone("m2", "m2");
-    assert.equal(f.updates().length, 0, "another machine's going offline says nothing");
+    assert.equal(f.posts().length, 1, "another machine's going offline says nothing");
     await f.engine.slack.machineGone("m1", "Dana's Mac");
     await f.engine.slack.machineGone("m1", "Dana's Mac");
     await f.engine.slack.sweep();
-    const said = f.updates();
+    const said = f.posts().slice(1);
     assert.equal(said.length, 1, "said once");
-    assert.deepEqual([said[0].ts, said[0].text], ["100.0", "Dana's Mac went offline before answering. Mention me again in a moment."]);
+    assert.deepEqual([said[0].thread_ts, said[0].text], ["50.0001", "Dana's Mac went offline before answering. Mention me again in a moment."]);
+    assert.deepEqual(f.deletes(), [{ channel: "C1", ts: "100.0" }]);
+    assert.equal(f.updates().length, 0);
     // Its answer, if the runner comes back with one, is too late.
     await f.engine.fromRunner("m1", { type: "draft.done", id: run.id, output: JSON.stringify(PROPOSAL), error: null });
-    assert.equal(f.updates().length, 1);
+    assert.equal(f.posts().length, 2);
   } finally {
     f.restore();
   }
@@ -489,15 +497,51 @@ test("a running ask past its expiry: the alarm's sweep says so, once, and wakes 
     const run = await running(f);
     assert.ok(wakes.some((ms) => ms > 30 * 60_000), "the ask wakes the alarm at its expiry");
     await f.engine.slack.sweep();
-    assert.equal(f.updates().length, 0, "not yet");
+    assert.equal(f.posts().length, 1, "not yet");
     const saved = JSON.parse(f.store.get(`slack:ask:${run.id}`)!);
     f.store.set(`slack:ask:${run.id}`, JSON.stringify({ ...saved, expiresAt: Date.now() - 1 }));
     await f.engine.slack.sweep();
     await f.engine.slack.sweep();
-    const said = f.updates();
+    const said = f.posts().slice(1);
     assert.equal(said.length, 1, "said once");
-    assert.equal(said[0].ts, "100.0");
+    assert.equal(said[0].thread_ts, "50.0001", "a new reply in the thread");
     assert.match(said[0].text, /^I didn't hear back in time/);
+    assert.deepEqual(f.deletes(), [{ channel: "C1", ts: "100.0" }]);
+    assert.equal(f.updates().length, 0);
+  } finally {
+    f.restore();
+  }
+});
+
+test("an answer the agent couldn't give: 'I couldn't work that out' is a new reply in the thread, and 'Looking into it…' is deleted", async () => {
+  const f = factory();
+  try {
+    const run = await running(f);
+    await f.engine.fromRunner("m1", { type: "draft.done", id: run.id, output: null, error: "agent crashed" });
+    await f.settle();
+    const said = f.posts().slice(1);
+    assert.equal(said.length, 1);
+    assert.equal(said[0].thread_ts, "50.0001");
+    assert.equal(said[0].text, "I couldn't work that out (agent crashed). Try asking another way.");
+    assert.deepEqual(f.deletes(), [{ channel: "C1", ts: "100.0" }]);
+    assert.equal(f.updates().length, 0);
+  } finally {
+    f.restore();
+  }
+});
+
+test("when Slack won't delete 'Looking into it…', it's edited to 'Answered below.'", async () => {
+  const f = factory();
+  const mocked = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request, init: RequestInit = {}) =>
+    String(input).endsWith("/chat.delete") ? (await mocked(input, init), Response.json({ ok: false, error: "cant_delete_message" })) : mocked(input, init)) as typeof fetch;
+  try {
+    await asked(f);
+    assert.equal(f.deletes().length, 1);
+    const [edited] = f.updates();
+    assert.deepEqual([edited.ts, edited.text], ["100.0", "Answered below."]);
+    assert.ok(f.events.includes("Slack's chat.delete said cant_delete_message"));
+    assert.match(f.posts()[1].text, /exportAll/, "the answer is still its own reply");
   } finally {
     f.restore();
   }
@@ -510,7 +554,7 @@ test("Not now deletes the ask's files from the bucket", async () => {
   try {
     const run = await asked(f);
     assert.equal(f.r2.size, 1);
-    await f.engine.slack.action({ action: "slack.dismiss", value: run.id, selected: [], user: { id: "U2", name: "sam" }, channel: { id: "C1", name: "support" }, messageTs: "100.0" });
+    await f.engine.slack.action({ action: "slack.dismiss", value: run.id, selected: [], user: { id: "U2", name: "sam" }, channel: { id: "C1", name: "support" }, messageTs: "101.0" });
     await f.settle();
     assert.equal(f.r2.size, 0);
   } finally {
@@ -524,7 +568,7 @@ test("pruning an expired ask deletes its files unless it became a task", async (
     const expire = (id: string) => f.store.set(`slack:ask:${id}`, JSON.stringify({ ...JSON.parse(f.store.get(`slack:ask:${id}`)!), expiresAt: Date.now() - 1 }));
     // One that became a task: its files are the task's now.
     const made = await asked(f);
-    await f.engine.slack.action({ action: "slack.create", value: made.id, selected: [], user: { id: "U2", name: "sam" }, channel: { id: "C1", name: "support" }, messageTs: "100.0" });
+    await f.engine.slack.action({ action: "slack.create", value: made.id, selected: [], user: { id: "U2", name: "sam" }, channel: { id: "C1", name: "support" }, messageTs: "101.0" });
     const kept = [...f.r2.keys()];
     assert.equal(kept.length, 1);
     expire(made.id);
@@ -552,7 +596,7 @@ test("a Slack thread's accepted message points to the factory for the agent's qu
   const f = factory();
   try {
     const run = await asked(f);
-    await f.engine.slack.action({ action: "slack.create", value: run.id, selected: [], user: { id: "U2", name: "sam" }, channel: { id: "C1", name: "support" }, messageTs: "100.0" });
+    await f.engine.slack.action({ action: "slack.create", value: run.id, selected: [], user: { id: "U2", name: "sam" }, channel: { id: "C1", name: "support" }, messageTs: "101.0" });
     await f.settle();
     const said = f.posts().map((p) => p.text).find((t) => /is tracking this as WEB-1/.test(t))!;
     assert.equal(said, "sam is tracking this as WEB-1; a planner is on it. Its agent's questions show up here (answer them in the factory), and this thread hears when it merges.");
@@ -741,7 +785,7 @@ test("a channel whose picked goals are all archived: the answer uses every activ
     assert.match(run.prompt, /- web · Website/);
     assert.match(run.prompt, /- mob · Mobile app/);
     assert.doesNotMatch(run.prompt, /Old site/);
-    const [answer] = f.updates();
+    const answer = f.posts()[1];
     assert.equal(answer.text, `It's in web/src/export.ts.\n\n_${ARCHIVED_NOTE}_`);
     assert.equal(answer.text.split(ARCHIVED_NOTE).length, 2, "said once");
     // A pick that's still active is used as it is, with no note.
