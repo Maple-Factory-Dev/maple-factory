@@ -41,7 +41,7 @@ const proposal = obj(
 const docId = str("The doc's id (a uuid), from list_docs.");
 const blockId = str("A block id (b-…) from read_doc's `<!-- block … -->` markers.");
 const quote = str("Exact text from the doc (inside one paragraph, heading or list item) that appears once; with block, once in that block.");
-const DOC_TOOLS: Omit<Tool, "roles">[] = [
+export const DOC_TOOLS: Omit<Tool, "roles">[] = [
   {
     name: "list_docs",
     description: "The org's shared planning docs (not archived): id, title, goal, last edit and open comment threads.",
