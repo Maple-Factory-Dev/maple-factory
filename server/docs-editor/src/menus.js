@@ -128,7 +128,7 @@ export function mentionSuggestions({ members, tasks }) {
 }
 
 /** The bubble menu's buttons over a text selection. */
-export function bubbleMenuElement(editor, onComment = null, onAsk = null) {
+export function bubbleMenuElement(editor, onComment = null, onAsk = null, onMakeTasks = null) {
   const el = document.createElement("div");
   el.className = "doc-bubble";
   const buttons = [
@@ -152,13 +152,15 @@ export function bubbleMenuElement(editor, onComment = null, onAsk = null) {
     ...(onComment ? [{ label: "Comment", title: "Comment", comment: true }] : []),
     // MF-366: ask an agent about the selection, in a new thread.
     ...(onAsk ? [{ label: "Ask an agent", title: "Ask an agent", comment: true, ask: true }] : []),
+    // MF-368: make draft tasks from the selection.
+    ...(onMakeTasks ? [{ label: "Make tasks", title: "Make tasks", comment: true, make: true }] : []),
   ].map((b) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.textContent = b.label;
     btn.title = b.title;
     btn.className = `doc-bubble-${b.title.toLowerCase().replace(/\s+/g, "-")}`;
-    btn.addEventListener("mousedown", (e) => { e.preventDefault(); if (b.ask) onAsk(); else if (b.comment) onComment(); else b.run(editor.chain().focus()).run(); });
+    btn.addEventListener("mousedown", (e) => { e.preventDefault(); if (b.make) onMakeTasks(); else if (b.ask) onAsk(); else if (b.comment) onComment(); else b.run(editor.chain().focus()).run(); });
     el.append(btn);
     return { btn, b };
   });

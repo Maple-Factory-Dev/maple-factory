@@ -7,6 +7,7 @@
 //   onEvent("decision", msg): a client message to send as is: decision.propose / edit / accept / reject
 //   me: the signed-in login (optional)
 import { Node } from "@tiptap/core";
+import { decisionSource } from "./make-tasks.js";
 
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -76,7 +77,12 @@ function card(d, id, host, ctx) {
       el("button", { type: "button", class: "doc-btn", onclick: () => send({ type: "decision.reject", id: d.id, why: why.value.trim() || null }) }, "Reject"),
       el("button", { type: "button", class: "doc-btn ghost", onclick: () => { host.editing?.add(d.id); ctx.redraw(true); } }, "Edit")));
   } else if (d.status === "accepted") {
+    // MF-368: the tasks made from it, live from the feed, and Make tasks.
+    const made = (host?.tasks?.() ?? []).filter((t) => t.fromDoc?.decision === d.id);
+    if (made.length) body.append(el("ul", { class: "doc-decision-tasks" }, made.map((t) =>
+      el("li", {}, el("a", { href: `#/t/${t.id}`, "data-task-link": t.id }, t.id), ` ${t.title ?? ""} `, el("span", { class: `doc-pill state-${t.state}`, "data-state": t.state }, t.state)))));
     body.append(el("div", { class: "doc-decision-actions" },
+      host?.sendCommand ? el("button", { type: "button", class: "doc-btn", "data-decision-maketasks": "", onclick: () => host.makeTasks?.(decisionSource(d)) }, "Make tasks") : null,
       el("button", { type: "button", class: "doc-btn", onclick: () => ctx.supersede(d) }, "Supersede")));
   }
   return body;
