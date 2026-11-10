@@ -712,6 +712,9 @@ import Foundation
         case .pushDevices:
             // Phone push devices: only the iPhone and Android apps register or list them.
             break
+        case .memoryUpdated, .memoryRemoved:
+            // Shared memories (MF-391) have no Mac screen yet, so the feed deltas are ignored.
+            break
         case .unknown:
             break
         }
