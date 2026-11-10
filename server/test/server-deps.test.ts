@@ -13,6 +13,9 @@ const pkg = JSON.parse(readFileSync(join(serverDir, "package.json"), "utf8"));
 const declared = new Set([...Object.keys(pkg.dependencies ?? {}), ...Object.keys(pkg.devDependencies ?? {})]);
 
 // `import … from "x"`, `export … from "x"`, `import "x"`, `import("x")` — static string specifiers only.
+// Blind spots: `require()` calls and dynamic `import()` built from template strings or variables are not seen, so a
+// dependency reached only that way would still slip through to deploy time. The Worker code is ESM with static
+// imports today; if that changes, check wrangler's bundle metafile (`wrangler deploy --dry-run --metafile`) instead.
 const IMPORT_RE = /(?:^|[^\w$.])(?:import|export)\s*(?:[\w$*{}\s,]+?\s*from\s*)?\(?\s*["']([^"'`$]+)["']/gm;
 
 function resolveRelative(from: string, spec: string): string | null {
