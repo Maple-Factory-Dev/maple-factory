@@ -76,6 +76,32 @@ enum LastTaskGoal {
     }
 }
 
+/// The composer's unsent brief for each factory (MF-404), under `unsentDraft.<host>` (the mockup's under
+/// `unsentDraft.mockup`), so Esc, ⌘N, quitting or an update never loses it. `parked` is the one slot for a
+/// draft set aside while a composer opened for something specific (a note, a request, findings) is in use.
+enum UnsentDraft {
+    static func key(_ factory: URL?, parked: Bool = false) -> String {
+        "unsentDraft.\(factory.map(SavedFactory.key) ?? "mockup")\(parked ? ".parked" : "")"
+    }
+
+    static func load(factory: URL?, parked: Bool = false, defaults: UserDefaults = AppDefaults) -> ComposeDraft? {
+        load(key: key(factory, parked: parked), defaults: defaults)
+    }
+
+    static func load(key: String, defaults: UserDefaults) -> ComposeDraft? {
+        defaults.data(forKey: key).flatMap { try? JSONDecoder().decode(ComposeDraft.self, from: $0) }.flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    /// Stores a draft worth keeping; an empty one (or nil) clears the key.
+    static func store(_ draft: ComposeDraft?, key: String, defaults: UserDefaults) {
+        if let draft, !draft.isEmpty, let data = try? JSONEncoder().encode(draft) {
+            defaults.set(data, forKey: key)
+        } else {
+            defaults.removeObject(forKey: key)
+        }
+    }
+}
+
 @MainActor @Observable
 final class AppState {
     // MARK: Navigation
@@ -653,7 +679,37 @@ final class AppState {
     // MARK: Composer & scratchpad
 
     var isComposing = false
-    var draft = ComposeDraft()
+    /// The composer's brief. Once a factory's drafts are loaded (`syncUnsentDraft`), every change is kept in
+    /// its defaults, so it survives Esc, ⌘N and a relaunch until it's sent or discarded (MF-404).
+    var draft = ComposeDraft() {
+        didSet { if draft != oldValue, let key = unsentDraftKey { UnsentDraft.store(draft, key: key, defaults: taskGoalDefaults) } }
+    }
+    /// An unsent draft set aside while a composer opened for something specific is in use; it comes back
+    /// once that one is sent or discarded.
+    var parkedDraft: ComposeDraft? {
+        didSet { if parkedDraft != oldValue, let key = unsentDraftKey { UnsentDraft.store(parkedDraft, key: key + ".parked", defaults: taskGoalDefaults) } }
+    }
+    /// The defaults key the in-memory draft belongs to; nil until a factory's drafts are loaded, so a
+    /// plain `AppState()` (tests, previews) neither reads nor writes any.
+    private(set) var unsentDraftKey: String?
+
+    /// A brief waiting to be picked up again: shown as a dot on New task while the composer's closed.
+    var hasUnsentDraft: Bool { !isComposing && (!draft.isEmpty || !(parkedDraft?.isEmpty ?? true)) }
+
+    /// Loads the unsent draft of the factory on screen when that's changed (launch, connect, switching
+    /// factories). The draft in memory is already stored under its own factory's key.
+    func syncUnsentDraft() {
+        let key = UnsentDraft.key(taskGoalFactory)
+        guard key != unsentDraftKey else { return }
+        let stored = UnsentDraft.load(key: key, defaults: taskGoalDefaults)
+        let parked = UnsentDraft.load(key: key + ".parked", defaults: taskGoalDefaults)
+        let first = unsentDraftKey == nil
+        unsentDraftKey = nil
+        // The first load keeps a brief already in memory (a `-compose` launch) when nothing's stored.
+        if let stored { draft = stored } else if !first || draft.isEmpty { draft = ComposeDraft() }
+        parkedDraft = parked
+        unsentDraftKey = key
+    }
     /// What's typed in each task's comment box, by task id: the panel and full view share it, so switching
     /// between them keeps it. Cleared when it's sent.
     var composerDrafts: [String: String] = [:]
@@ -1011,7 +1067,10 @@ final class AppState {
     // MARK: Composer actions
 
     /// Where the last task was made from, per factory; tests swap in their own suite.
-    var taskGoalDefaults = AppDefaults
+    var taskGoalDefaults = AppDefaults {
+        // A test's own suite: load what it holds, like a launch would.
+        didSet { unsentDraftKey = nil; syncUnsentDraft() }
+    }
     /// For tests: the goals New Task picks from instead of FactoryData's, so a suite needn't write the global liveGoals.
     var taskGoalGoals: [Goal]?
     private var taskGoalFactory: URL? { isLive ? client?.server : nil }
@@ -1036,12 +1095,34 @@ final class AppState {
         // A Draft with AI left running (or finished, not yet in the composer) carries on: a plain
         // New Task comes back to it as it was left. A composer opened for something else (a request,
         // a note, a goal) isn't that draft's, so it's stopped rather than left to fill this one in.
-        let resuming = aiDraftPending && goal == nil && title.isEmpty && body.isEmpty && fromNote == nil
-        if !resuming {
+        let plain = goal == nil && title.isEmpty && body.isEmpty && fromNote == nil
+        let resuming = aiDraftPending && plain
+        // A plain New Task picks the unsent brief back up (MF-404): the one in the composer, else one set aside.
+        if plain && !resuming && draft.isEmpty, let parked = parkedDraft {
+            draft = parked
+            parkedDraft = nil
+        }
+        if plain && !resuming && !draft.isEmpty {
+            // Its goal may have been archived (or be another factory's) since: fall back to the usual one.
+            let active = taskGoalGoals?.filter { !$0.archived } ?? FactoryData.activeGoals
+            if !active.contains(where: { $0.name == draft.goal }) {
+                draft.goal = currentGoal
+                draft.goalChosen = inGoal
+            }
+        } else if !plain && !draft.isEmpty && parkedDraft != nil {
+            // The one slot's taken and there's another unsent brief in the composer: replacing it would
+            // lose it, so it's reopened as it was, to finish or discard before the new one (MF-404 R1.1).
+            showToast("Finish or discard this draft first. Another one is already set aside", icon: "tray.full", color: Theme.State.drafting)
+        } else if !resuming {
             if aiDraftPending, let draft = aiDraft, draft.state == .choosing || draft.state == .reading {
                 showToast("Stopped the Draft with AI that was running", icon: "sparkles", color: Theme.State.planning)
             }
             cancelAIDraft()
+            // A composer for something specific starts fresh, but an unsent brief is set aside, not wiped.
+            if !plain && !draft.isEmpty {
+                parkedDraft = draft
+                showToast("Kept your unsent draft. ⌘N after this one to get it back", icon: "tray.and.arrow.down", color: Theme.State.drafting)
+            }
             draft = ComposeDraft(title: title, body: body, goal: goal ?? currentGoal, agent: nil, fromNote: fromNote, goalChosen: chosen)
         }
         withAnimation(.snappy(duration: 0.3)) {
@@ -1063,6 +1144,22 @@ final class AppState {
     func cancelCompose() {
         if aiDraft?.state == .failed { aiDraftID = nil }
         withAnimation(.snappy(duration: 0.3)) { isComposing = false }
+    }
+
+    /// Throws the composer's brief away for good (the composer's Discard draft): a brief set aside for
+    /// it comes back, a Draft with AI stops, and the composer closes.
+    func discardDraft() {
+        cancelAIDraft()
+        let parked = parkedDraft != nil
+        doneWithDraft()
+        withAnimation(.snappy(duration: 0.3)) { isComposing = false }
+        showToast(parked ? "Draft discarded · your unsent draft is back on ⌘N" : "Draft discarded", icon: "trash", color: Theme.State.cancelled)
+    }
+
+    /// The brief's been sent, saved or discarded: forget it, and bring back one that was set aside.
+    private func doneWithDraft() {
+        draft = parkedDraft ?? ComposeDraft()
+        parkedDraft = nil
     }
 
     // MARK: Draft with AI
@@ -1167,6 +1264,7 @@ final class AppState {
                 isComposing = false
                 destination = .goal(draft.goal)
             }
+            doneWithDraft()
             showToast(sendToPlanning ? "Sent to planning" : "Saved as a draft",
                       icon: sendToPlanning ? "list.bullet.indent" : "pencil.line",
                       color: sendToPlanning ? Theme.State.planning : Theme.State.drafting)
@@ -1219,6 +1317,7 @@ final class AppState {
             isComposing = false
             destination = .goal(draft.goal)
         }
+        doneWithDraft()
         openFocus(id)
         showToast(
             sendToPlanning ? "\(id) created · \(agent.name) is drafting a plan" : "\(id) saved as a draft",
@@ -1241,6 +1340,7 @@ final class AppState {
             isComposing = false
             destination = .scratchpad
         }
+        doneWithDraft()
         showToast("Saved to scratchpad", icon: "note.text", color: Theme.State.drafting)
     }
 
@@ -2735,6 +2835,8 @@ final class AppState {
             case "send": submitDraft(sendToPlanning: true)
             case "steer": steer(parts[1], text: parts.dropFirst(2).joined(separator: ":"), interruptNow: false)
             case "idea": draft.title = parts.dropFirst().joined(separator: ":")
+            // The composer's brief typed in (`brief:Some text`), for the unsent-draft demo (MF-404).
+            case "brief": draft.body = parts.dropFirst().joined(separator: ":")
             // The update toast's buttons and its What's new link (with MAPLE_UPDATE_DEMO=1), and a passing toast to show beneath it.
             case "update":
                 switch parts[1] {
@@ -2799,6 +2901,7 @@ final class AppState {
                 switch parts[1] {
                 case "compose": startCompose()
                 case "cancel": cancelCompose()
+                case "discard": discardDraft()
                 case "draft": draftWithAI()
                 case "watch": watchingAIDraft = true
                 case "goal": goalSheet = .new

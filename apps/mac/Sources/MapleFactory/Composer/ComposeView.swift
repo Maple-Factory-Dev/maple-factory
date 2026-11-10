@@ -142,6 +142,33 @@ struct ComposeView: View {
         let agent = state.assignee(for: state.draft)
 
         return HStack(spacing: 10) {
+            // Esc (Cancel) only closes the composer and keeps the brief (MF-404); this throws it away.
+            if !state.draft.isEmpty {
+                HStack(spacing: 5) {
+                    Image(systemName: "trash").font(.system(size: 11))
+                    Text("Discard draft")
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Theme.textMuted)
+                .padding(.horizontal, 8)
+                .frame(height: 28)
+                .contentShape(Rectangle())
+                .onTapGesture { state.discardDraft() }
+                .help("Throw this brief away")
+                .accessibilityAddTraits(.isButton)
+                Divider().frame(height: 16)
+            }
+            if !(state.parkedDraft?.isEmpty ?? true) {
+                // R1.2: the person's own brief is waiting behind this one.
+                HStack(spacing: 4) {
+                    Image(systemName: "tray.and.arrow.down").font(.system(size: 11))
+                    Text("1 draft set aside")
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Theme.State.drafting)
+                .help("Your unsent draft comes back once this one is sent or discarded")
+                Divider().frame(height: 16)
+            }
             Image(systemName: "info.circle").font(.system(size: 11))
             Text(reading.doneWhen.isEmpty
                  ? "No “Done when” checklist yet. \(agent.name) will propose one with the plan."

@@ -561,7 +561,8 @@ struct Note: Identifiable {
 }
 
 /// The in-progress brief in the composer.
-struct ComposeDraft {
+/// The composer's brief. Codable so an unsent one survives a relaunch (UnsentDraft, MF-404).
+struct ComposeDraft: Codable, Equatable {
     var title = ""
     var body = ""
     var goal = "Auth overhaul"
@@ -575,6 +576,13 @@ struct ComposeDraft {
     var intakeID: String? = nil
     /// Picked by the person (or the page they started from), so Draft with AI keeps it.
     var goalChosen = false
+
+    /// Nothing typed worth keeping: title and brief blank and no tickets. A goal alone isn't a draft.
+    var isEmpty: Bool {
+        title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && tickets.isEmpty
+    }
 }
 
 enum GoalLayout: String, CaseIterable {
