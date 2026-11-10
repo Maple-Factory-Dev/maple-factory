@@ -30,6 +30,13 @@ struct CommandPaletteTests {
         results(query).first { $0.kind == kind }?.items ?? []
     }
 
+    @Test func stopTheLineIsFoundByItsKeywords() {
+        for query in ["hold merges", "freeze", "incident", "andon", "pause merges", "stop the line"] {
+            #expect(items(query, .actions).first == .action(.stopTheLine), "\(query)")
+        }
+        #expect(items("restart the line", .actions).first == .action(.restartTheLine))
+    }
+
     @Test func docTitleQueryFindsTheDoc() {
         let docs = [PaletteDoc(id: "d1", title: "Onboarding plan", goal: "Auth overhaul"), PaletteDoc(id: "d2", title: "Release notes")]
         let sections = CommandPaletteModel.results(query: "onboarding", tasks: tasks, goals: goals, docs: docs, me: me.id)
