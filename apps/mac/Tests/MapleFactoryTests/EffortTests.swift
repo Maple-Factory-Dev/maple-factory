@@ -36,6 +36,18 @@ import Testing
         #expect(state.efforts(in: "Billing v2") == ["Stripe hardening"])
     }
 
+    /// The goal List view and My tasks rows draw an effort pill from `task.effort`: the Auth overhaul
+    /// list carries it on the Login revamp tasks, and nowhere else.
+    @Test func theGoalListsRowsCarryTheirEffort() {
+        let state = AppState()
+        let list = GoalView.visibleTasks(state.tasks(for: FactoryData.goal(named: "Auth overhaul")), filter: .everyone)
+        let withEffort = list.filter { $0.effort != nil }
+        #expect(withEffort.map(\.id).sorted() == ["ATL-136", "ATL-138", "ATL-149", "ATL-152", "ATL-163"])
+        #expect(withEffort.allSatisfy { $0.effort == "Login revamp" })
+        #expect(list.count > withEffort.count)
+        #expect(list.filter { !withEffort.map(\.id).contains($0.id) }.allSatisfy { $0.effort == nil })
+    }
+
     @Test func settingAnEffortShowsInItsSiblings() {
         let state = AppState()
         state.setEffort("ATL-161", "  Login   revamp ")

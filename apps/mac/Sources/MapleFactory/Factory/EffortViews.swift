@@ -122,14 +122,15 @@ private struct EffortRow: View {
     }
 }
 
-/// A small chip naming a task's effort, on board cards, so related tasks stand out.
+/// A small chip naming a task's effort, on board cards and list rows, so related tasks stand out.
+/// A long name truncates at the tail; the tooltip still names the whole effort.
 struct EffortChip: View {
     let effort: String
 
     var body: some View {
         HStack(spacing: 3) {
             Image(systemName: "square.stack.3d.up").font(.system(size: 8.5, weight: .semibold))
-            Text(effort).lineLimit(1)
+            Text(effort).lineLimit(1).truncationMode(.tail)
         }
         .font(.system(size: 10.5, weight: .medium))
         .foregroundStyle(Theme.accent)
@@ -137,5 +138,24 @@ struct EffortChip: View {
         .frame(height: 17)
         .background(Capsule().fill(Theme.accent.opacity(0.1)))
         .help("Part of the \(effort) effort")
+    }
+}
+
+/// Hugs its content up to `max` points wide: offered more it stays at its ideal width (unlike a
+/// `.frame(maxWidth:)`, which grows to the cap), offered less it shrinks so the content truncates.
+struct WidthCap: Layout {
+    let max: CGFloat
+
+    private func capped(_ proposal: ProposedViewSize) -> ProposedViewSize {
+        ProposedViewSize(width: Swift.min(proposal.width ?? max, max), height: proposal.height)
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        subviews.first?.sizeThatFits(capped(proposal)) ?? .zero
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: CGPoint(x: bounds.minX, y: bounds.midY), anchor: .leading,
+                              proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
     }
 }

@@ -81,6 +81,28 @@ enum LineStop {
     static func bannerTitle(_ holds: [Wire.MergeHold]) -> String {
         holds.count == 1 ? "Merges into \(holds[0].repo) are on hold" : "Merges into \(holds.count) repos are on hold"
     }
+
+    /// The lift confirmation's title: "Lift the hold on acme/api?", or "Restart the line?" for several.
+    static func liftTitle(repos: [String]) -> String {
+        repos.count == 1 ? "Lift the hold on \(repos[0])?" : "Restart the line?"
+    }
+
+    /// Its destructive button: "Lift hold", or "Lift all 3 holds".
+    static func liftButton(count: Int) -> String {
+        count <= 1 ? "Lift hold" : "Lift all \(count) holds"
+    }
+
+    /// What lifting does, then why each hold went on: "Merges into acme/api go again; the tasks waiting merge on
+    /// their own. Held by jo: Incident #42."
+    static func liftMessage(holds: [Wire.MergeHold]) -> String {
+        let repos = holds.map(\.repo).joined(separator: ", ")
+        let what = "Merges into \(repos) go again; the tasks waiting merge on their own."
+        switch holds.count {
+        case 0: return what
+        case 1: return "\(what) Held by \(holds[0].by): \(holds[0].reason)."
+        default: return ([what] + holds.map { "\($0.repo), held by \($0.by): \($0.reason)." }).joined(separator: "\n")
+        }
+    }
 }
 
 extension FactoryClient {
