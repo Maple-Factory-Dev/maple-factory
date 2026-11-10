@@ -10,6 +10,7 @@ import { ArtifactKindValues, PriorityValues, RoleValues } from "../wire.ts";
 import type {
   Artifact, ArtifactKind, ChangeRequest, CheckRun, ClientMessage, Comment, DiffCommit, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
   AgentState, Classification, DocAgentRun, DocThread, McpConnector, NotRunCheck, Priority, PromptAdditions, RiskLevel, ServerToRunner, SessionEnd, Task, WorktreeScripts,
+  TaskDocSource,
 } from "../wire.ts";
 import { audit, machineHub } from "../util.ts";
 import { cleanTags, TAG } from "../machines.ts";
@@ -21,6 +22,7 @@ import { affectedBy, emptyForecast, inFlight, refreshOverlaps, type Lane } from 
 import { allowed, isDocTool, isPersonalTool, personalTools, toolsFor } from "./tools.ts";
 import { DocTools } from "./doc-tools.ts";
 import * as asks from "./doc-asks.ts";
+import * as docTasks from "./doc-tasks.ts";
 import * as docThreads from "./doc-threads.ts";
 import { parseDiagrams } from "./diagrams.ts";
 import { Drafts } from "./drafts.ts";
@@ -611,6 +613,33 @@ export class Engine {
       case "intake.decline": {
         const request = this.intake.get(msg.id) ?? fail("That request isn't there any more.");
         this.intake.decline(request, who, msg.note ?? null);
+        return;
+      }
+      case "doc.makeTasks": {
+        // MF-368: a doc section, selection or accepted decision becomes drafts in the doc's goal. Everything is
+        // checked (checkSource, then the section read from DocHub) before anything is made.
+        const doc = typeof msg.doc === "string" ? this.store.doc(msg.doc.toLowerCase()) : null;
+        const decision = msg.decision ? this.store.decision(msg.decision.toLowerCase()) : null;
+        const goalId = msg.goal ?? doc?.goal ?? null;
+        const goal = goalId ? this.store.goal(goalId) ?? null : null;
+        const bad = docTasks.checkSource({ doc, goal, picked: !!msg.goal, decision, decisionAsked: !!msg.decision, tasks: msg.tasks, effort: msg.effort });
+        if (bad) fail(bad);
+        const section = await this.docs.section(doc!.id, { anchor: msg.decision ? null : msg.anchor ?? null, decision: decision?.id ?? null });
+        const fromDoc: TaskDocSource = {
+          doc: doc!.id, docTitle: doc!.title, heading: section.heading, quote: section.quote, decision: decision?.id ?? null,
+          excerpt: section.markdown.slice(0, docTasks.MAX_EXCERPT),
+        };
+        const effort = effortName(msg.effort) ?? null;
+        const label = docTasks.sourceLabel(fromDoc);
+        const { made } = this.makeDrafts(goal!, who, msg.tasks.map((t) => ({
+          fields: { title: t.title.trim(), brief: docTasks.composeBrief(t, fromDoc), repo: null, shareable: true, agent: "claude", effort, fromDoc },
+          after: (ids) => (msg.chain && ids.length ? [ids.at(-1)!] : []),
+          who,
+          event: `made from doc ${label}${decision ? " (a decision)" : ""}`,
+          audit: { fromDoc: doc!.id, ...(decision ? { decision: decision.id } : {}) },
+        })));
+        await this.docs.insertTasks(doc!.id, made, section.block);
+        this.hooks.broadcast({ type: "toast", text: `Made ${made.length === 1 ? made[0] : made.join(msg.chain ? " → " : ", ")} from "${doc!.title}"; ${made.length === 1 ? "it's" : "they're"} in ${goal!.name}'s drafts.`, taskId: made[0] });
         return;
       }
       case "task.create": {
@@ -1419,7 +1448,7 @@ export class Engine {
   }
 
   /** A new draft task in `goal`, saved. */
-  private newTask(goal: Goal, who: string, f: Pick<Task, "title" | "brief" | "tickets" | "shareable" | "agent" | "model" | "intake" | "repo" | "after" | "effort"> & Partial<Pick<Task, "priority" | "followUpOf">>): Task {
+  private newTask(goal: Goal, who: string, f: Pick<Task, "title" | "brief" | "tickets" | "shareable" | "agent" | "model" | "intake" | "repo" | "after" | "effort"> & Partial<Pick<Task, "priority" | "followUpOf" | "fromDoc">>): Task {
     const t = now();
     const task: Task = {
       id: this.store.nextId(goal.prefix),
@@ -2832,15 +2861,38 @@ export class Engine {
       const effort = p.effort == null ? undefined : effortName(String(p.effort));
       return { title: str(p.title, `${field}[].title`).slice(0, 120).trim(), brief: str(p.brief, `${field}[].brief`), repo, priority, existing, earlier: [...new Set(earlier.filter((n): n is number => n != null))], effort };
     });
-    // Drafts only: nothing plans or builds until a person sends one to planning.
+    return this.makeDrafts(goal, task.owner, picks.map((p) => ({
+      fields: { ...this.inherited(task), title: p.title, brief: `${p.brief}\n\nProposed by ${task.id}'s ${role}.`, repo: p.repo, priority: p.priority, ...(p.effort !== undefined ? { effort: p.effort } : {}) },
+      after: (made) => [...p.existing, ...p.earlier.map((n) => made[n - 1]!)],
+      who: role,
+      event: `proposed by ${task.id}`,
+      audit: { proposedBy: task.id },
+    })));
+  }
+
+  /** What a draft made from `source` takes from it: its agent, model, effort and sharing. */
+  private inherited(source: Task) {
+    return { shareable: source.shareable, agent: source.agent, model: source.model ?? null, effort: source.effort ?? null };
+  }
+
+  /** Makes already-checked drafts in `goal`, in order (propose_tasks, submit_findings, doc.makeTasks). Each
+   *  item's `after` sees the ids made before it. Drafts only: nothing plans or builds until a person sends one
+   *  to planning. */
+  private makeDrafts(goal: Goal, owner: string, items: {
+    fields: Pick<Task, "title" | "brief" | "repo" | "shareable" | "agent"> & Partial<Pick<Task, "model" | "priority" | "effort" | "fromDoc">>;
+    after: (made: string[]) => string[];
+    who: string;
+    event: string;
+    audit: Record<string, unknown>;
+  }[]): { made: string[]; lines: string[] } {
     const made: string[] = [];
     const lines: string[] = [];
-    for (const p of picks) {
-      const after = [...p.existing, ...p.earlier.map((n) => made[n - 1]!)];
-      const draft = this.draftFrom(goal, task, task.owner, { title: p.title, brief: `${p.brief}\n\nProposed by ${task.id}'s ${role}.`, repo: p.repo, priority: p.priority, after, ...(p.effort !== undefined ? { effort: p.effort } : {}) });
-      this.event(draft, role, `proposed by ${task.id}${after.length ? `; waits on ${after.join(", ")}` : ""}`);
+    for (const item of items) {
+      const after = item.after(made);
+      const draft = this.newTask(goal, owner, { tickets: [], intake: null, model: null, effort: null, priority: null, followUpOf: null, ...item.fields, after });
+      this.event(draft, item.who, `${item.event}${after.length ? `; waits on ${after.join(", ")}` : ""}`);
       this.save(draft);
-      this.hooks.waitUntil(audit(this.env, task.owner, "task.created", draft.id, { title: draft.title, proposedBy: task.id }));
+      this.hooks.waitUntil(audit(this.env, owner, "task.created", draft.id, { title: draft.title, ...item.audit }));
       made.push(draft.id);
       lines.push(`${draft.id} ${draft.title}${after.length ? ` (after ${after.join(", ")})` : ""}${draft.effort ? ` [${draft.effort}]` : ""}`);
     }

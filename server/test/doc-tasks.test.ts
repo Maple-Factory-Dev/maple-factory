@@ -3,6 +3,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as Y from "yjs";
+import { DatabaseSync } from "node:sqlite";
+import { Engine } from "../src/factory/engine.ts";
+import { Store } from "../src/factory/store.ts";
 import { initProseMirrorDoc } from "@tiptap/y-tiptap";
 import { schema } from "../docs-editor/src/schema.js";
 import { splitSection, composeBrief, checkSource } from "../src/factory/doc-tasks.ts";
@@ -93,4 +96,118 @@ test("checkSource: refuses archived docs, no goal, unaccepted or foreign decisio
   assert.match(checkSource({ ...ok, tasks: Array.from({ length: 21 }, () => ({ title: "A", brief: "b" })) })!, /At most 20/);
   assert.match(checkSource({ ...ok, tasks: [{ title: "x".repeat(121), brief: "b" }] })!, /title/);
   assert.match(checkSource({ ...ok, tasks: [{ title: "A", brief: "" }] })!, /brief/);
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// doc.makeTasks through the engine, with a DocHub stand-in running the same headless code
+
+function sqlStorage() {
+  const db = new DatabaseSync(":memory:");
+  return {
+    exec(query: string, ...bindings: unknown[]) {
+      const statements = query.split(";").map((s) => s.trim()).filter(Boolean);
+      if (statements.length > 1) {
+        db.exec(query);
+        return { toArray: () => [], one: () => undefined };
+      }
+      const rows = db.prepare(query).all(...(bindings as never[]));
+      return { toArray: () => rows, one: () => rows[0] };
+    },
+  } as unknown as SqlStorage;
+}
+
+const DOC = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const LOOSE = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const OLD = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+const DEC = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+
+function factory() {
+  const store = new Store(sqlStorage());
+  const docs = new Map<string, Y.Doc>();
+  const get = (id: string) => docs.get(id) ?? docs.set(id, new Y.Doc()).get(id)!;
+  const DOC_NS = {
+    idFromName: (id: string) => id,
+    get: (id: string) => ({
+      fetch: async (url: string, init: RequestInit) => {
+        const path = new URL(url).pathname;
+        const body = JSON.parse(String(init.body));
+        try {
+          if (path === "/read") return Response.json(readDoc(get(id), body.threads));
+          if (path === "/anchor") return Response.json(anchorFor(get(id), body));
+          if (path === "/section") return Response.json(sectionAt(get(id), body));
+          if (path === "/insert-tasks") return Response.json(insertTaskEmbeds(get(id), body.ids, body));
+          if (path === "/insert-decision") return Response.json(insertDecision(get(id), body.id, body));
+          return new Response("Not found.", { status: 404 });
+        } catch (e) {
+          if (e instanceof DocToolError) return new Response(e.message, { status: 422 });
+          throw e;
+        }
+      },
+    }),
+  };
+  const broadcasts: any[] = [];
+  const hooks = {
+    broadcast: (m: any) => broadcasts.push(m), sendTo: () => {}, machines: async () => [], members: async () => [{ login: "ada" }],
+    machineChanged: async () => {}, waitUntil: () => {}, wakeIn: () => {}, docMentions: () => {},
+  };
+  const engine = new Engine({ DOC: DOC_NS } as never, store, hooks as never, { forTask: () => {} } as never, {} as never);
+  store.saveGoal({ id: "g", name: "Search", prefix: "SR", summary: "", lead: "ada", repos: [], repo: "acme/web", archived: false } as never);
+  store.saveGoal({ id: "g2", name: "Other", prefix: "OT", summary: "", lead: "ada", repos: [], repo: "acme/web", archived: false } as never);
+  for (const [id, title, goal, archived] of [[DOC, "Search plan", "g", false], [LOOSE, "Loose notes", null, false], [OLD, "Old plan", "g", true]] as const) {
+    store.saveDoc({ id, title, goal, createdBy: "ada", createdAt: 1, updatedAt: 1, archived: archived || null } as never);
+    seedDoc(get(id), PLAN);
+  }
+  const make = (msg: Record<string, unknown>) => engine.command({ type: "doc.makeTasks", chain: false, ...msg } as never, { member: { login: "ada", role: "member" } } as never);
+  const heading = (id: string, text: string) => anchorFor(get(id), { block: readDoc(get(id)).blocks.find((b) => b.markdown === text)!.id });
+  const drafts = () => store.tasks().filter((t) => t.goal === "g" || t.goal === "g2");
+  return { store, engine, make, heading, drafts, ydoc: get(DOC), get, broadcasts };
+}
+
+test("doc.makeTasks: a heading's section, chained, makes drafts in the doc's goal with after, effort, fromDoc and a backlink, and embeds them", async () => {
+  const f = factory();
+  const items = splitSection(sectionAt(f.ydoc, { anchor: f.heading(DOC, "## Search") }).markdown, "headings");
+  await f.make({ doc: DOC, anchor: f.heading(DOC, "## Search"), tasks: items, chain: true, effort: "Search" });
+  const made = f.drafts().sort((a, b) => a.id.localeCompare(b.id));
+  assert.deepEqual(made.map((t) => [t.id, t.title, t.state, t.goal, t.after, t.effort]), [
+    ["SR-1", "Indexing", "drafting", "g", [], "Search"],
+    ["SR-2", "Ranking", "drafting", "g", ["SR-1"], "Search"],
+  ]);
+  for (const t of made) {
+    assert.equal(t.fromDoc?.doc, DOC);
+    assert.equal(t.fromDoc?.docTitle, "Search plan");
+    assert.equal(t.fromDoc?.heading, "Search");
+    assert.match(t.fromDoc!.excerpt, /^## Search\n\nMake search fast\.[\s\S]*Rank by recency\.$/);
+    assert.match(t.brief, new RegExp(`\\n\\nFrom doc \\[Search plan › Search\\]\\(#/docs/${DOC}\\)\\.$`));
+    assert.match(t.events.at(-1)!.text, /made from doc Search plan › Search/);
+  }
+  const types = topTypes(f.ydoc);
+  assert.deepEqual(types.slice(types.indexOf("Rank by recency."), types.indexOf("h:Billing") + 1), ["Rank by recency.", "task:SR-1", "task:SR-2", "h:Billing"]);
+});
+
+test("doc.makeTasks: an accepted decision is the source; its id is in fromDoc and the link", async () => {
+  const f = factory();
+  await f.engine.docs.propose("ada", { id: DEC, doc: DOC, question: "Which index?", options: [{ id: "a", label: "Postgres FTS" }, { id: "b", label: "Typesense" }], rationale: "" }, { agent: "SR-0 planner", quote: "Build the index." });
+  await assert.rejects(f.make({ doc: DOC, decision: DEC, tasks: [{ title: "Set up Typesense", brief: "Do it." }] }), /accepted/);
+  f.engine.docs.decideDecision("ada", { id: DEC, accept: true, chosen: "b", why: "Typo tolerance" });
+  await f.make({ doc: DOC, decision: DEC, tasks: [{ title: "Set up Typesense", brief: "Do it." }] });
+  const [t] = f.drafts();
+  assert.equal(t.fromDoc?.decision, DEC);
+  assert.equal(t.fromDoc?.heading, "Indexing");
+  assert.match(t.brief, new RegExp(`\\(#/docs/${DOC}\\?decision=${DEC}\\) \\(a decision\\)\\.$`));
+});
+
+test("doc.makeTasks: bad sources make no tasks", async () => {
+  const f = factory();
+  const one = [{ title: "A", brief: "b" }];
+  await assert.rejects(f.make({ doc: OLD, tasks: one }), /archived/);
+  await assert.rejects(f.make({ doc: LOOSE, tasks: one }), /no goal/);
+  await assert.rejects(f.make({ doc: DOC, decision: DEC, tasks: one }), /isn't in this doc/);
+  await assert.rejects(f.make({ doc: DOC, tasks: Array.from({ length: 21 }, () => one[0]) }), /At most 20/);
+  await assert.rejects(f.make({ doc: DOC, tasks: [] }), /at least one/);
+  await assert.rejects(f.make({ doc: DOC, goal: "g2", tasks: one }), /already belongs/);
+  assert.equal(f.drafts().length, 0);
+  assert.ok(!topTypes(f.ydoc).some((t) => t.startsWith("task:")));
+  // A doc with no goal takes the one picked.
+  await f.make({ doc: LOOSE, goal: "g2", tasks: one });
+  assert.deepEqual(f.drafts().map((t) => [t.id, t.goal, t.after, t.effort]), [["OT-1", "g2", [], null]]);
 });
