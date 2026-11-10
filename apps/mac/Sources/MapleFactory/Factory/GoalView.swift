@@ -712,7 +712,7 @@ private struct BoardCard: View {
 
     var body: some View {
         let card = TaskCard(task: task, selected: task.id == state.openedTask, position: position, mergeButton: mergeButton)
-            .keyboardCursorRing(state.keyboardCursor == task.id, cornerRadius: 10)
+            .keyboardCursorRing(state.keyboardCursor == task.id, cornerRadius: 12, inset: -3)
             .id(task.id)
             .taskClicks(task.id)
             .contextMenu {

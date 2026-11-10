@@ -64,17 +64,17 @@ extension AppState {
     }
 
     /// Whether a bare key belongs to typing, not to navigation: a text field, the composer, the palette or a sheet has it.
-    var keysBelongToTyping: Bool {
+    func keysBelongToTyping(in window: NSWindow? = NSApp.keyWindow) -> Bool {
         if showPalette || isComposing || goalSheet != nil || showOnboarding { return true }
-        return TextFocus.isEditing
+        return TextFocus.isEditing(in: window)
     }
 }
 
 /// Whether the key window's first responder takes typing: a text field or view (the field editor is an
 /// NSTextView), or a web view such as the doc editor.
 enum TextFocus {
-    @MainActor static var isEditing: Bool {
-        guard let responder = NSApp.keyWindow?.firstResponder else { return false }
+    @MainActor static func isEditing(in window: NSWindow?) -> Bool {
+        guard let responder = window?.firstResponder else { return false }
         if responder is NSText || responder is NSTextField { return true }
         return String(describing: type(of: responder)).hasPrefix("WK")
     }
@@ -98,7 +98,7 @@ enum TextFocus {
 
 
     /// The key's action, by key code for the arrows, Return and Space, and by character for the letters.
-    enum Key: Equatable { case move(TaskKeyNav.Direction), open, peek, primary }
+    enum Key: Equatable { case move(TaskKeyNav.Direction), open, peek, primary, close }
 
     static func key(code: UInt16, characters: String?) -> Key? {
         switch code {
@@ -108,6 +108,7 @@ enum TextFocus {
         case 124: return .move(.right)
         case 36, 76: return .open
         case 49: return .peek
+        case 53: return .close
         default: break
         }
         switch characters?.lowercased() {
@@ -122,11 +123,18 @@ enum TextFocus {
 
     private static func handle(_ event: NSEvent, state: AppState) -> Bool {
         guard event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
-              let window = event.window, window === NSApp.keyWindow, window.sheets.isEmpty,
+              // The main window only (a popover or sheet is a window of its own). Headless, it's never key.
+              let window = event.window, window.isKeyWindow || Headless.isOn, window.isMainWindow || Headless.isOn,
               window.attachedSheet == nil, !(window is NSPanel),
-              !state.keysBelongToTyping,
+              !state.keysBelongToTyping(in: window),
               let key = key(code: event.keyCode, characters: event.charactersIgnoringModifiers) else { return false }
 
+        // Esc: out of the full view, back to the rows it came from; else the panel's peek closes.
+        if key == .close {
+            if state.focusedTask != nil { state.closeFocus(); return true }
+            if state.showInspector, state.taskPanelEnabled { state.closeTaskPanel(); return true }
+            return false
+        }
         // The full view: J / K walk the list it was opened from; everything else is the page's own.
         if state.focusedTask != nil {
             switch key {
@@ -147,6 +155,7 @@ enum TextFocus {
         case .primary:
             guard state.canPerformCursorPrimary else { return false }
             state.performCursorPrimary()
+        case .close: return false
         }
         return true
     }
@@ -206,7 +215,7 @@ extension View {
         overlay {
             if on {
                 RoundedRectangle(cornerRadius: cornerRadius)
-                    .strokeBorder(Theme.accent.opacity(0.85), lineWidth: 1.5)
+                    .strokeBorder(Theme.accent, lineWidth: 2)
                     .padding(inset)
                     .allowsHitTesting(false)
             }

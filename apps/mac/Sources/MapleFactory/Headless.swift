@@ -154,6 +154,11 @@ enum Headless {
         let (characters, code): (String, UInt16) = switch name {
         case "esc": ("\u{1b}", 53)
         case "return": ("\r", 36)
+        case "space": (" ", 49)
+        case "down": (String(UnicodeScalar(NSDownArrowFunctionKey)!), 125)
+        case "up": (String(UnicodeScalar(NSUpArrowFunctionKey)!), 126)
+        case "left": (String(UnicodeScalar(NSLeftArrowFunctionKey)!), 123)
+        case "right": (String(UnicodeScalar(NSRightArrowFunctionKey)!), 124)
         default: (name, keyCodes[name] ?? 0)
         }
         return (characters, code, modifiers)
