@@ -137,6 +137,7 @@ import SwiftUI
             if t.state == .cancelled, request.state == .open || request.state == .draft { request.state = .closed }
             return request
         }
+        task.checksFailing = task.pr?.checks.contains { $0.status == .failed } ?? false
         task.autoReview = t.autoReview.map { review($0, who: who) }
         // A round still open on a cancelled task never finished (older servers left it behind).
         if t.state == .cancelled, task.autoReview?.rounds.last?.verdict == .inProgress {
@@ -221,7 +222,7 @@ import SwiftUI
             guard let round = t.autoReview?.rounds.last else { return "In review" }
             switch round.verdict {
             case .inProgress: return "Review round \(round.number)"
-            case .passed: return t.reviewsNeeded == 0 ? "Ready to merge" : "\(t.reviews.count) of \(t.reviewsNeeded) reviews"
+            case .passed: return mergeLine(t)
             case .changesRequested: return "Changes requested"
             case .escalated: return "Escalated"
             case .other: return "In review"
@@ -231,6 +232,26 @@ import SwiftUI
         case .closed: return "Closed"
         case .other: return "In progress"
         }
+    }
+
+    /// A task whose automatic review passed: "Ready to merge" only once every CI check (and any Apple
+    /// check) has passed, as the server's merge gate reads it; before that, what it's waiting on.
+    static func mergeLine(_ t: Wire.Task) -> String {
+        if let pr = t.pr {
+            let summary = CheckSummary(pr.checks.map(check))
+            switch summary.tone {
+            case .running: return "Checks running · \(summary.passed)/\(summary.total)"
+            case .failed: return summary.failed == 1 ? "1 check failing" : "\(summary.failed) checks failing"
+            case .none: return "Waiting for checks"
+            case .passed: break
+            }
+        }
+        switch t.appleChecks?.state {
+        case .waiting?, .running?: return "Waiting for Apple checks"
+        case .failed?: return "Apple checks failing"
+        default: break
+        }
+        return t.reviewsNeeded == 0 ? "Ready to merge" : "\(t.reviews.count) of \(t.reviewsNeeded) reviews"
     }
 
     static func state(_ s: Wire.TaskState) -> TaskState {

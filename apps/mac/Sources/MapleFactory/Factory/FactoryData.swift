@@ -250,7 +250,7 @@ enum FactoryData {
 
         FactoryTask(
             id: "ATL-141", title: "Replace jsonwebtoken with jose", state: .reviewing,
-            agent: agents[1], owner: chris, detail: "12 checks passed", diff: (170, 128), span: 5...12, updated: "1h",
+            agent: agents[1], owner: chris, detail: "Ready to merge", diff: (170, 128), span: 5...12, updated: "1h",
             brief: """
             jsonwebtoken pulls in Node crypto and won't run on the edge runtime. Swap it for jose everywhere we sign or verify tokens.
 
@@ -351,7 +351,7 @@ enum FactoryData {
         FactoryTask(id: "ONB-21", goal: "Onboarding revamp", title: "Workspace templates picker", state: .planning,
                     agent: agents[2], detail: "Drafting plan · 2 of 4", span: 10...21, updated: "5m", footprint: (6, 340, true)),
         FactoryTask(id: "ONB-19", goal: "Onboarding revamp", title: "Invite-teammates step", state: .reviewing,
-                    agent: agents[3], detail: "9 checks passed", diff: (88, 14), span: 5...12, updated: "40m", doneWhen: [
+                    agent: agents[3], detail: "Ready to merge", diff: (88, 14), span: 5...12, updated: "40m", doneWhen: [
                         DoneCriterion(text: "Invite email renders in Gmail and Outlook", proof: .screenshot, status: .proving),
                     ], footprint: (5, 102, false), pr: PullRequest(number: 485, state: .open, checks: CICheck.standard())),
         FactoryTask(id: "ONB-17", goal: "Onboarding revamp", title: "Welcome checklist", state: .merged,
@@ -361,7 +361,7 @@ enum FactoryData {
         FactoryTask(id: "PRF-14", goal: "Performance budget", title: "Bundle-size gate in CI", state: .awaitingApproval,
                     agent: agents[0], detail: "Plan ready · 3 steps", needsYou: true, span: 10...15, updated: "1h", footprint: (2, 60, true)),
         FactoryTask(id: "PRF-12", goal: "Performance budget", title: "Lazy-load the code editor bundle", state: .reviewing,
-                    agent: agents[0], detail: "11 checks passed", diff: (61, 140), span: 6...12, updated: "2h", footprint: (4, 201, false), pr: PullRequest(number: 483, state: .open, checks: CICheck.standard(running: ["e2e"]))),
+                    agent: agents[0], detail: "Checks running · 4/6", diff: (61, 140), span: 6...12, updated: "2h", footprint: (4, 201, false), pr: PullRequest(number: 483, state: .open, checks: CICheck.standard(running: ["e2e", "CodeQL"]))),
         FactoryTask(id: "PRF-9", goal: "Performance budget", title: "Serve images as AVIF from the CDN", state: .merged,
                     agent: agents[4], owner: chris, detail: "#461 · 5d ago", span: 0...6, updated: "5d"),
         FactoryTask(id: "PRF-10", goal: "Performance budget", title: "Cut cold start under 300ms", state: .merged,

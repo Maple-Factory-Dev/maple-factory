@@ -1086,8 +1086,12 @@ struct TaskProgressFooter: View {
             }
         } else if let diff = task.diff {
             HStack(spacing: 8) {
-                Image(systemName: task.checksFailing ? "xmark.circle.fill" : "checkmark.circle.fill")
-                    .foregroundStyle(task.checksFailing ? Theme.State.cancelled : Theme.State.merged)
+                if let pr = task.pr {
+                    ChecksBadge(checks: pr.checks)
+                } else {
+                    Image(systemName: task.checksFailing ? "xmark.circle.fill" : "checkmark.circle.fill")
+                        .foregroundStyle(task.checksFailing ? Theme.State.cancelled : Theme.State.merged)
+                }
                 Text(task.detail).lineLimit(1).truncationMode(.tail)
                 if !compact { Spacer() }
                 Text("+\(diff.added)").foregroundStyle(Theme.State.merged).fixedSize()

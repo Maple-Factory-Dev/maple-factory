@@ -739,6 +739,9 @@ details.fold[open] > .card { margin-top: 10px; }
 .pr-sum-icon.tone-failed { background: var(--gh-failed); }
 .pr-sum-icon.tone-running { background: var(--gh-running); }
 .pr-sum-icon.tone-none { color: var(--faint); }
+.ci-badge { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; font-size: 12px; color: var(--muted); vertical-align: middle; white-space: nowrap; }
+.ci-badge .pr-sum-icon { width: 14px; height: 14px; font-size: 9px; }
+.ci-badge.tone-failed { color: var(--gh-failed); }
 .pr-all { font-size: 13px; color: var(--muted); text-decoration: none; white-space: nowrap; }
 .pr-all:hover { color: var(--text); }
 .check-bar { display: flex; gap: 2px; height: 5px; border-radius: 3px; background: var(--fill); overflow: hidden; }

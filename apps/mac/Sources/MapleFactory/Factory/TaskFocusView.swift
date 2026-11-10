@@ -496,6 +496,15 @@ struct TaskFocusView: View {
                             Spacer()
                             ProofMeter(criteria: task.doneWhen)
                         }
+                        if let pr = task.pr {
+                            // CI gates the merge: say so while it runs or fails.
+                            HStack(spacing: 6) {
+                                ChecksBadge(checks: pr.checks)
+                                Text(CheckSummary(pr.checks).headline)
+                            }
+                            .font(.system(size: 11.5).monospacedDigit())
+                            .foregroundStyle(Theme.textMuted)
+                        }
                         ReviewActions(task: task, onRequestChanges: requestChanges)
                     }
                 }
