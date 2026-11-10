@@ -71,3 +71,19 @@ test("token kinds: mfp_ only at /mcp, mft_ never there", async () => {
   DB.sql.prepare("UPDATE mcp_tokens SET expires_at = ?").run(now - 1);
   assert.equal(await mcpCaller(at("/mcp", mcp), env), null, "expired");
 });
+
+test("SECURITY-AUDIT.md covers MCP: every new route in the route table, each finding resolved or a follow-up", async () => {
+  const { readFileSync } = await import("node:fs");
+  const audit = readFileSync(new URL("../SECURITY-AUDIT.md", import.meta.url), "utf8");
+  const table = audit.slice(audit.indexOf("### Worker"), audit.indexOf("### Durable Objects"));
+  for (const route of ["`/mcp`", "`/.well-known/oauth-protected-resource`", "`/.well-known/oauth-authorization-server`", "`/oauth/register`", "`/oauth/authorize`", "`/oauth/token`", "`/api/mcp-tokens`"]) {
+    assert.ok(table.includes(route), `${route} is in the route table`);
+  }
+  assert.ok(audit.includes("## MCP: outside clients at `/mcp`"));
+  for (let n = 22; n <= 30; n++) {
+    const row = new RegExp(`^\\| F-${n} \\|.*\\| (fixed|follow-up|no change)[^|]*\\|$`, "m");
+    assert.ok(row.test(audit), `F-${n} has a status`);
+    assert.ok(new RegExp(`^### F-${n} · .* — (fixed|follow-up|no change)`, "m").test(audit), `F-${n} has a section`);
+  }
+  assert.match(audit, /\*\*Update \(MF-369\):\*\* MCP tokens/, "F-04 notes MCP tokens are revocable");
+});
