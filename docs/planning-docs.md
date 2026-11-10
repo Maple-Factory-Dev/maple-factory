@@ -116,7 +116,8 @@ opens one. One editor, one sync path, no native CRDT.
 
 ## Deferred
 
-- Hosting the embed in the iOS app.
+- Android push for doc @mentions and decisions: the app has no Firebase client or project config yet, so it
+  doesn't register a push token. Android still opens docs from `maplefactory://doc/<id>` links. Follow-up once there's a Firebase project.
 - An MCP server so agents can read and edit docs.
 - Search, history/versions browsing, and permissions finer than "org members".
 
@@ -254,3 +255,16 @@ interactive session:
 - **Budget:** each ask is held to the policy's per-task minutes and cost (`taskMinutes`, `taskCostUsd`); the
   alarm's sweep (`checkAskBudgets`) kills one past it and says so in the thread. Asks are kept in the OrgHub kv
   (`docask:<session>`).
+
+## On iPhone and Android (MF-370)
+
+Each goal has a **Docs** row on its overview (iPhone `GoalOverviewView`, Android `RootScreen`). It lists the goal's active docs, newest edit first, with open-thread and open-decision badges. A doc opens on three tabs:
+
+- **Doc**: the factory's `/app/docs/embed` in a web view, driven by the same bridge as the Mac's `DocEditorView`. The page URL carries only `?theme=`. On `ready` the host calls `mapleDocs.load` with `docId`, `me`, `members`, `token`, `threads` and `decisions`, then pushes `updateThreads` and `updateDecisions` when they change. The editor rail's `command` events go to the socket. Task links open natively and other links open in the browser. A status strip shows connecting, synced or an error with Retry. Signed out (the demo), the bundled embed (copied by `scripts/build-docs-editor.mjs` to `apps/ios/Resources/DocsEmbed` and to the Android assets) runs in demo mode.
+  - iPhone: a `WKWebView` (`DocWebView.swift`) with a `maple` message handler. The bundled copy is served on the `maple-docs` scheme, as on the Mac.
+  - Android: a `WebView` with an `addJavascriptInterface` bridge called `MapleAndroid`. `embed.html`'s `post()` has a third branch, `window.MapleAndroid?.postMessage(JSON.stringify(msg))`, ahead of the `parent.postMessage` fallback. The host calls into the page with `evaluateJavascript`.
+- **Comments**: native list of open threads (`doc.threads` when it appears), each with its quote, comments (agent badge), a reply field (`doc.comment` with `thread`) and Resolve (`doc.resolve`). "Show resolved" lists resolved threads with Reopen.
+- **Decisions**: the doc's decisions, open first, with question, options and notes, rationale and why. While a decision is proposed: Accept (option picker, chosen preselected, optional why → `decision.accept`) and Reject (optional why → `decision.reject`).
+
+**Push.** A proposed decision (a person's `decision.propose` or an agent's `propose_decision`, both through `DocTools.propose`) pushes reason `decision`, ref `doc:<docId>` (`decisions.pushTargets`, wired as the engine's `decisionPushes` hook in `org-hub.ts`). It goes to members @mentioned in the question, rationale or option notes, never the proposer. For an agent's proposal it also goes to `proposedBy` when that's a member: the person the agent works for. A task agent's proposal names its task, so only the mentions get one. The relay (`apps/site/push.js`) knows `decision` ("A decision needs you") and accepts `doc:<id>` refs. On iPhone a tapped `doc:<id>` push opens that doc: on Decisions for `decision`, on Comments for `mention`. `-pushRef doc:<id> -pushReason decision` does the same at launch. No banner shows while that doc is on screen. Android push waits on a Firebase project (see Deferred).
+
