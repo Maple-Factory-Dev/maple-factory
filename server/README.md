@@ -146,6 +146,9 @@ Keep `/app/server/.celld` on a volume: it holds D1, R2 and the Durable Objects. 
 `.dev.vars` when the container starts (celld reads vars only from there); mount your own at
 `/app/server/.dev.vars` instead and it's used as is. Put a proxy in front for TLS and compression.
 
+For a production fleet (2+ nodes on a fleet bucket, behind a TLS proxy), `maple install --target celld`
+deploys a signed release into the bucket; see [docs/self-hosting.md](../docs/self-hosting.md) (experimental).
+
 Known gaps, from the spike:
 
 - **`/app/` 404s** under celld's `auto-trailing-slash` (a nested `index.html` isn't served; `/app` still
