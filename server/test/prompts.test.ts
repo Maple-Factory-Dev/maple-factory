@@ -65,3 +65,12 @@ test("planner and builder prompts list the work in flight in the same repo, with
   }
   assert.ok(!plannerPrompt(task, goal(null)).includes("## Work in flight"));
 });
+
+test("only the builder prompt invites subagents, capped at 3", () => {
+  const b = builderPrompt(task, goal(null), null);
+  assert.match(b, /You may use subagents/);
+  assert.match(b, /at most 3 at a time/);
+  // It sits with the how-to-work lines, right after the commit line.
+  assert.match(b, /call `progress` with its id in `applied`\.\nYou may use subagents/);
+  for (const p of [plannerPrompt(task, goal(null)), reviewerPrompt(task, goal(null), "main")]) assert.doesNotMatch(p, /subagent/i);
+});
