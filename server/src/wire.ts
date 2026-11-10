@@ -22,6 +22,14 @@ export const RoleValues: readonly Role[] = ["planner","builder","reviewer"];
 export type DocSuggestionStatus = "open" | "accepted" | "rejected";
 export const DocSuggestionStatusValues: readonly DocSuggestionStatus[] = ["open","accepted","rejected"];
 
+/** Where a doc decision stands (MF-367). */
+export type DecisionStatus = "proposed" | "accepted" | "rejected" | "superseded";
+export const DecisionStatusValues: readonly DecisionStatus[] = ["proposed","accepted","rejected","superseded"];
+
+/** What one entry in a decision's append-only log did. */
+export type DecisionAction = "proposed" | "edited" | "accepted" | "rejected" | "superseded";
+export const DecisionActionValues: readonly DecisionAction[] = ["proposed","edited","accepted","rejected","superseded"];
+
 /** githubstatus.com's overall indicator. */
 export type GitHubIndicator = "none" | "minor" | "major" | "critical" | "maintenance";
 export const GitHubIndicatorValues: readonly GitHubIndicator[] = ["none","minor","major","critical","maintenance"];
@@ -1296,6 +1304,8 @@ export interface Doc {
   icon?: string | null;
   /** Comment threads on it not yet resolved. */
   openThreads?: number | null;
+  /** Decisions in it still proposed. */
+  openDecisions?: number | null;
 }
 
 /** Where a comment thread sits in a doc's text: two Yjs relative positions on its `prosemirror` fragment, so concurrent edits move it with the text. Opaque to the server. */
@@ -1344,6 +1354,54 @@ export interface DocThread {
   createdAt: number;
   /** Set when the thread is a suggested edit (a tracked change) rather than a plain comment. */
   suggestion?: DocSuggestion | null;
+}
+
+/** One option a decision considered. */
+export interface DecisionOption {
+  id: string;
+  label: string;
+  note?: string | null;
+}
+
+/** A reviewable decision recorded in a doc (MF-367): the server owns it; the doc's text only holds an embed with its id. */
+export interface Decision {
+  id: string;
+  doc: string;
+  goal?: string | null;
+  question: string;
+  options: DecisionOption[];
+  /** The id of the chosen option. */
+  chosen?: string | null;
+  rationale: string;
+  status: DecisionStatus;
+  proposedBy: string;
+  /** Set when an agent proposed it, e.g. "MF-367 builder". */
+  agent?: string | null;
+  proposedAt: number;
+  /** Who accepted or rejected it. */
+  decidedBy?: string | null;
+  decidedAt?: number | null;
+  /** The optional reason given when it was accepted or rejected. */
+  why?: string | null;
+  /** The accepted decision this one replaces once accepted. */
+  supersedes?: string | null;
+  /** The decision that replaced this one. */
+  supersededBy?: string | null;
+}
+
+/** One entry in a decision's append-only log, kept server-side so history can't be silently edited. */
+export interface DecisionEvent {
+  /** Its place in the org's log. */
+  seq: number;
+  decision: string;
+  at: number;
+  /** The member (or, for an agent proposal, the person it works for). */
+  by: string;
+  agent?: string | null;
+  action: DecisionAction;
+  why?: string | null;
+  before?: Decision | null;
+  after?: Decision | null;
 }
 
 /** Someone with the app open, and the task they're looking at. */
@@ -2524,6 +2582,49 @@ export interface ClientMessage_DocThreads {
   doc: string;
 }
 
+/** Propose a decision in a doc (MF-367). The client makes the id, so the editor can insert the embed first. */
+export interface ClientMessage_DecisionPropose {
+  type: "decision.propose";
+  id: string;
+  doc: string;
+  question: string;
+  options: DecisionOption[];
+  chosen?: string | null;
+  rationale: string;
+  supersedes?: string | null;
+}
+
+/** Change a decision while it's still proposed. */
+export interface ClientMessage_DecisionEdit {
+  type: "decision.edit";
+  id: string;
+  question: string;
+  options: DecisionOption[];
+  chosen?: string | null;
+  rationale: string;
+}
+
+/** Accept a proposed decision; records who and when. People only. */
+export interface ClientMessage_DecisionAccept {
+  type: "decision.accept";
+  id: string;
+  chosen?: string | null;
+  why?: string | null;
+}
+
+/** Reject a proposed decision. People only. */
+export interface ClientMessage_DecisionReject {
+  type: "decision.reject";
+  id: string;
+  why?: string | null;
+}
+
+/** Ask for a decision's append-only log; answered with `decision.log` to this connection. */
+export interface ClientMessage_DecisionLog {
+  type: "decision.log";
+  id: string;
+}
+
 /** The task this app is showing, if any, for teammates' presence. */
 export interface ClientMessage_Presence {
   type: "presence";
@@ -3167,8 +3268,8 @@ export interface ClientMessage_TaskGet {
 }
 
 /** App (macOS, web) → server. */
-export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_DocCreate | ClientMessage_DocRename | ClientMessage_DocArchive | ClientMessage_DocComment | ClientMessage_DocResolve | ClientMessage_DocReopen | ClientMessage_DocSuggestion | ClientMessage_DocThreads | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionSubscribeEvents | ClientMessage_SessionUnsubscribeEvents | ClientMessage_SessionSendInput | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_SessionShare | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalScout | ClientMessage_RecurringSave | ClientMessage_RecurringDelete | ClientMessage_RecurringPause | ClientMessage_RecurringRunNow | ClientMessage_RepoSetupStart | ClientMessage_RepoSetupCancel | ClientMessage_QuietHoursSet | ClientMessage_PushRegister | ClientMessage_PushUnregister | ClientMessage_PushDevices | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_MachineAgentLogin | ClientMessage_RunnerCheck | ClientMessage_PolicySave | ClientMessage_PromptsSave | ClientMessage_AdminsGrant | ClientMessage_AdminsRevoke | ClientMessage_MembersRevoke | ClientMessage_ConnectorsSave | ClientMessage_IntegrationsSave | ClientMessage_IntegrationsTest | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_ReposOwnersSet | ClientMessage_SecretsSet | ClientMessage_SecretsDelete | ClientMessage_ReposHoldMerges | ClientMessage_ReposReleaseMerges | ClientMessage_ReposScriptsSet | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskFollowUp | ClientMessage_TaskAssign | ClientMessage_TaskRequestReviewers | ClientMessage_TaskMoveGoal | ClientMessage_TaskPlan | ClientMessage_TaskBacklog | ClientMessage_TaskComment | ClientMessage_TaskWaiveCheck | ClientMessage_TaskSteer | ClientMessage_TaskReview | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskRequestReview | ClientMessage_TaskMerge | ClientMessage_TaskHoldMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRankDraft | ClientMessage_TaskRerunChecks | ClientMessage_TaskRecheckGitHub | ClientMessage_TaskRerunCheck | ClientMessage_TaskCheckLog | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange | ClientMessage_StatsGet | ClientMessage_ReportGet | ClientMessage_TasksOlder | ClientMessage_TaskGet;
-export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","doc.create","doc.rename","doc.archive","doc.comment","doc.resolve","doc.reopen","doc.suggestion","doc.threads","presence","session.open","session.attach","session.detach","session.subscribeEvents","session.unsubscribeEvents","session.sendInput","session.resize","session.kill","session.share","goal.save","draft.start","draft.goal","draft.cancel","goal.scout","recurring.save","recurring.delete","recurring.pause","recurring.runNow","repo.setup.start","repo.setup.cancel","quietHours.set","push.register","push.unregister","push.devices","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","machine.agent_login","runner.check","policy.save","prompts.save","admins.grant","admins.revoke","members.revoke","connectors.save","integrations.save","integrations.test","repos.refresh","repos.add","repos.remove","repos.owners.set","secrets.set","secrets.delete","repos.holdMerges","repos.releaseMerges","repos.scripts.set","goal.acceptRisk","task.create","task.edit","task.followUp","task.assign","task.requestReviewers","task.moveGoal","task.plan","task.backlog","task.comment","task.waiveCheck","task.steer","task.review","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.requestReview","task.merge","task.holdMerge","task.cancel","task.retry","task.queue","task.rankDraft","task.rerunChecks","task.recheckGitHub","task.rerunCheck","task.checkLog","task.split","task.move","task.checkedIt","task.mockupChange","stats.get","report.get","tasks.older","task.get"] as const;
+export type ClientMessage = ClientMessage_Subscribe | ClientMessage_NoteSave | ClientMessage_IntakeAttach | ClientMessage_IntakeAsk | ClientMessage_IntakeDecline | ClientMessage_NoteDelete | ClientMessage_DocCreate | ClientMessage_DocRename | ClientMessage_DocArchive | ClientMessage_DocComment | ClientMessage_DocResolve | ClientMessage_DocReopen | ClientMessage_DocSuggestion | ClientMessage_DocThreads | ClientMessage_DecisionPropose | ClientMessage_DecisionEdit | ClientMessage_DecisionAccept | ClientMessage_DecisionReject | ClientMessage_DecisionLog | ClientMessage_Presence | ClientMessage_SessionOpen | ClientMessage_SessionAttach | ClientMessage_SessionDetach | ClientMessage_SessionSubscribeEvents | ClientMessage_SessionUnsubscribeEvents | ClientMessage_SessionSendInput | ClientMessage_SessionResize | ClientMessage_SessionKill | ClientMessage_SessionShare | ClientMessage_GoalSave | ClientMessage_DraftStart | ClientMessage_DraftGoal | ClientMessage_DraftCancel | ClientMessage_GoalScout | ClientMessage_RecurringSave | ClientMessage_RecurringDelete | ClientMessage_RecurringPause | ClientMessage_RecurringRunNow | ClientMessage_RepoSetupStart | ClientMessage_RepoSetupCancel | ClientMessage_QuietHoursSet | ClientMessage_PushRegister | ClientMessage_PushUnregister | ClientMessage_PushDevices | ClientMessage_GoalFollow | ClientMessage_GoalArchive | ClientMessage_MachineSettings | ClientMessage_MachineRename | ClientMessage_MachineUpdate | ClientMessage_MachineAgentLogin | ClientMessage_RunnerCheck | ClientMessage_PolicySave | ClientMessage_PromptsSave | ClientMessage_AdminsGrant | ClientMessage_AdminsRevoke | ClientMessage_MembersRevoke | ClientMessage_ConnectorsSave | ClientMessage_IntegrationsSave | ClientMessage_IntegrationsTest | ClientMessage_ReposRefresh | ClientMessage_ReposAdd | ClientMessage_ReposRemove | ClientMessage_ReposOwnersSet | ClientMessage_SecretsSet | ClientMessage_SecretsDelete | ClientMessage_ReposHoldMerges | ClientMessage_ReposReleaseMerges | ClientMessage_ReposScriptsSet | ClientMessage_GoalAcceptRisk | ClientMessage_TaskCreate | ClientMessage_TaskEdit | ClientMessage_TaskFollowUp | ClientMessage_TaskAssign | ClientMessage_TaskRequestReviewers | ClientMessage_TaskMoveGoal | ClientMessage_TaskPlan | ClientMessage_TaskBacklog | ClientMessage_TaskComment | ClientMessage_TaskWaiveCheck | ClientMessage_TaskSteer | ClientMessage_TaskReview | ClientMessage_TaskApprovePlan | ClientMessage_TaskAnswer | ClientMessage_TaskAnswerPrompt | ClientMessage_TaskResolveHand | ClientMessage_TaskApproveChanges | ClientMessage_TaskRequestReview | ClientMessage_TaskMerge | ClientMessage_TaskHoldMerge | ClientMessage_TaskCancel | ClientMessage_TaskRetry | ClientMessage_TaskQueue | ClientMessage_TaskRankDraft | ClientMessage_TaskRerunChecks | ClientMessage_TaskRecheckGitHub | ClientMessage_TaskRerunCheck | ClientMessage_TaskCheckLog | ClientMessage_TaskSplit | ClientMessage_TaskMove | ClientMessage_TaskCheckedIt | ClientMessage_TaskMockupChange | ClientMessage_StatsGet | ClientMessage_ReportGet | ClientMessage_TasksOlder | ClientMessage_TaskGet;
+export const ClientMessageTypes = ["subscribe","note.save","intake.attach","intake.ask","intake.decline","note.delete","doc.create","doc.rename","doc.archive","doc.comment","doc.resolve","doc.reopen","doc.suggestion","doc.threads","decision.propose","decision.edit","decision.accept","decision.reject","decision.log","presence","session.open","session.attach","session.detach","session.subscribeEvents","session.unsubscribeEvents","session.sendInput","session.resize","session.kill","session.share","goal.save","draft.start","draft.goal","draft.cancel","goal.scout","recurring.save","recurring.delete","recurring.pause","recurring.runNow","repo.setup.start","repo.setup.cancel","quietHours.set","push.register","push.unregister","push.devices","goal.follow","goal.archive","machine.settings","machine.rename","machine.update","machine.agent_login","runner.check","policy.save","prompts.save","admins.grant","admins.revoke","members.revoke","connectors.save","integrations.save","integrations.test","repos.refresh","repos.add","repos.remove","repos.owners.set","secrets.set","secrets.delete","repos.holdMerges","repos.releaseMerges","repos.scripts.set","goal.acceptRisk","task.create","task.edit","task.followUp","task.assign","task.requestReviewers","task.moveGoal","task.plan","task.backlog","task.comment","task.waiveCheck","task.steer","task.review","task.approvePlan","task.answer","task.answerPrompt","task.resolveHand","task.approveChanges","task.requestReview","task.merge","task.holdMerge","task.cancel","task.retry","task.queue","task.rankDraft","task.rerunChecks","task.recheckGitHub","task.rerunCheck","task.checkLog","task.split","task.move","task.checkedIt","task.mockupChange","stats.get","report.get","tasks.older","task.get"] as const;
 
 export interface ServerToClient_Snapshot {
   type: "snapshot";
@@ -3197,6 +3298,7 @@ export interface ServerToClient_Snapshot {
   notes: Note[];
   /** Every shared doc, archived ones too. None: an older server. */
   docs?: Doc[] | null;
+  decisions?: Decision[] | null;
   follows: GoalFollow[];
   /** Your quiet hours. None: none set, or an older server. */
   quietHours?: QuietHours | null;
@@ -3314,6 +3416,19 @@ export interface ServerToClient_DocThreads {
 export interface ServerToClient_DocThreadUpdated {
   type: "doc.thread.updated";
   thread: DocThread;
+}
+
+/** A decision was proposed or changed, to every member. */
+export interface ServerToClient_DecisionUpdated {
+  type: "decision.updated";
+  decision: Decision;
+}
+
+/** A decision's log, oldest first, to the connection that asked. */
+export interface ServerToClient_DecisionLog {
+  type: "decision.log";
+  id: string;
+  events: DecisionEvent[];
 }
 
 /** Your draft, to your apps only. */
@@ -3510,5 +3625,5 @@ export interface ServerToClient_Error {
 }
 
 /** Server → app. */
-export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_MachineAgentLogin | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_TasksPage | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DocUpdated | ServerToClient_DocRemoved | ServerToClient_DocThreads | ServerToClient_DocThreadUpdated | ServerToClient_DraftUpdated | ServerToClient_ScoutUpdated | ServerToClient_RecurringUpdated | ServerToClient_RecurringDeleted | ServerToClient_RepoSetupUpdated | ServerToClient_FollowsUpdated | ServerToClient_PushDevices | ServerToClient_QuietHoursUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_PromptsUpdated | ServerToClient_MembersUpdated | ServerToClient_IconUpdated | ServerToClient_NameUpdated | ServerToClient_ReposUpdated | ServerToClient_MergeHoldsUpdated | ServerToClient_SecretsUpdated | ServerToClient_RunnerReleased | ServerToClient_GithubStatus | ServerToClient_ConnectorsUpdated | ServerToClient_IntegrationsUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_SessionEvents | ServerToClient_Stats | ServerToClient_Report | ServerToClient_CheckLog | ServerToClient_Error;
-export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","machine.agent_login","task.updated","task.removed","tasks.page","goal.updated","note.updated","intake.updated","note.removed","doc.updated","doc.removed","doc.threads","doc.thread.updated","draft.updated","scout.updated","recurring.updated","recurring.deleted","repo.setup.updated","follows.updated","push.devices","quietHours.updated","presence","policy.updated","prompts.updated","members.updated","icon.updated","name.updated","repos.updated","mergeHolds.updated","secrets.updated","runner.released","github.status","connectors.updated","integrations.updated","toast","session.ended","session.events","stats","report","checkLog","error"] as const;
+export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_MachineAgentLogin | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_TasksPage | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DocUpdated | ServerToClient_DocRemoved | ServerToClient_DocThreads | ServerToClient_DocThreadUpdated | ServerToClient_DecisionUpdated | ServerToClient_DecisionLog | ServerToClient_DraftUpdated | ServerToClient_ScoutUpdated | ServerToClient_RecurringUpdated | ServerToClient_RecurringDeleted | ServerToClient_RepoSetupUpdated | ServerToClient_FollowsUpdated | ServerToClient_PushDevices | ServerToClient_QuietHoursUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_PromptsUpdated | ServerToClient_MembersUpdated | ServerToClient_IconUpdated | ServerToClient_NameUpdated | ServerToClient_ReposUpdated | ServerToClient_MergeHoldsUpdated | ServerToClient_SecretsUpdated | ServerToClient_RunnerReleased | ServerToClient_GithubStatus | ServerToClient_ConnectorsUpdated | ServerToClient_IntegrationsUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_SessionEvents | ServerToClient_Stats | ServerToClient_Report | ServerToClient_CheckLog | ServerToClient_Error;
+export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","machine.agent_login","task.updated","task.removed","tasks.page","goal.updated","note.updated","intake.updated","note.removed","doc.updated","doc.removed","doc.threads","doc.thread.updated","decision.updated","decision.log","draft.updated","scout.updated","recurring.updated","recurring.deleted","repo.setup.updated","follows.updated","push.devices","quietHours.updated","presence","policy.updated","prompts.updated","members.updated","icon.updated","name.updated","repos.updated","mergeHolds.updated","secrets.updated","runner.released","github.status","connectors.updated","integrations.updated","toast","session.ended","session.events","stats","report","checkLog","error"] as const;

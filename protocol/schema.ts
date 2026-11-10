@@ -63,6 +63,14 @@ export const enums: Record<string, Enum> = {
     doc: "Where a suggested doc edit stands.",
     values: { open: "Waiting for a person.", accepted: "Accepted: the doc's text was replaced.", rejected: "Rejected: the doc is unchanged." },
   },
+  DecisionStatus: {
+    doc: "Where a doc decision stands (MF-367).",
+    values: { proposed: "Waiting for a person to accept or reject it.", accepted: "Accepted: the chosen option stands.", rejected: "Rejected.", superseded: "Was accepted, then replaced by a newer accepted decision. Final." },
+  },
+  DecisionAction: {
+    doc: "What one entry in a decision's append-only log did.",
+    values: { proposed: "Proposed.", edited: "Edited while still proposed.", accepted: "Accepted.", rejected: "Rejected.", superseded: "Replaced by a newer accepted decision." },
+  },
   GitHubIndicator: {
     doc: "githubstatus.com's overall indicator.",
     values: {
@@ -1049,8 +1057,8 @@ export const structs: Record<string, Struct> = {
   },
   Doc: {
     doc: "A shared planning doc: org-visible, edited by many people at once. Its text is a Yjs document synced over /docs/<id>/sync; this is its index entry.",
-    fields: { id: "uuid", title: "string", goal: "string?", createdBy: "string", createdAt: "u64", updatedAt: "u64", archived: "bool?", icon: "string?", openThreads: "u32?" },
-    fieldDocs: { goal: "The goal it belongs to. None: it stands alone.", updatedAt: "Last edit, to its title or its text.", archived: "Read-only and hidden from the list.", icon: "An emoji or SF Symbol name.", openThreads: "Comment threads on it not yet resolved." },
+    fields: { id: "uuid", title: "string", goal: "string?", createdBy: "string", createdAt: "u64", updatedAt: "u64", archived: "bool?", icon: "string?", openThreads: "u32?", openDecisions: "u32?" },
+    fieldDocs: { goal: "The goal it belongs to. None: it stands alone.", updatedAt: "Last edit, to its title or its text.", archived: "Read-only and hidden from the list.", icon: "An emoji or SF Symbol name.", openThreads: "Comment threads on it not yet resolved.", openDecisions: "Decisions in it still proposed." },
   },
   DocAnchor: {
     doc: "Where a comment thread sits in a doc's text: two Yjs relative positions on its `prosemirror` fragment, so concurrent edits move it with the text. Opaque to the server.",
@@ -1071,6 +1079,20 @@ export const structs: Record<string, Struct> = {
     doc: "A comment thread anchored to text in a shared doc.",
     fields: { id: "uuid", doc: "uuid", anchor: "DocAnchor?", comments: "DocComment[]", resolved: "bool?", resolvedBy: "string?", resolvedAt: "u64?", createdBy: "string", createdAt: "u64", suggestion: "DocSuggestion?" },
     fieldDocs: { anchor: "None: a comment on the whole doc.", suggestion: "Set when the thread is a suggested edit (a tracked change) rather than a plain comment." },
+  },
+  DecisionOption: {
+    doc: "One option a decision considered.",
+    fields: { id: "string", label: "string", note: "string?" },
+  },
+  Decision: {
+    doc: "A reviewable decision recorded in a doc (MF-367): the server owns it; the doc's text only holds an embed with its id.",
+    fields: { id: "uuid", doc: "uuid", goal: "string?", question: "string", options: "DecisionOption[]", chosen: "string?", rationale: "string", status: "DecisionStatus", proposedBy: "string", agent: "string?", proposedAt: "u64", decidedBy: "string?", decidedAt: "u64?", why: "string?", supersedes: "uuid?", supersededBy: "uuid?" },
+    fieldDocs: { chosen: "The id of the chosen option.", agent: "Set when an agent proposed it, e.g. \"MF-367 builder\".", decidedBy: "Who accepted or rejected it.", why: "The optional reason given when it was accepted or rejected.", supersedes: "The accepted decision this one replaces once accepted.", supersededBy: "The decision that replaced this one." },
+  },
+  DecisionEvent: {
+    doc: "One entry in a decision's append-only log, kept server-side so history can't be silently edited.",
+    fields: { seq: "u64", decision: "uuid", at: "u64", by: "string", agent: "string?", action: "DecisionAction", why: "string?", before: "Decision?", after: "Decision?" },
+    fieldDocs: { seq: "Its place in the org's log.", by: "The member (or, for an agent proposal, the person it works for)." },
   },
   Presence: {
     doc: "Someone with the app open, and the task they're looking at.",
@@ -1711,6 +1733,14 @@ export const unions: Record<string, Union> = {
       "doc.reopen": { fields: { doc: "uuid", thread: "uuid" } },
       "doc.suggestion": { doc: "Accept or reject a suggested edit; accepting replaces the anchored text in the doc.", fields: { doc: "uuid", thread: "uuid", accept: "bool" } },
       "doc.threads": { doc: "Ask for a doc's comment threads; answered with `doc.threads` to this connection.", fields: { doc: "uuid" } },
+      "decision.propose": {
+        doc: "Propose a decision in a doc (MF-367). The client makes the id, so the editor can insert the embed first.",
+        fields: { id: "uuid", doc: "uuid", question: "string", options: "DecisionOption[]", chosen: "string?", rationale: "string", supersedes: "uuid?" },
+      },
+      "decision.edit": { doc: "Change a decision while it's still proposed.", fields: { id: "uuid", question: "string", options: "DecisionOption[]", chosen: "string?", rationale: "string" } },
+      "decision.accept": { doc: "Accept a proposed decision; records who and when. People only.", fields: { id: "uuid", chosen: "string?", why: "string?" } },
+      "decision.reject": { doc: "Reject a proposed decision. People only.", fields: { id: "uuid", why: "string?" } },
+      "decision.log": { doc: "Ask for a decision's append-only log; answered with `decision.log` to this connection.", fields: { id: "uuid" } },
       presence: { doc: "The task this app is showing, if any, for teammates' presence.", fields: { viewing: "string?" } },
       "session.open": {
         fields: { machine: "string", agent: "string", cwd: "string", cols: "u16", rows: "u16", prompt: "string?" },
@@ -1990,6 +2020,7 @@ export const unions: Record<string, Union> = {
           online: "Presence[]",
           notes: "Note[]",
           docs: "Doc[]?",
+          decisions: "Decision[]?",
           follows: "GoalFollow[]",
           quietHours: "QuietHours?",
           intake: "IntakeRequest[]",
@@ -2056,6 +2087,8 @@ export const unions: Record<string, Union> = {
       "doc.removed": { fields: { id: "uuid" } },
       "doc.threads": { doc: "A doc's comment threads, to the connection that asked.", fields: { doc: "uuid", threads: "DocThread[]" } },
       "doc.thread.updated": { doc: "A doc comment thread changed, to every member.", fields: { thread: "DocThread" } },
+      "decision.updated": { doc: "A decision was proposed or changed, to every member.", fields: { decision: "Decision" } },
+      "decision.log": { doc: "A decision's log, oldest first, to the connection that asked.", fields: { id: "uuid", events: "DecisionEvent[]" } },
       "draft.updated": { doc: "Your draft, to your apps only.", fields: { draft: "Draft" } },
       "scout.updated": { doc: "How a goal's Scout run is going.", fields: { run: "ScoutRun" } },
       "recurring.updated": { doc: "A recurring task was saved or ran.", fields: { recurring: "Recurring" } },

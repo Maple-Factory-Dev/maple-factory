@@ -309,6 +309,108 @@ public enum Wire {
         public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
+    /// Where a doc decision stands (MF-367).
+    public enum DecisionStatus: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// Waiting for a person to accept or reject it.
+        case proposed
+        /// Accepted: the chosen option stands.
+        case accepted
+        /// Rejected.
+        case rejected
+        /// Was accepted, then replaced by a newer accepted decision. Final.
+        case superseded
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [DecisionStatus] = [.proposed, .accepted, .rejected, .superseded]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "proposed": self = .proposed
+            case "accepted": self = .accepted
+            case "rejected": self = .rejected
+            case "superseded": self = .superseded
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .proposed: "proposed"
+            case .accepted: "accepted"
+            case .rejected: "rejected"
+            case .superseded: "superseded"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: DecisionStatus, b: DecisionStatus) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
+    /// What one entry in a decision's append-only log did.
+    public enum DecisionAction: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// Proposed.
+        case proposed
+        /// Edited while still proposed.
+        case edited
+        /// Accepted.
+        case accepted
+        /// Rejected.
+        case rejected
+        /// Replaced by a newer accepted decision.
+        case superseded
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [DecisionAction] = [.proposed, .edited, .accepted, .rejected, .superseded]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "proposed": self = .proposed
+            case "edited": self = .edited
+            case "accepted": self = .accepted
+            case "rejected": self = .rejected
+            case "superseded": self = .superseded
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .proposed: "proposed"
+            case .edited: "edited"
+            case .accepted: "accepted"
+            case .rejected: "rejected"
+            case .superseded: "superseded"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: DecisionAction, b: DecisionAction) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
     /// githubstatus.com's overall indicator.
     public enum GitHubIndicator: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// All systems operational.
@@ -4504,8 +4606,10 @@ public enum Wire {
         public var icon: String?
         /// Comment threads on it not yet resolved.
         public var openThreads: UInt32?
+        /// Decisions in it still proposed.
+        public var openDecisions: UInt32?
 
-        public init(id: String, title: String, goal: String? = nil, createdBy: String, createdAt: UInt64, updatedAt: UInt64, archived: Bool? = nil, icon: String? = nil, openThreads: UInt32? = nil) {
+        public init(id: String, title: String, goal: String? = nil, createdBy: String, createdAt: UInt64, updatedAt: UInt64, archived: Bool? = nil, icon: String? = nil, openThreads: UInt32? = nil, openDecisions: UInt32? = nil) {
             self.id = id
             self.title = title
             self.goal = goal
@@ -4515,6 +4619,7 @@ public enum Wire {
             self.archived = archived
             self.icon = icon
             self.openThreads = openThreads
+            self.openDecisions = openDecisions
         }
     }
 
@@ -4612,6 +4717,111 @@ public enum Wire {
             createdBy = try c.decode(String.self, forKey: .createdBy)
             createdAt = try c.decode(UInt64.self, forKey: .createdAt)
             suggestion = try c.decodeIfPresent(DocSuggestion.self, forKey: .suggestion)
+        }
+    }
+
+    /// One option a decision considered.
+    public struct DecisionOption: Codable, Hashable, Sendable {
+        public var id: String
+        public var label: String
+        public var note: String?
+
+        public init(id: String, label: String, note: String? = nil) {
+            self.id = id
+            self.label = label
+            self.note = note
+        }
+    }
+
+    /// A reviewable decision recorded in a doc (MF-367): the server owns it; the doc's text only holds an embed with its id.
+    public struct Decision: Codable, Hashable, Sendable {
+        public var id: String
+        public var doc: String
+        public var goal: String?
+        public var question: String
+        public var options: [DecisionOption]
+        /// The id of the chosen option.
+        public var chosen: String?
+        public var rationale: String
+        public var status: DecisionStatus
+        public var proposedBy: String
+        /// Set when an agent proposed it, e.g. "MF-367 builder".
+        public var agent: String?
+        public var proposedAt: UInt64
+        /// Who accepted or rejected it.
+        public var decidedBy: String?
+        public var decidedAt: UInt64?
+        /// The optional reason given when it was accepted or rejected.
+        public var why: String?
+        /// The accepted decision this one replaces once accepted.
+        public var supersedes: String?
+        /// The decision that replaced this one.
+        public var supersededBy: String?
+
+        public init(id: String, doc: String, goal: String? = nil, question: String, options: [DecisionOption] = [], chosen: String? = nil, rationale: String, status: DecisionStatus, proposedBy: String, agent: String? = nil, proposedAt: UInt64, decidedBy: String? = nil, decidedAt: UInt64? = nil, why: String? = nil, supersedes: String? = nil, supersededBy: String? = nil) {
+            self.id = id
+            self.doc = doc
+            self.goal = goal
+            self.question = question
+            self.options = options
+            self.chosen = chosen
+            self.rationale = rationale
+            self.status = status
+            self.proposedBy = proposedBy
+            self.agent = agent
+            self.proposedAt = proposedAt
+            self.decidedBy = decidedBy
+            self.decidedAt = decidedAt
+            self.why = why
+            self.supersedes = supersedes
+            self.supersededBy = supersededBy
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            doc = try c.decode(String.self, forKey: .doc)
+            goal = try c.decodeIfPresent(String.self, forKey: .goal)
+            question = try c.decode(String.self, forKey: .question)
+            options = try c.decodeIfPresent([DecisionOption].self, forKey: .options) ?? []
+            chosen = try c.decodeIfPresent(String.self, forKey: .chosen)
+            rationale = try c.decode(String.self, forKey: .rationale)
+            status = try c.decode(DecisionStatus.self, forKey: .status)
+            proposedBy = try c.decode(String.self, forKey: .proposedBy)
+            agent = try c.decodeIfPresent(String.self, forKey: .agent)
+            proposedAt = try c.decode(UInt64.self, forKey: .proposedAt)
+            decidedBy = try c.decodeIfPresent(String.self, forKey: .decidedBy)
+            decidedAt = try c.decodeIfPresent(UInt64.self, forKey: .decidedAt)
+            why = try c.decodeIfPresent(String.self, forKey: .why)
+            supersedes = try c.decodeIfPresent(String.self, forKey: .supersedes)
+            supersededBy = try c.decodeIfPresent(String.self, forKey: .supersededBy)
+        }
+    }
+
+    /// One entry in a decision's append-only log, kept server-side so history can't be silently edited.
+    public struct DecisionEvent: Codable, Hashable, Sendable {
+        /// Its place in the org's log.
+        public var seq: UInt64
+        public var decision: String
+        public var at: UInt64
+        /// The member (or, for an agent proposal, the person it works for).
+        public var by: String
+        public var agent: String?
+        public var action: DecisionAction
+        public var why: String?
+        public var before: Decision?
+        public var after: Decision?
+
+        public init(seq: UInt64, decision: String, at: UInt64, by: String, agent: String? = nil, action: DecisionAction, why: String? = nil, before: Decision? = nil, after: Decision? = nil) {
+            self.seq = seq
+            self.decision = decision
+            self.at = at
+            self.by = by
+            self.agent = agent
+            self.action = action
+            self.why = why
+            self.before = before
+            self.after = after
         }
     }
 
@@ -7166,6 +7376,97 @@ public enum Wire {
         }
     }
 
+    /// Propose a decision in a doc (MF-367). The client makes the id, so the editor can insert the embed first.
+    public struct ClientMessageDecisionPropose: Codable, Hashable, Sendable {
+        public var id: String
+        public var doc: String
+        public var question: String
+        public var options: [DecisionOption]
+        public var chosen: String?
+        public var rationale: String
+        public var supersedes: String?
+
+        public init(id: String, doc: String, question: String, options: [DecisionOption] = [], chosen: String? = nil, rationale: String, supersedes: String? = nil) {
+            self.id = id
+            self.doc = doc
+            self.question = question
+            self.options = options
+            self.chosen = chosen
+            self.rationale = rationale
+            self.supersedes = supersedes
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            doc = try c.decode(String.self, forKey: .doc)
+            question = try c.decode(String.self, forKey: .question)
+            options = try c.decodeIfPresent([DecisionOption].self, forKey: .options) ?? []
+            chosen = try c.decodeIfPresent(String.self, forKey: .chosen)
+            rationale = try c.decode(String.self, forKey: .rationale)
+            supersedes = try c.decodeIfPresent(String.self, forKey: .supersedes)
+        }
+    }
+
+    /// Change a decision while it's still proposed.
+    public struct ClientMessageDecisionEdit: Codable, Hashable, Sendable {
+        public var id: String
+        public var question: String
+        public var options: [DecisionOption]
+        public var chosen: String?
+        public var rationale: String
+
+        public init(id: String, question: String, options: [DecisionOption] = [], chosen: String? = nil, rationale: String) {
+            self.id = id
+            self.question = question
+            self.options = options
+            self.chosen = chosen
+            self.rationale = rationale
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            question = try c.decode(String.self, forKey: .question)
+            options = try c.decodeIfPresent([DecisionOption].self, forKey: .options) ?? []
+            chosen = try c.decodeIfPresent(String.self, forKey: .chosen)
+            rationale = try c.decode(String.self, forKey: .rationale)
+        }
+    }
+
+    /// Accept a proposed decision; records who and when. People only.
+    public struct ClientMessageDecisionAccept: Codable, Hashable, Sendable {
+        public var id: String
+        public var chosen: String?
+        public var why: String?
+
+        public init(id: String, chosen: String? = nil, why: String? = nil) {
+            self.id = id
+            self.chosen = chosen
+            self.why = why
+        }
+    }
+
+    /// Reject a proposed decision. People only.
+    public struct ClientMessageDecisionReject: Codable, Hashable, Sendable {
+        public var id: String
+        public var why: String?
+
+        public init(id: String, why: String? = nil) {
+            self.id = id
+            self.why = why
+        }
+    }
+
+    /// Ask for a decision's append-only log; answered with `decision.log` to this connection.
+    public struct ClientMessageDecisionLog: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
+        }
+    }
+
     /// The task this app is showing, if any, for teammates' presence.
     public struct ClientMessagePresence: Codable, Hashable, Sendable {
         public var viewing: String?
@@ -8234,6 +8535,11 @@ public enum Wire {
         case docReopen(ClientMessageDocReopen)
         case docSuggestion(ClientMessageDocSuggestion)
         case docThreads(ClientMessageDocThreads)
+        case decisionPropose(ClientMessageDecisionPropose)
+        case decisionEdit(ClientMessageDecisionEdit)
+        case decisionAccept(ClientMessageDecisionAccept)
+        case decisionReject(ClientMessageDecisionReject)
+        case decisionLog(ClientMessageDecisionLog)
         case presence(ClientMessagePresence)
         case sessionOpen(ClientMessageSessionOpen)
         case sessionAttach(ClientMessageSessionAttach)
@@ -8342,6 +8648,11 @@ public enum Wire {
             case "doc.reopen": self = .docReopen(try ClientMessageDocReopen(from: decoder))
             case "doc.suggestion": self = .docSuggestion(try ClientMessageDocSuggestion(from: decoder))
             case "doc.threads": self = .docThreads(try ClientMessageDocThreads(from: decoder))
+            case "decision.propose": self = .decisionPropose(try ClientMessageDecisionPropose(from: decoder))
+            case "decision.edit": self = .decisionEdit(try ClientMessageDecisionEdit(from: decoder))
+            case "decision.accept": self = .decisionAccept(try ClientMessageDecisionAccept(from: decoder))
+            case "decision.reject": self = .decisionReject(try ClientMessageDecisionReject(from: decoder))
+            case "decision.log": self = .decisionLog(try ClientMessageDecisionLog(from: decoder))
             case "presence": self = .presence(try ClientMessagePresence(from: decoder))
             case "session.open": self = .sessionOpen(try ClientMessageSessionOpen(from: decoder))
             case "session.attach": self = .sessionAttach(try ClientMessageSessionAttach(from: decoder))
@@ -8475,6 +8786,21 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .docThreads(let body):
                 try c.encode("doc.threads", forKey: .type)
+                try body.encode(to: encoder)
+            case .decisionPropose(let body):
+                try c.encode("decision.propose", forKey: .type)
+                try body.encode(to: encoder)
+            case .decisionEdit(let body):
+                try c.encode("decision.edit", forKey: .type)
+                try body.encode(to: encoder)
+            case .decisionAccept(let body):
+                try c.encode("decision.accept", forKey: .type)
+                try body.encode(to: encoder)
+            case .decisionReject(let body):
+                try c.encode("decision.reject", forKey: .type)
+                try body.encode(to: encoder)
+            case .decisionLog(let body):
+                try c.encode("decision.log", forKey: .type)
                 try body.encode(to: encoder)
             case .presence(let body):
                 try c.encode("presence", forKey: .type)
@@ -8764,6 +9090,7 @@ public enum Wire {
         public var notes: [Note]
         /// Every shared doc, archived ones too. None: an older server.
         public var docs: [Doc]?
+        public var decisions: [Decision]?
         public var follows: [GoalFollow]
         /// Your quiet hours. None: none set, or an older server.
         public var quietHours: QuietHours?
@@ -8801,7 +9128,7 @@ public enum Wire {
         public var name: String?
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], tallies: [GoalTally]? = nil, olderTasks: UInt32? = nil, policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, connectors: [McpConnector]? = nil, integrations: [Integration]? = nil, online: [Presence] = [], notes: [Note] = [], docs: [Doc]? = nil, follows: [GoalFollow] = [], quietHours: QuietHours? = nil, intake: [IntakeRequest] = [], repos: [OrgRepo] = [], repoOwners: [String]? = nil, mergeHolds: [MergeHold]? = nil, githubApp: GitHubAppInfo? = nil, secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, setupRuns: [RepoSetupRun]? = nil, scoutRuns: [ScoutRun]? = nil, recurring: [Recurring]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, githubStatus: GitHubStatus? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], tallies: [GoalTally]? = nil, olderTasks: UInt32? = nil, policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, connectors: [McpConnector]? = nil, integrations: [Integration]? = nil, online: [Presence] = [], notes: [Note] = [], docs: [Doc]? = nil, decisions: [Decision]? = nil, follows: [GoalFollow] = [], quietHours: QuietHours? = nil, intake: [IntakeRequest] = [], repos: [OrgRepo] = [], repoOwners: [String]? = nil, mergeHolds: [MergeHold]? = nil, githubApp: GitHubAppInfo? = nil, secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, setupRuns: [RepoSetupRun]? = nil, scoutRuns: [ScoutRun]? = nil, recurring: [Recurring]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, githubStatus: GitHubStatus? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
             self.org = org
             self.me = me
             self.members = members
@@ -8819,6 +9146,7 @@ public enum Wire {
             self.online = online
             self.notes = notes
             self.docs = docs
+            self.decisions = decisions
             self.follows = follows
             self.quietHours = quietHours
             self.intake = intake
@@ -8860,6 +9188,7 @@ public enum Wire {
             online = try c.decodeIfPresent([Presence].self, forKey: .online) ?? []
             notes = try c.decodeIfPresent([Note].self, forKey: .notes) ?? []
             docs = try c.decodeIfPresent([Doc].self, forKey: .docs)
+            decisions = try c.decodeIfPresent([Decision].self, forKey: .decisions)
             follows = try c.decodeIfPresent([GoalFollow].self, forKey: .follows) ?? []
             quietHours = try c.decodeIfPresent(QuietHours.self, forKey: .quietHours)
             intake = try c.decodeIfPresent([IntakeRequest].self, forKey: .intake) ?? []
@@ -9020,6 +9349,32 @@ public enum Wire {
 
         public init(thread: DocThread) {
             self.thread = thread
+        }
+    }
+
+    /// A decision was proposed or changed, to every member.
+    public struct ServerToClientDecisionUpdated: Codable, Hashable, Sendable {
+        public var decision: Decision
+
+        public init(decision: Decision) {
+            self.decision = decision
+        }
+    }
+
+    /// A decision's log, oldest first, to the connection that asked.
+    public struct ServerToClientDecisionLog: Codable, Hashable, Sendable {
+        public var id: String
+        public var events: [DecisionEvent]
+
+        public init(id: String, events: [DecisionEvent] = []) {
+            self.id = id
+            self.events = events
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            events = try c.decodeIfPresent([DecisionEvent].self, forKey: .events) ?? []
         }
     }
 
@@ -9403,6 +9758,8 @@ public enum Wire {
         case docRemoved(ServerToClientDocRemoved)
         case docThreads(ServerToClientDocThreads)
         case docThreadUpdated(ServerToClientDocThreadUpdated)
+        case decisionUpdated(ServerToClientDecisionUpdated)
+        case decisionLog(ServerToClientDecisionLog)
         case draftUpdated(ServerToClientDraftUpdated)
         case scoutUpdated(ServerToClientScoutUpdated)
         case recurringUpdated(ServerToClientRecurringUpdated)
@@ -9454,6 +9811,8 @@ public enum Wire {
             case "doc.removed": self = .docRemoved(try ServerToClientDocRemoved(from: decoder))
             case "doc.threads": self = .docThreads(try ServerToClientDocThreads(from: decoder))
             case "doc.thread.updated": self = .docThreadUpdated(try ServerToClientDocThreadUpdated(from: decoder))
+            case "decision.updated": self = .decisionUpdated(try ServerToClientDecisionUpdated(from: decoder))
+            case "decision.log": self = .decisionLog(try ServerToClientDecisionLog(from: decoder))
             case "draft.updated": self = .draftUpdated(try ServerToClientDraftUpdated(from: decoder))
             case "scout.updated": self = .scoutUpdated(try ServerToClientScoutUpdated(from: decoder))
             case "recurring.updated": self = .recurringUpdated(try ServerToClientRecurringUpdated(from: decoder))
@@ -9533,6 +9892,12 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .docThreadUpdated(let body):
                 try c.encode("doc.thread.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .decisionUpdated(let body):
+                try c.encode("decision.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .decisionLog(let body):
+                try c.encode("decision.log", forKey: .type)
                 try body.encode(to: encoder)
             case .draftUpdated(let body):
                 try c.encode("draft.updated", forKey: .type)
