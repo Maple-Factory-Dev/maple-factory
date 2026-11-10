@@ -49,6 +49,49 @@ export function tableAbove(doc, pos) {
   return found;
 }
 
+// MF-389: the diagram block's Preview / Split / Code toggle. The mode is a per-viewer UI preference kept in
+// localStorage, never in the shared Yjs doc, so the schema and the Markdown round-trip don't change.
+export const DIAGRAM_MODES = ["preview", "split", "code"];
+export const DIAGRAM_PREF_KEY = "maple.docs.diagramMode";
+export const MERMAID_STARTER = "flowchart LR\n  A[Idea] --> B[Plan] --> C[Build]";
+
+/** Which mode a diagram block opens in: read-only editors always preview, a block just inserted from the
+ *  slash menu opens in code, otherwise the viewer's stored preference, falling back to preview. */
+export function diagramMode({ stored, editable = true, fresh = false } = {}) {
+  if (!editable) return "preview";
+  if (fresh) return "code";
+  return DIAGRAM_MODES.includes(stored) ? stored : "preview";
+}
+
+/** The stored mode, or null when there's none or storage is blocked. */
+export function readDiagramPref(storage = globalThis.localStorage) {
+  try { const v = storage?.getItem(DIAGRAM_PREF_KEY); return DIAGRAM_MODES.includes(v) ? v : null; } catch { return null; }
+}
+
+/** Saves the mode; a blocked storage just means the default next time. Returns whether it was saved. */
+export function writeDiagramPref(mode, storage = globalThis.localStorage) {
+  if (!DIAGRAM_MODES.includes(mode)) return false;
+  try { storage.setItem(DIAGRAM_PREF_KEY, mode); return true; } catch { return false; }
+}
+
+/** C1: whether the viewer opted into the side-by-side preview while in Code ("split"); off by default. */
+export const DIAGRAM_SIDE_KEY = "maple.docs.diagramSide";
+export function readDiagramSide(storage = globalThis.localStorage) {
+  try { return storage?.getItem(DIAGRAM_SIDE_KEY) === "1"; } catch { return false; }
+}
+export function writeDiagramSide(on, storage = globalThis.localStorage) {
+  try { storage.setItem(DIAGRAM_SIDE_KEY, on ? "1" : "0"); return true; } catch { return false; }
+}
+
+// The slash menu marks the next starter diagram as fresh; the node view created for it right after takes the mark.
+let freshAt = 0;
+export function markFreshDiagram(now = Date.now()) { freshAt = now; }
+function takeFresh(source, now = Date.now()) {
+  const fresh = source === MERMAID_STARTER && now - freshAt < 1500;
+  if (fresh) freshAt = 0;
+  return fresh;
+}
+
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -123,23 +166,53 @@ export const Mermaid = Node.create({
         document.body.append(shade);
       };
       let timer;
-      source.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(() => setAttrs(editor, getPos, { source: source.value }), 350); });
+      let mode = diagramMode({ stored: readDiagramPref(), editable: editor.isEditable, fresh: takeFresh(node.attrs.source) });
+      let dirty = false;
+      const showsPreview = () => mode !== "code";
+      // A hidden iframe may have drawn at 0×0, or missed an edit: redraw when the preview is visible again.
+      const redraw = () => { if (showsPreview()) { dirty = false; draw(); } else dirty = true; };
+      const hint = el("span", { class: "doc-mermaid-hint", "aria-live": "polite" });
+      // C1: the toggle is Preview | Code; a side-by-side preview ("split") is an opt-in while writing code.
+      const segBtn = (m, label) => el("button", { type: "button", class: "doc-seg-btn", "data-mode": m, onclick: () => setMode(m === "code" ? (readDiagramSide() ? "split" : "code") : m, true) }, label);
+      const buttons = [segBtn("preview", "Preview"), segBtn("code", "Code")];
+      const seg = el("div", { class: "doc-seg", role: "group", "aria-label": "Diagram view" }, buttons);
+      const side = el("button", { type: "button", class: "doc-mini doc-mermaid-side", title: "Show the preview next to the code", onclick: () => { const on = mode !== "split"; writeDiagramSide(on); setMode(on ? "split" : "code", true); } }, "Side preview");
+      const setMode = (m, save) => {
+        const was = showsPreview();
+        mode = m;
+        dom.dataset.mode = m;
+        const tab = m === "preview" ? "preview" : "code";
+        for (const b of buttons) b.setAttribute("aria-pressed", String(b.dataset.mode === tab));
+        side.hidden = m === "preview";
+        side.setAttribute("aria-pressed", String(m === "split"));
+        if (m !== "code") hint.textContent = "";
+        if (save) writeDiagramPref(m);
+        if (showsPreview() && (dirty || !was)) redraw();
+      };
+      source.addEventListener("input", () => {
+        if (mode === "code") hint.textContent = "Preview updates when you switch";
+        clearTimeout(timer); timer = setTimeout(() => setAttrs(editor, getPos, { source: source.value }), 350);
+      });
       const dom = el("div", { class: "doc-mermaid", "data-type": "mermaid", contenteditable: "false" },
-        el("div", { class: "doc-block-label" }, "Diagram", el("button", { type: "button", class: "doc-mini", onclick: open }, "Open")),
+        el("div", { class: "doc-block-label" }, "Diagram", hint, el("span", { class: "doc-block-spacer" }), side, seg, el("button", { type: "button", class: "doc-mini", onclick: open }, "Open")),
         el("div", { class: "doc-mermaid-split" }, source,
           el("div", { class: "doc-mermaid-preview" }, frame, el("button", { type: "button", class: "doc-mermaid-hit", "aria-label": "Open diagram", onclick: open }))));
+      const syncEditable = () => { seg.hidden = !editor.isEditable; if (!editor.isEditable) side.hidden = true; source.readOnly = !editor.isEditable; if (!editor.isEditable && mode !== "preview") setMode("preview", false); };
+      setMode(mode, false);
+      syncEditable();
+      editor.on("update", syncEditable);
       return {
         dom,
         update(next) {
           if (next.type !== current.type) return false;
           const changed = next.attrs.source !== current.attrs.source;
           current = next;
-          if (changed) { if (document.activeElement !== source) source.value = next.attrs.source; draw(); }
+          if (changed) { if (document.activeElement !== source) source.value = next.attrs.source; redraw(); }
           return true;
         },
         stopEvent: ownEvent,
         ignoreMutation: () => true,
-        destroy: () => clearTimeout(timer),
+        destroy: () => { clearTimeout(timer); editor.off("update", syncEditable); },
       };
     };
   },
