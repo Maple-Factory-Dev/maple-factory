@@ -321,3 +321,74 @@ struct PlaceholderView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
+
+/// The main window's connection pill (MF-401), worded like iOS's (MF-349): "Offline · Reconnecting…" once the feed
+/// has been down a few seconds, and "Update needed" at once when the factory is newer than this build, on every page.
+/// The status bar's dot is too small to notice when every button still looks live.
+struct ConnectionBanner: View {
+    @Environment(AppState.self) private var state
+    @Environment(FactoryClient.self) private var client
+
+    /// A blip shorter than this doesn't flash the pill.
+    static let delay: TimeInterval = 3
+
+    enum Kind: Equatable { case offline, updateNeeded }
+
+    /// What to show for this status, `since` the feed went reconnecting, at `now`; nil hides it.
+    static func visible(status: FactoryClient.Status, since: Date?, now: Date) -> Kind? {
+        switch status {
+        case .tooNew: return .updateNeeded
+        case .reconnecting:
+            guard let since, now.timeIntervalSince(since) >= delay else { return nil }
+            return .offline
+        default: return nil
+        }
+    }
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            Group {
+                if client.isSignedIn, let kind = Self.visible(status: client.status, since: client.reconnectingSince, now: context.date) {
+                    pill(kind)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .animation(.snappy(duration: 0.25), value: Self.visible(status: client.status, since: client.reconnectingSince, now: context.date))
+        }
+    }
+
+    private var reason: String {
+        if case .reconnecting(let attempt, let reason) = client.status { return "\(reason) (attempt \(attempt)). Actions aren't sent while offline." }
+        return "This factory is newer than the app. Update Maple Factory to keep working."
+    }
+
+    private func pill(_ kind: Kind) -> some View {
+        let tint = kind == .offline ? Theme.State.awaitingApproval : Theme.State.cancelled
+        return Button {
+            state.closeFocus()
+            state.destination = .machines
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: kind == .offline ? "wifi.slash" : "arrow.down.app").foregroundStyle(tint)
+                Text(kind == .offline ? "Offline" : "Update needed").fontWeight(.semibold).foregroundStyle(tint)
+                if kind == .offline {
+                    Text("·").foregroundStyle(Theme.textMuted)
+                    Text("Reconnecting…").foregroundStyle(Theme.textMuted)
+                    ProgressView().controlSize(.mini)
+                }
+            }
+            .font(.system(size: 12))
+            .lineLimit(1)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(Theme.editorBG))
+            .background(Capsule().fill(tint.opacity(0.14)))
+            .overlay(Capsule().strokeBorder(tint.opacity(0.35), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+        }
+        .buttonStyle(.plain)
+        .help(reason)
+        .accessibilityIdentifier("connection.banner")
+        .padding(.top, 8)
+    }
+}

@@ -440,6 +440,7 @@ struct ContentView: View {
                 }
             }
             .overlay(alignment: .trailing) { floatingInspector }
+            .overlay(alignment: .top) { ConnectionBanner() }
             .clipped()
             .animation(.easeInOut(duration: 0.3), value: state.isLoadingFactory)
             Hairline()
