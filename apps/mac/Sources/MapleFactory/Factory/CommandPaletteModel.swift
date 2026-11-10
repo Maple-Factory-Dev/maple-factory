@@ -4,15 +4,19 @@ import MapleKit
 /// Something the ⌘K palette can run that isn't a place: the menu's common commands.
 enum PaletteAction: String, CaseIterable, Hashable {
     case newTask, newGoal, newDoc, toggleSidebar, toggleTaskPanel, settings, themeSystem, themeLight, themeDark, sendFeedback, stopTheLine, restartTheLine
+    case checkForUpdates, addFactory, snoozeNotifications1h, snoozeUntilTomorrow, resumeNotifications, keyboardShortcuts
 
     /// The actions to offer: the task panel only with peeking on; Stop the line only signed in to a factory,
-    /// and Restart the line only while it's stopped.
-    static func available(taskPanel: Bool, signedIn: Bool, holds: Int) -> [PaletteAction] {
+    /// and Restart the line only while it's stopped; Snooze while notifications are on and not snoozed, Resume otherwise.
+    static func available(taskPanel: Bool, signedIn: Bool, holds: Int, notificationsOn: Bool = true,
+                          snoozed: Bool = false) -> [PaletteAction] {
         allCases.filter { action in
             switch action {
             case .toggleTaskPanel: taskPanel
             case .stopTheLine: signedIn
             case .restartTheLine: signedIn && holds > 0
+            case .snoozeNotifications1h, .snoozeUntilTomorrow: notificationsOn && !snoozed
+            case .resumeNotifications: snoozed || !notificationsOn
             default: true
             }
         }
@@ -42,6 +46,12 @@ enum PaletteAction: String, CaseIterable, Hashable {
         case .sendFeedback: "Send feedback…"
         case .stopTheLine: "Stop the line…"
         case .restartTheLine: "Restart the line"
+        case .checkForUpdates: "Check for updates…"
+        case .addFactory: "Add factory…"
+        case .snoozeNotifications1h: "Snooze notifications for 1 hour"
+        case .snoozeUntilTomorrow: "Snooze notifications until tomorrow"
+        case .resumeNotifications: "Resume notifications"
+        case .keyboardShortcuts: "Keyboard shortcuts"
         }
     }
 
@@ -57,6 +67,11 @@ enum PaletteAction: String, CaseIterable, Hashable {
         case .sendFeedback: "bubble.left.and.exclamationmark.bubble.right"
         case .stopTheLine: "hand.raised.fill"
         case .restartTheLine: "play.fill"
+        case .checkForUpdates: "arrow.down.circle"
+        case .addFactory: "plus.rectangle.on.rectangle"
+        case .snoozeNotifications1h, .snoozeUntilTomorrow: "bell.slash"
+        case .resumeNotifications: "bell"
+        case .keyboardShortcuts: "keyboard"
         }
     }
 
@@ -67,7 +82,9 @@ enum PaletteAction: String, CaseIterable, Hashable {
         case .toggleSidebar: "⌃⌘S"
         case .toggleTaskPanel: "⌥⌘I"
         case .settings: "⌘,"
-        case .newDoc, .themeSystem, .themeLight, .themeDark, .sendFeedback, .stopTheLine, .restartTheLine: ""
+        case .checkForUpdates: "⇧⌘U"
+        case .newDoc, .themeSystem, .themeLight, .themeDark, .sendFeedback, .stopTheLine, .restartTheLine,
+             .addFactory, .snoozeNotifications1h, .snoozeUntilTomorrow, .resumeNotifications, .keyboardShortcuts: ""
         }
     }
 
@@ -86,6 +103,12 @@ enum PaletteAction: String, CaseIterable, Hashable {
         case .sendFeedback: ["bug", "report", "idea", "beta", "help", "contact", "suggestion"]
         case .stopTheLine: ["hold merges", "freeze", "incident", "andon", "pause merges", "merge hold"]
         case .restartTheLine: ["lift hold", "release merges", "unfreeze", "resume merges", "andon"]
+        case .checkForUpdates: ["update", "upgrade", "version", "new version"]
+        case .addFactory: ["new factory", "connect", "sign in", "server", "switch"]
+        case .snoozeNotifications1h: ["mute", "quiet", "do not disturb", "dnd", "silence", "notifications", "pause"]
+        case .snoozeUntilTomorrow: ["mute", "quiet", "do not disturb", "dnd", "silence", "notifications", "pause"]
+        case .resumeNotifications: ["unmute", "unsnooze", "notifications", "turn on", "alerts"]
+        case .keyboardShortcuts: ["help", "keys", "hotkeys", "cheat sheet", "shortcuts"]
         }
     }
 }
@@ -110,6 +133,7 @@ struct PalettePage: Hashable {
         PalettePage(destination: .machines, title: "Machines", icon: "cpu", keywords: ["runners"]),
         PalettePage(destination: .allGoals, title: "All goals", icon: "scope", keywords: ["goals"]),
         PalettePage(destination: .docs, title: "Docs", icon: "doc.richtext", keywords: ["open docs", "plans", "specs", "notes"]),
+        PalettePage(destination: .decisions, title: "Decisions", icon: "checkmark.seal", keywords: ["decided", "adr", "choices", "proposed"]),
     ]
 }
 
@@ -120,6 +144,12 @@ struct PaletteDoc: Hashable {
     var goal: String? = nil
 }
 
+/// A saved factory ⌘K can switch to.
+struct PaletteFactory: Hashable {
+    let id: String
+    let name: String
+}
+
 /// One row in the palette.
 enum PaletteItem: Hashable, Identifiable {
     case task(String)
@@ -127,6 +157,14 @@ enum PaletteItem: Hashable, Identifiable {
     case page(PalettePage)
     case action(PaletteAction)
     case doc(String)
+    /// One of the open task's actions, in "This task".
+    case taskAction(String, TaskAction)
+    /// Switch to a saved factory.
+    case factory(String)
+    /// Settings, opened on a pane.
+    case settingsPane(OrgSettingsView.Pane)
+    /// "Move to goal…"'s sub-list: move the task to this goal.
+    case moveTarget(String, String)
 
     var id: String {
         switch self {
@@ -135,16 +173,25 @@ enum PaletteItem: Hashable, Identifiable {
         case .page(let page): "page:\(page.destination.encoded)"
         case .action(let action): "action:\(action.rawValue)"
         case .doc(let id): "doc:\(id)"
+        case .taskAction(let task, let action): "taskAction:\(task):\(action.rawValue)"
+        case .factory(let id): "factory:\(id)"
+        case .settingsPane(let pane): "settings:\(pane.rawValue)"
+        case .moveTarget(let task, let goal): "move:\(task):\(goal)"
         }
     }
 }
 
 struct PaletteSection: Equatable {
     enum Kind: CaseIterable {
-        case tasks, docs, goals, pages, actions
+        case thisTask, recent, tasks, docs, goals, pages, actions, factories, settings, moveTargets
 
         var title: String {
             switch self {
+            case .thisTask: "This task"
+            case .recent: "Recent"
+            case .factories: "Factories"
+            case .settings: "Settings"
+            case .moveTargets: "Move to goal"
             case .tasks: "Tasks"
             case .docs: "Docs"
             case .goals: "Goals"
@@ -156,13 +203,18 @@ struct PaletteSection: Equatable {
         var limit: Int {
             switch self {
             case .tasks: 8
-            case .docs, .goals, .pages, .actions: 5
+            case .thisTask, .moveTargets: 30
+            case .recent, .docs, .goals, .pages, .actions, .factories, .settings: 5
             }
         }
     }
 
     let kind: Kind
     let items: [PaletteItem]
+    /// "This task"'s task, which its header names.
+    var taskID: String? = nil
+
+    var title: String { taskID.map { "\(kind.title) · \($0)" } ?? kind.title }
 }
 
 /// What ⌘K shows for what's typed: ranked tasks, goals, pages and actions. Pure, so it's tested on its own.
@@ -189,16 +241,28 @@ enum CommandPaletteModel {
 
     /// The sections to show, best match first; empty sections are left out. Filter tokens narrow to tasks only.
     static func results(query text: String, tasks: [FactoryTask], goals: [String], pages: [PalettePage] = PalettePage.all,
-                        actions: [PaletteAction] = PaletteAction.allCases, docs: [PaletteDoc] = [], me: String) -> [PaletteSection] {
+                        actions: [PaletteAction] = PaletteAction.allCases, docs: [PaletteDoc] = [], me: String,
+                        openTask: (task: FactoryTask, actions: [TaskAction])? = nil, recent: [PaletteItem] = [],
+                        factories: [PaletteFactory] = [], panes: [OrgSettingsView.Pane] = []) -> [PaletteSection] {
         let query = Query(text)
-        if query.isEmpty { return defaults(tasks: tasks, actions: actions) }
+        let thisTask = openTask.map { open in
+            (open.task.id, open.actions.map { PaletteItem.taskAction(open.task.id, $0) })
+        }
+        if query.isEmpty { return defaults(tasks: tasks, actions: actions, thisTask: thisTask, recent: recent) }
 
         let filtered = tasks.filter { matches($0, query, me: me) }
         let rankedTasks: [(PaletteItem, Int)] = filtered.compactMap { task in
             guard let score = taskScore(task, query.words) else { return nil }
             return (.task(task.id), score)
         }
-        var scored: [(PaletteSection.Kind, [(PaletteItem, Int)])] = [(.tasks, rankedTasks)]
+        var scored: [(PaletteSection.Kind, [(PaletteItem, Int)])] = []
+        // First, so it wins a tie with another section.
+        if let open = openTask, !query.filters {
+            scored.append((.thisTask, open.actions.compactMap { action in
+                score(query.words, [action.title], also: action.keywords).map { (.taskAction(open.task.id, action), $0) }
+            }))
+        }
+        scored.append((.tasks, rankedTasks))
         if !query.filters {
             scored.append((.docs, docs.compactMap { doc in
                 score(query.words, [doc.title], also: [doc.goal ?? "", "doc", "plan"]).map { (.doc(doc.id), $0) }
@@ -206,13 +270,20 @@ enum CommandPaletteModel {
             scored.append((.goals, goals.compactMap { name in score(query.words, [name]).map { (.goal(name), $0) } }))
             scored.append((.pages, pages.compactMap { page in score(query.words, [page.title], also: page.keywords).map { (.page(page), $0) } }))
             scored.append((.actions, actions.compactMap { action in score(query.words, [action.title], also: action.keywords).map { (.action(action), $0) } }))
+            scored.append((.factories, factories.compactMap { factory in
+                score(query.words, ["Switch to \(factory.name)"], also: ["factory", "org"]).map { (.factory(factory.id), $0) }
+            }))
+            scored.append((.settings, panes.compactMap { pane in
+                score(query.words, [pane.title], also: ["settings", "preferences"]).map { (.settingsPane(pane), $0) }
+            }))
         }
 
         // Each section best first (ties keep their order); sections by their best row, then Tasks · Goals · Go to · Actions.
         let sections = scored.compactMap { kind, rows -> (PaletteSection, Int)? in
             let sorted = rows.enumerated().sorted { a, b in a.element.1 != b.element.1 ? a.element.1 > b.element.1 : a.offset < b.offset }
             guard let best = sorted.first?.element.1 else { return nil }
-            return (PaletteSection(kind: kind, items: sorted.prefix(kind.limit).map(\.element.0)), best)
+            return (PaletteSection(kind: kind, items: sorted.prefix(kind.limit).map(\.element.0),
+                                   taskID: kind == .thisTask ? openTask?.task.id : nil), best)
         }
         return sections.enumerated()
             .sorted { a, b in a.element.1 != b.element.1 ? a.element.1 > b.element.1 : a.offset < b.offset }
@@ -222,15 +293,31 @@ enum CommandPaletteModel {
     /// The rows in the order ↑/↓ moves through them.
     static func flatten(_ sections: [PaletteSection]) -> [PaletteItem] { sections.flatMap(\.items) }
 
-    /// Nothing typed: what needs you, then what's moving, and the common actions.
-    private static func defaults(tasks: [FactoryTask], actions: [PaletteAction]) -> [PaletteSection] {
-        let open = tasks.filter { !$0.state.isFinished }
-        let recent = open.filter { $0.needsYou || $0.hand != nil } + open.filter { !$0.needsYou && $0.hand == nil }
+    /// Nothing typed: the open task's actions, where you've just been, what needs you, then what's moving,
+    /// and the common actions.
+    private static func defaults(tasks: [FactoryTask], actions: [PaletteAction], thisTask: (String, [PaletteItem])?,
+                                 recent: [PaletteItem]) -> [PaletteSection] {
+        var seen = Set<PaletteItem>()
+        let lately = recent.filter { item in
+            if case .task(let id) = item, id == thisTask?.0 { return false }
+            return seen.insert(item).inserted
+        }.prefix(PaletteSection.Kind.recent.limit)
+        let open = tasks.filter { !$0.state.isFinished && $0.id != thisTask?.0 && !lately.contains(.task($0.id)) }
+        let moving = open.filter { $0.needsYou || $0.hand != nil } + open.filter { !$0.needsYou && $0.hand == nil }
         let common = actions.filter { $0 == .newTask || $0 == .newGoal || $0 == .settings }
         return [
-            PaletteSection(kind: .tasks, items: recent.prefix(PaletteSection.Kind.tasks.limit).map { .task($0.id) }),
+            PaletteSection(kind: .thisTask, items: thisTask?.1 ?? [], taskID: thisTask?.0),
+            PaletteSection(kind: .recent, items: Array(lately)),
+            PaletteSection(kind: .tasks, items: moving.prefix(PaletteSection.Kind.tasks.limit).map { .task($0.id) }),
             PaletteSection(kind: .actions, items: common.map { .action($0) }),
         ].filter { !$0.items.isEmpty }
+    }
+
+    /// "Move to goal…": the goals the task can move to, narrowed by what's typed.
+    static func moveTargets(query text: String, task: String, goals: [String]) -> [PaletteSection] {
+        let words = Query(text).words
+        let items = goals.filter { words.isEmpty || score(words, [$0]) != nil }.map { PaletteItem.moveTarget(task, $0) }
+        return items.isEmpty ? [] : [PaletteSection(kind: .moveTargets, items: items, taskID: task)]
     }
 
     private static func matches(_ task: FactoryTask, _ query: Query, me: String) -> Bool {
@@ -258,5 +345,29 @@ enum CommandPaletteModel {
     /// Lowercased with spaces and dashes gone, so `state:awaiting-approval` and `goal:authoverhaul` match.
     private static func squash(_ text: String) -> String {
         text.lowercased().filter { $0.isLetter || $0.isNumber }
+    }
+}
+
+/// ⌘K's Recent list: newest first, no repeats, at most 10, saved as `task:<id>` / `doc:<id>` strings.
+enum PaletteRecent {
+    static let cap = 10
+
+    static func adding(_ item: PaletteItem, to list: [PaletteItem]) -> [PaletteItem] {
+        guard encode(item) != nil else { return list }
+        return Array(([item] + list.filter { $0 != item }).prefix(cap))
+    }
+
+    static func encode(_ item: PaletteItem) -> String? {
+        switch item {
+        case .task(let id): "task:\(id)"
+        case .doc(let id): "doc:\(id)"
+        default: nil
+        }
+    }
+
+    static func decode(_ text: String) -> PaletteItem? {
+        if text.hasPrefix("task:") { return .task(String(text.dropFirst(5))) }
+        if text.hasPrefix("doc:") { return .doc(String(text.dropFirst(4))) }
+        return nil
     }
 }
