@@ -160,6 +160,14 @@ export const enums: Record<string, Enum> = {
   PushEnvironment: {
     values: { sandbox: "A development build (APNs' sandbox).", production: "An App Store or TestFlight build." },
   },
+  AskKind: {
+    doc: "What kind of ask a task event snapshots.",
+    values: {
+      question: "An agent's question (`ask`).",
+      hand: "A raised hand: the agent's or the factory's.",
+      prompt: "A permission prompt in the agent's terminal.",
+    },
+  },
   HandReason: {
     values: {
       reviewLoop: "Review rounds ran out.",
@@ -550,7 +558,33 @@ export const structs: Record<string, Struct> = {
     doc: "Steering: someone redirecting the planner or builder mid-flight.",
     fields: { id: "string", author: "string", text: "string", at: "u64", anchor: "string?", status: "ChangeStatus", timing: "string?" },
   },
-  TaskEvent: { fields: { who: "string", text: "string", at: "u64" } },
+  AskSnapshotOption: {
+    doc: "One option the UI offered on an ask.",
+    fields: { title: "string", detail: "string?", recommended: "bool?" },
+  },
+  AskSnapshot: {
+    doc: "What the UI offered when a task asked a person something, and on the answer, what they picked.",
+    fields: {
+      kind: "AskKind",
+      text: "string",
+      reason: "HandReason?",
+      options: "AskSnapshotOption[]",
+      command: "string?",
+      picked: "string?",
+      note: "string?",
+    },
+    fieldDocs: {
+      text: "The question, the hand's summary, or the permission prompt's tool.",
+      reason: "A hand's reason.",
+      command: "A permission prompt's command or summary.",
+      picked: "The option the person picked (its title). None on the asking event, or when they typed an answer that isn't an option.",
+      note: "The person's note, or the answer they typed when it isn't an option.",
+    },
+  },
+  TaskEvent: {
+    fields: { who: "string", text: "string", at: "u64", ask: "AskSnapshot?" },
+    fieldDocs: { ask: "A snapshot of what was asked and offered, and on an answer what was picked. None on other events and on older ones." },
+  },
   StageSpan: {
     doc: "A stretch of a task's time in one stage, and what it waited on: a new span starts whenever its state or wait changes.",
     fields: { stage: "TaskState", wait: "StageWait?", from: "u64", to: "u64?", inferred: "bool?" },

@@ -123,6 +123,10 @@ export const PushPlatformValues: readonly PushPlatform[] = ["apns","fcm"];
 export type PushEnvironment = "sandbox" | "production";
 export const PushEnvironmentValues: readonly PushEnvironment[] = ["sandbox","production"];
 
+/** What kind of ask a task event snapshots. */
+export type AskKind = "question" | "hand" | "prompt";
+export const AskKindValues: readonly AskKind[] = ["question","hand","prompt"];
+
 export type HandReason = "reviewLoop" | "proofBurden" | "needsInput" | "overBudget" | "sessionEnded" | "mergeFailed";
 export const HandReasonValues: readonly HandReason[] = ["reviewLoop","proofBurden","needsInput","overBudget","sessionEnded","mergeFailed"];
 
@@ -565,10 +569,35 @@ export interface ChangeRequest {
   timing?: string | null;
 }
 
+/** One option the UI offered on an ask. */
+export interface AskSnapshotOption {
+  title: string;
+  detail?: string | null;
+  recommended?: boolean | null;
+}
+
+/** What the UI offered when a task asked a person something, and on the answer, what they picked. */
+export interface AskSnapshot {
+  kind: AskKind;
+  /** The question, the hand's summary, or the permission prompt's tool. */
+  text: string;
+  /** A hand's reason. */
+  reason?: HandReason | null;
+  options: AskSnapshotOption[];
+  /** A permission prompt's command or summary. */
+  command?: string | null;
+  /** The option the person picked (its title). None on the asking event, or when they typed an answer that isn't an option. */
+  picked?: string | null;
+  /** The person's note, or the answer they typed when it isn't an option. */
+  note?: string | null;
+}
+
 export interface TaskEvent {
   who: string;
   text: string;
   at: number;
+  /** A snapshot of what was asked and offered, and on an answer what was picked. None on other events and on older ones. */
+  ask?: AskSnapshot | null;
 }
 
 /** A stretch of a task's time in one stage, and what it waited on: a new span starts whenever its state or wait changes. */

@@ -11,7 +11,7 @@ import { MemoryTools, repoFromCwd } from "./memory-tools.ts";
 import type { MemoryCaller } from "./memory-tools.ts";
 import { ArtifactKindValues, PriorityValues, RoleValues, TaskStateValues } from "../wire.ts";
 import type {
-  Artifact, ArtifactKind, ChangeRequest, CheckRun, ClientMessage, Comment, DiffCommit, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
+  Artifact, ArtifactKind, AskSnapshot, ChangeRequest, CheckRun, ClientMessage, Comment, DiffCommit, Evidence, Finding, Goal, Hand, OrgRepo, Question, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
   AgentState, Classification, DocAgentRun, DocThread, McpConnector, NotRunCheck, Priority, PromptAdditions, RiskLevel, ServerToRunner, SessionEnd, SessionInfo, Task, WorktreeScripts,
   TaskDocSource, Memory, MemoryScope,
 } from "../wire.ts";
@@ -113,6 +113,37 @@ const unwrapPasted = (s: string) =>
 const CI_POLL_MS = 30_000;
 // The ways forward on a "didn't merge" hand (the clients pick them by title).
 const MERGE_FIX = "Send it back to fix";
+
+/** What a question offered (the asking event), and with `answer` what the person typed: an option's
+ *  title is `picked`, anything else is their `note`. */
+export function questionSnapshot(q: Question, answer?: string): AskSnapshot {
+  const typed = answer?.trim();
+  const picked = typed ? q.options.find((o) => o.trim().toLowerCase() === typed.toLowerCase()) ?? null : null;
+  return {
+    kind: "question", text: q.text, options: q.options.map((title) => ({ title })),
+    ...(picked ? { picked } : {}), ...(typed && !picked ? { note: typed } : {}),
+  };
+}
+
+/** What a hand offered, and on its answer the option picked and the note left. */
+export function handSnapshot(hand: Hand, picked?: string | null, note?: string): AskSnapshot {
+  return {
+    kind: "hand", text: hand.summary, reason: hand.reason,
+    options: hand.options.map((o) => ({ title: o.title, ...(o.detail ? { detail: o.detail } : {}), ...(o.recommended ? { recommended: true } : {}) })),
+    ...(picked ? { picked } : {}), ...(note?.trim() ? { note: note.trim() } : {}),
+  };
+}
+
+/** A permission prompt's tool, what it wants to do and its command (the runner's `detail`), and the choice made on it. */
+export function promptSnapshot(permission: { tool?: string | null; summary?: string | null; detail?: string | null }, choice: "yes" | "no"): AskSnapshot {
+  const tool = permission.tool || "a tool";
+  const summary = permission.summary?.trim();
+  return {
+    kind: "prompt", text: summary && summary !== tool ? `${tool}: ${summary}` : tool,
+    options: [{ title: "Yes" }, { title: "No" }],
+    ...(permission.detail?.trim() ? { command: permission.detail.trim() } : {}), picked: choice === "yes" ? "Yes" : "No",
+  };
+}
 const MERGE_RETRY = "Try the merge again";
 /** Times the factory sends a task that didn't merge back to fix it before asking a person. */
 const MERGE_FIX_TRIES = 2;
@@ -893,7 +924,7 @@ export class Engine {
         task.question = null;
         this.stat(task, "question.answered", { waitMs: now() - q.at }, who, q.role);
         task.comments.push(await this.comment(who, msg.text, { anchor: `Q: ${q.text}` }));
-        this.event(task, who, `answered: ${msg.text}`);
+        this.event(task, who, `answered: ${msg.text}`, questionSnapshot(q, msg.text));
         this.noteAnswer(task, who, msg.text);
         this.save(task);
         if (!(await this.type(task, `${who} answered your question ("${q.text}"): ${msg.text}`))) await this.pump();
@@ -904,7 +935,7 @@ export class Engine {
         const w = task.worker ?? fail("Nothing's running on it.");
         const machine = (await this.hooks.machines()).find((m) => m.id === w.machine);
         const activity = machine?.sessions.find((s) => s.session.id === w.session)?.activity;
-        const permission = activity?.state === "waiting" ? (activity.question as { permission?: { tool?: string } } | null)?.permission : undefined;
+        const permission = activity?.state === "waiting" ? (activity.question as { permission?: { tool?: string; summary?: string; detail?: string } } | null)?.permission : undefined;
         if (!activity || !permission) fail(`Its ${w.role} isn't waiting on a permission prompt.`);
         if (this.store.get(`answered:${w.session}`) === String(activity!.at)) fail("That prompt has already been answered.");
         // 1 is always "Yes" (once). No is whichever number comes last ("2. Yes, and don't ask again" can
@@ -918,7 +949,7 @@ export class Engine {
           const stopped = { ...activity!, message: `Stopped: ${who} denied ${tool}. Steer it, or answer in its session.`, question: null };
           await machineHub(this.env, w.machine).fetch("https://hub/activity", { method: "POST", body: JSON.stringify({ session: w.session, activity: stopped }) });
         }
-        this.event(task, who, `${msg.choice === "yes" ? "allowed" : "denied"} ${tool}`);
+        this.event(task, who, `${msg.choice === "yes" ? "allowed" : "denied"} ${tool}`, promptSnapshot(permission!, msg.choice));
         this.stat(task, "prompt.answered", { choice: msg.choice, tool: permission!.tool ?? null }, who, w.role);
         this.save(task);
         return;
@@ -930,7 +961,7 @@ export class Engine {
         this.lowerHand(task, who, option?.title ?? null);
         const decision = [option ? `Go with: ${option.title} — ${option.detail}` : null, msg.note.trim() || null].filter(Boolean).join("\n");
         if (decision) task.comments.push(await this.comment(who, decision, { anchor: `Hand: ${hand.summary}` }));
-        this.event(task, who, option ? `picked "${option.title}"` : "resolved the hand raise");
+        this.event(task, who, option ? `picked "${option.title}"` : "resolved the hand raise", handSnapshot(hand, option?.title ?? null, msg.note));
         if (hand.reason === "reviewLoop" && task.autoReview) task.autoReview.maxRounds += 2;
         const priv = this.store.private(task.id);
         // A time or cost budget hand (the factory's, or the agent's after the nudge; not a PR size one) answered
@@ -3436,7 +3467,7 @@ export class Engine {
         this.store.savePrivate(task.id, { ...this.store.private(task.id), lastAnswer: null });
         task.question = { text: question, options: arr(a.options).map(String), role: s.role, at: now() };
         this.stat(task, "question.asked", {}, null, s.role);
-        this.event(task, s.role, `asked: ${question}`);
+        this.event(task, s.role, `asked: ${question}`, questionSnapshot(task.question));
         this.intake.forTask(task, `${task.id}'s ${s.role} asks: ${question}`, true);
         this.hooks.broadcast({ type: "toast", text: `${task.id}'s ${s.role} has a question.`, taskId: task.id });
         return { summary: "Asked. End your turn now; the answer will be typed into this session." };
@@ -3459,7 +3490,7 @@ export class Engine {
         this.lowerHand(task, "factory");
         this.store.savePrivate(task.id, { ...this.store.private(task.id), lastAnswer: null });
         task.hand = { reason, summary: str(a.summary, "summary"), at: now(), assignee: task.owner, options };
-        this.event(task, s.role, "raised a hand");
+        this.event(task, s.role, "raised a hand", handSnapshot(task.hand));
         this.stat(task, "hand.raised", { reason }, null, s.role);
         this.hooks.broadcast({ type: "toast", text: `${task.id} needs a hand.`, taskId: task.id });
         return { summary: "Hand raised. End your turn now; a person's decision will be typed into this session." };
@@ -3947,7 +3978,7 @@ export class Engine {
     this.save(task);
   }
 
-  private async startMerge(task: Task, who: string, text = "merged it") {
+  private async startMerge(task: Task, who: string, text = "merged it", ask?: AskSnapshot) {
     this.failIfHeld(task); // a backstop: retries and conflict picks come through here too
     const priv = this.store.private(task.id);
     const app = githubApp(this.env);
@@ -3956,7 +3987,7 @@ export class Engine {
     if (app && priv.gh && task.pr?.url) {
       // On GitHub: squash-merge the pull request, pinned to the head that was reviewed.
       this.store.savePrivate(task.id, { ...priv, merging: true, mergeBy: who, mergeStartedAt: now() });
-      this.event(task, who, text);
+      this.event(task, who, text, ask);
       task.liveLog = MERGING;
       this.save(task);
       this.hooks.wakeIn(MERGE_STUCK_MS.github);
@@ -3975,7 +4006,7 @@ export class Engine {
     });
     if (!sent) fail(`${(await this.hooks.machines()).find((m) => m.id === task.machine)?.name ?? task.machine} is offline; it merges when it's back.`);
     this.store.savePrivate(task.id, { ...priv, merging: true, mergeBy: who, mergeStartedAt: now() });
-    this.event(task, who, text);
+    this.event(task, who, text, ask);
     task.liveLog = MERGING;
     this.save(task);
     this.hooks.wakeIn(MERGE_STUCK_MS.runner);
@@ -4129,13 +4160,13 @@ export class Engine {
     if (pick === MERGE_RETRY) {
       // The hand stays up until the merge has started: if it can't (its machine is offline, say),
       // nothing changed and auto-merge mustn't take over.
-      await this.startMerge(task, who, `picked "${pick}"`);
+      await this.startMerge(task, who, `picked "${pick}"`, handSnapshot(hand, pick, note));
       picked();
       this.save(task);
       return;
     }
     picked();
-    this.event(task, who, `picked "${pick}"`);
+    this.event(task, who, `picked "${pick}"`, handSnapshot(hand, pick, note));
     if (pick === "Cancel it") {
       await this.cancel(task, who);
       return this.pump();
@@ -4295,7 +4326,7 @@ export class Engine {
         { title: "Cancel it", detail: "Stop the task; its branch stays.", recommended: false },
       ],
     };
-    this.event(task, String(role), `stopped and needs a hand: ${summary}`);
+    this.event(task, String(role), `stopped and needs a hand: ${summary}`, handSnapshot(task.hand));
     this.stat(task, "hand.raised", { reason }, null, String(role));
     this.hooks.broadcast({ type: "toast", text: `${task.id} needs a hand: ${summary}`, taskId: task.id });
   }
@@ -4709,8 +4740,8 @@ export class Engine {
     this.hooks.broadcast({ type: "repos.updated", repos: this.store.repos(), scripts: this.store.repoScripts(), repoOwners: this.store.repoOwners() });
   }
 
-  private event(task: Task, who: string, text: string) {
-    task.events.push({ who, text, at: now() });
+  private event(task: Task, who: string, text: string, ask?: AskSnapshot) {
+    task.events.push(ask ? { who, text, at: now(), ask } : { who, text, at: now() });
     if (task.events.length > MAX_EVENTS) task.events.splice(0, task.events.length - MAX_EVENTS);
   }
 
