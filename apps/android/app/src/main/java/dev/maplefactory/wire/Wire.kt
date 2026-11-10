@@ -1825,6 +1825,8 @@ data class RiskPolicy(
     val autoMerge: Map<String, Boolean> = emptyMap(),
     /** When an approved change won't merge, send it back to a builder to fix (twice at most) before raising a hand. None: on. */
     val autoFixMerges: Boolean? = null,
+    /** When a task in review fails its CI checks, send it back to its builder to fix them (twice at most) before leaving it for a person. None: on. */
+    val autoFixChecks: Boolean? = null,
     /** When off, nothing merges on its own: approved, proven changes wait in Pending merge for a person. None: on. */
     val autoMerges: Boolean? = null,
     /** The most leftovers one Scout run turns into drafted plans (1–10). None: 3. */
@@ -4130,6 +4132,11 @@ sealed class ClientMessage {
     data class TaskRerunChecks(
         val id: String,
     ) : ClientMessage()
+    /** Send the task back to its builder to fix its failed CI checks. */
+    @Serializable
+    data class TaskFixChecks(
+        val id: String,
+    ) : ClientMessage()
     /** Read the pull request and its CI from GitHub again, for a webhook that didn't arrive. */
     @Serializable
     data class TaskRecheckGitHub(
@@ -4305,6 +4312,7 @@ sealed class ClientMessage {
             "task.queue" -> json.decodeFromJsonElement(TaskQueue.serializer(), body)
             "task.rankDraft" -> json.decodeFromJsonElement(TaskRankDraft.serializer(), body)
             "task.rerunChecks" -> json.decodeFromJsonElement(TaskRerunChecks.serializer(), body)
+            "task.fixChecks" -> json.decodeFromJsonElement(TaskFixChecks.serializer(), body)
             "task.recheckGitHub" -> json.decodeFromJsonElement(TaskRecheckGitHub.serializer(), body)
             "task.rerunCheck" -> json.decodeFromJsonElement(TaskRerunCheck.serializer(), body)
             "task.checkLog" -> json.decodeFromJsonElement(TaskCheckLog.serializer(), body)
@@ -4418,6 +4426,7 @@ sealed class ClientMessage {
             is TaskQueue -> "task.queue" to json.encodeToJsonElement(TaskQueue.serializer(), value)
             is TaskRankDraft -> "task.rankDraft" to json.encodeToJsonElement(TaskRankDraft.serializer(), value)
             is TaskRerunChecks -> "task.rerunChecks" to json.encodeToJsonElement(TaskRerunChecks.serializer(), value)
+            is TaskFixChecks -> "task.fixChecks" to json.encodeToJsonElement(TaskFixChecks.serializer(), value)
             is TaskRecheckGitHub -> "task.recheckGitHub" to json.encodeToJsonElement(TaskRecheckGitHub.serializer(), value)
             is TaskRerunCheck -> "task.rerunCheck" to json.encodeToJsonElement(TaskRerunCheck.serializer(), value)
             is TaskCheckLog -> "task.checkLog" to json.encodeToJsonElement(TaskCheckLog.serializer(), value)

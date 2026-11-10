@@ -887,6 +887,7 @@ export const structs: Record<string, Struct> = {
       finalReviews: "map<u32>",
       autoMerge: "map<bool>",
       autoFixMerges: "bool?",
+      autoFixChecks: "bool?",
       autoMerges: "bool?",
       scoutItems: "u32?",
       taskMinutes: "u32?",
@@ -901,6 +902,7 @@ export const structs: Record<string, Struct> = {
       overBudget: "What a task past its budget does: \"ask\" raises a hand for a person; \"handOff\" pushes its work, files a draft follow-up for a person to review and reinvest in, and cancels it. None: ask.",
       autoMerges: "When off, nothing merges on its own: approved, proven changes wait in Pending merge for a person. None: on.",
       autoFixMerges: "When an approved change won't merge, send it back to a builder to fix (twice at most) before raising a hand. None: on.",
+      autoFixChecks: "When a task in review fails its CI checks, send it back to its builder to fix them (twice at most) before leaving it for a person. None: on.",
       scoutItems: "The most leftovers one Scout run turns into drafted plans (1–10). None: 3.",
       maxFiles: "Over this (or maxLines), a change is at least medium risk and should be split.",
       planApprovals: "By risk level (low, medium, high).",
@@ -1996,6 +1998,7 @@ export const unions: Record<string, Union> = {
         fieldDocs: { before: "Move it ahead of this draft; \"top\": the first draft. None moves it to the bottom." },
       },
       "task.rerunChecks": { doc: "Run the pull request's failed CI checks again.", fields: { id: "string" } },
+      "task.fixChecks": { doc: "Send the task back to its builder to fix its failed CI checks.", fields: { id: "string" } },
       "task.recheckGitHub": { doc: "Read the pull request and its CI from GitHub again, for a webhook that didn't arrive.", fields: { id: "string" } },
       "task.rerunCheck": { doc: "Run one of the pull request's CI checks again, by name.", fields: { id: "string", check: "string" } },
       "task.checkLog": {
