@@ -34,6 +34,79 @@ export function cardKey(host, id, d = findDecision(host, id)) {
   return JSON.stringify([id, d, host?.editing?.has(id) ?? false, made]);
 }
 
+// What you've typed into a card and not sent yet (MF-414), per editor on host.drafts: decision id →
+// { question, options, rationale, base } while its edit form is open (options as the textarea's text; base is
+// what the form was opened with), plus { why, pick } for a proposed card's action row. The card's DOM is rebuilt
+// from the feed, and a node view can be recreated by a collaborative change, so the inputs can't be the only copy.
+const optionsText = (d) => (d?.options ?? []).map((o) => o.label).join("\n");
+const editSeed = (d) => ({ question: d?.question ?? "", options: optionsText(d), rationale: d?.rationale ?? "" });
+
+/** The draft for a decision's edit form: the one being typed, else seeded (once) from the decision. */
+export function draftFor(host, d) {
+  const cur = host?.drafts?.get(d.id);
+  if (cur?.base) return cur;
+  const seed = editSeed(d);
+  const draft = { ...cur, ...seed, base: seed };
+  if (host) (host.drafts ??= new Map()).set(d.id, draft);
+  return draft;
+}
+
+/** Merges typed values into a decision's draft. */
+export function setDraft(host, id, patch) {
+  if (!host) return null;
+  const draft = { ...host.drafts?.get(id), ...patch };
+  (host.drafts ??= new Map()).set(id, draft);
+  return draft;
+}
+
+/** Drops a decision's draft; `part: "edit"` drops only the edit form's fields (Save, Cancel) and keeps why / pick. */
+export function clearDraft(host, id, part = null) {
+  const cur = host?.drafts?.get(id);
+  if (!cur) return;
+  const rest = {};
+  if (part === "edit") for (const k of ["why", "pick"]) if (cur[k] != null && cur[k] !== "") rest[k] = cur[k];
+  if (Object.keys(rest).length) host.drafts.set(id, rest);
+  else host.drafts.delete(id);
+}
+
+/** Whether the server's copy has moved on from what the edit form was opened with. */
+export function draftDiffers(draft, d) {
+  if (!draft?.base || !d) return false;
+  const now = editSeed(d);
+  return now.question !== draft.base.question || now.options !== draft.base.options || now.rationale !== draft.base.rationale;
+}
+
+const STALE = "This decision changed while you were editing. Saving replaces it with your version.";
+
+/** The option picker's choices, from the decision; what you picked wins while it's still an option. */
+function fillPick(pick, d, host) {
+  const opts = JSON.stringify(d.options.map((o) => [o.id, o.label]));
+  if (pick.dataset.opts !== opts) {
+    pick.dataset.opts = opts;
+    pick.replaceChildren(el("option", { value: "" }, "Choose an option…"), ...d.options.map((o) => el("option", { value: o.id }, o.label)));
+  }
+  const picked = host?.drafts?.get(d.id)?.pick;
+  pick.value = picked != null && (picked === "" || d.options.some((o) => o.id === picked)) ? picked : d.chosen ?? "";
+}
+
+/** A background redraw of a proposed card keeps the part you type in (the edit form, or the action row) and
+ * replaces everything around it, so the text, caret and focus stay. False when there's nothing to keep. */
+function redrawAround(dom, next, d, host, editing) {
+  const sel = editing ? ".doc-decision-form" : ".doc-decision-actions";
+  const body = dom.firstElementChild;
+  const kept = [...(body?.children ?? [])].find((c) => c.matches(sel));
+  const fresh = [...next.children].find((c) => c.matches(sel));
+  if (!kept || !fresh) return false;
+  const kids = [...next.childNodes];
+  const i = kids.indexOf(fresh);
+  for (const c of [...body.childNodes]) if (c !== kept) c.remove();
+  kept.before(...kids.slice(0, i));
+  kept.after(...kids.slice(i + 1));
+  if (editing) kept.querySelector(".doc-decision-stale").hidden = !draftDiffers(host?.drafts?.get(d.id), d);
+  else fillPick(kept.querySelector(".doc-decision-pick"), d, host);
+  return true;
+}
+
 export function draftDecision(from = null) {
   if (from) return { question: from.question, options: from.options.map((o) => ({ id: uuid().slice(0, 8), label: o.label, note: o.note ?? null })), chosen: null, rationale: "" };
   return { question: "What are we deciding?", options: [{ id: uuid().slice(0, 8), label: "Option 1", note: null }, { id: uuid().slice(0, 8), label: "Option 2", note: null }], chosen: null, rationale: "" };
@@ -75,13 +148,15 @@ function card(d, id, host, ctx) {
     d.why ? el("div", { class: "doc-decision-why" }, el("strong", {}, "Why: "), d.why) : null,
     links.length ? el("div", { class: "doc-decision-links" }, links) : null);
   if (d.status === "proposed") {
-    const why = el("input", { class: "doc-decision-why-input", placeholder: "Why? (optional)", "aria-label": "Why" });
-    const pick = el("select", { class: "doc-decision-pick", "aria-label": "Chosen option" },
-      el("option", { value: "" }, "Choose an option…"), d.options.map((o) => el("option", { value: o.id, selected: o.id === d.chosen }, o.label)));
+    const why = el("input", { class: "doc-decision-why-input", placeholder: "Why? (optional)", "aria-label": "Why", oninput: () => setDraft(host, d.id, { why: why.value }) });
+    why.value = host?.drafts?.get(d.id)?.why ?? "";
+    const pick = el("select", { class: "doc-decision-pick", "aria-label": "Chosen option", onchange: () => setDraft(host, d.id, { pick: pick.value }) });
+    fillPick(pick, d, host);
+    const decide = (msg) => { clearDraft(host, d.id); send(msg); };
     body.append(el("div", { class: "doc-decision-actions" },
       pick, why,
-      el("button", { type: "button", class: "doc-btn primary", onclick: () => send({ type: "decision.accept", id: d.id, chosen: pick.value || null, why: why.value.trim() || null }) }, "Accept"),
-      el("button", { type: "button", class: "doc-btn", onclick: () => send({ type: "decision.reject", id: d.id, why: why.value.trim() || null }) }, "Reject"),
+      el("button", { type: "button", class: "doc-btn primary", onclick: () => decide({ type: "decision.accept", id: d.id, chosen: pick.value || null, why: why.value.trim() || null }) }, "Accept"),
+      el("button", { type: "button", class: "doc-btn", onclick: () => decide({ type: "decision.reject", id: d.id, why: why.value.trim() || null }) }, "Reject"),
       el("button", { type: "button", class: "doc-btn ghost", onclick: () => { host.editing?.add(d.id); ctx.redraw(true); } }, "Edit")));
   } else if (d.status === "accepted") {
     // MF-368: the tasks made from it, live from the feed, and Make tasks.
@@ -96,16 +171,20 @@ function card(d, id, host, ctx) {
 }
 
 function editForm(d, host, ctx) {
-  const question = el("input", { class: "doc-decision-q-input", value: d.question, "aria-label": "Question", maxlength: 500 });
-  const options = el("textarea", { class: "doc-decision-o-input", rows: Math.max(2, d.options.length), "aria-label": "Options, one per line" });
-  options.value = d.options.map((o) => o.label).join("\n");
-  const rationale = el("textarea", { class: "doc-decision-r-input", rows: 3, placeholder: "Rationale", "aria-label": "Rationale" });
-  rationale.value = d.rationale ?? "";
+  const draft = draftFor(host, d);
+  const typed = (field) => (e) => setDraft(host, d.id, { [field]: e.target.value });
+  const question = el("input", { class: "doc-decision-q-input", value: draft.question, "aria-label": "Question", maxlength: 500, oninput: typed("question") });
+  const options = el("textarea", { class: "doc-decision-o-input", rows: Math.max(2, d.options.length, draft.options.split("\n").length), "aria-label": "Options, one per line", oninput: typed("options") });
+  options.value = draft.options;
+  const rationale = el("textarea", { class: "doc-decision-r-input", rows: 3, placeholder: "Rationale", "aria-label": "Rationale", oninput: typed("rationale") });
+  rationale.value = draft.rationale;
+  const close = () => { host.editing?.delete(d.id); clearDraft(host, d.id, "edit"); };
   const save = () => {
+    const now = findDecision(host, d.id) ?? d; // the form outlives redraws: option ids and notes come from the current copy
     const labels = options.value.split("\n").map((s) => s.trim()).filter(Boolean);
-    const opts = labels.map((label, i) => ({ id: d.options[i]?.id ?? uuid().slice(0, 8), label, note: d.options[i]?.label === label ? d.options[i].note ?? null : null }));
-    const chosen = opts.some((o) => o.id === d.chosen) ? d.chosen : null;
-    host.editing?.delete(d.id);
+    const opts = labels.map((label, i) => ({ id: now.options[i]?.id ?? uuid().slice(0, 8), label, note: now.options[i]?.label === label ? now.options[i].note ?? null : null }));
+    const chosen = opts.some((o) => o.id === now.chosen) ? now.chosen : null;
+    close();
     host?.onEvent?.("decision", { type: "decision.edit", id: d.id, question: question.value, options: opts, chosen, rationale: rationale.value });
     ctx.redraw(true);
   };
@@ -113,9 +192,10 @@ function editForm(d, host, ctx) {
     el("label", {}, "Question", question),
     el("label", {}, "Options (one per line, 2–10)", options),
     el("label", {}, "Rationale", rationale),
+    el("div", { class: "doc-decision-stale muted", role: "status", hidden: !draftDiffers(draft, d) }, STALE),
     el("div", { class: "doc-decision-actions" },
       el("button", { type: "button", class: "doc-btn primary", onclick: save }, "Save"),
-      el("button", { type: "button", class: "doc-btn ghost", onclick: () => { host.editing?.delete(d.id); ctx.redraw(true); } }, "Cancel")));
+      el("button", { type: "button", class: "doc-btn ghost", onclick: () => { close(); ctx.redraw(true); } }, "Cancel")));
 }
 
 export const DecisionEmbed = Node.create({
@@ -131,6 +211,7 @@ export const DecisionEmbed = Node.create({
   addNodeView() {
     const host = this.options.host;
     if (host && !host.editing) host.editing = new Set();
+    if (host && !host.drafts) host.drafts = new Map();
     return ({ node, editor, getPos }) => {
       let current = node;
       const dom = el("div", { class: "doc-decision", "data-type": "decision", contenteditable: "false" });
@@ -147,14 +228,20 @@ export const DecisionEmbed = Node.create({
         },
       };
       const draw = (force = false) => {
-        const d = findDecision(host, current.attrs.id);
-        const key = cardKey(host, current.attrs.id, d);
+        const id = current.attrs.id;
+        const d = findDecision(host, id);
+        // Decided (or superseded) while its form was open: the form closes and what was typed goes.
+        if (d && d.status !== "proposed") { host?.editing?.delete(id); clearDraft(host, id); }
+        const key = cardKey(host, id, d);
         if (key === last && !force) return;
         last = key;
         dom.id = `decision-${current.attrs.id ?? ""}`;
         dom.dataset.decision = current.attrs.id ?? "";
         dom.dataset.status = d?.status ?? "";
-        dom.replaceChildren(card(d, current.attrs.id, host, ctx));
+        const next = card(d, id, host, ctx);
+        // Only Edit, Save and Cancel (forced) replace the inputs; a feed update redraws around them (MF-414).
+        if (!force && d?.status === "proposed" && redrawAround(dom, next, d, host, host?.editing?.has(id) ?? false)) return;
+        dom.replaceChildren(next);
       };
       dom.addEventListener("click", (e) => {
         const a = e.target.closest?.("[data-decision-link]");
