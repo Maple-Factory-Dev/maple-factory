@@ -3,6 +3,7 @@
 import { Extension } from "@tiptap/core";
 import Suggestion from "@tiptap/suggestion";
 import { PluginKey } from "@tiptap/pm/state";
+import { MERMAID_STARTER, markFreshDiagram } from "./nodes.js";
 
 /** A floating list under the caret for @tiptap/suggestion: ↑/↓ to move, ↵/⇥ to pick, esc to close. */
 export function listRenderer(label) {
@@ -64,7 +65,7 @@ export const SLASH_ITEMS = [
   { title: "Code block", icon: "</>", run: (c) => c.toggleCodeBlock() },
   { title: "Divider", icon: "—", run: (c) => c.setHorizontalRule() },
   // Planning visuals (MF-363)
-  { title: "Diagram", icon: "◇", hint: "Mermaid", run: (c) => c.insertContent({ type: "mermaid", attrs: { source: "flowchart LR\n  A[Idea] --> B[Plan] --> C[Build]" } }) },
+  { title: "Diagram", icon: "◇", hint: "Mermaid", run: (c) => { markFreshDiagram(); return c.insertContent({ type: "mermaid", attrs: { source: MERMAID_STARTER } }); } },
   { title: "Table", icon: "▦", run: (c) => c.insertTable({ rows: 3, cols: 3, withHeaderRow: true }) },
   { title: "Chart", icon: "▂▅", hint: "of the table above", run: (c) => c.insertContent({ type: "chart", attrs: { kind: "bar" } }) },
   { title: "Image", icon: "▣", run: (c, editor) => { setTimeout(() => editor.storage.docVisuals?.pick("image/png,image/jpeg,image/gif,image/webp")); return c; } },
