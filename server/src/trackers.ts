@@ -180,7 +180,6 @@ export async function deliver(env: Env, replyUrl: string, said: string, integrat
 
 // ---- GitHub ----
 
-/** POST /integrations/github: the GitHub App's webhook (signed with GITHUB_WEBHOOK_SECRET). */
 const REVIEW_STATES: Record<string, string> = { approved: "approved", changes_requested: "requested changes", commented: "reviewed" };
 
 /** A comment on a pull request (MF-424), from its conversation, a review, or inline on a line,
@@ -209,6 +208,7 @@ function githubComment(kind: string, e: any) {
   return null;
 }
 
+/** POST /integrations/github: the GitHub App's webhook (signed with GITHUB_WEBHOOK_SECRET). */
 export async function githubWebhook(request: Request, env: Env): Promise<Response> {
   if (!env.GITHUB_WEBHOOK_SECRET) return text("GitHub webhooks aren't set up for this factory.", 404);
   const raw = await request.arrayBuffer();
