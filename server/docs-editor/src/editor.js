@@ -1,6 +1,6 @@
 // The docs editor (MF-361, docs/planning-docs.md): TipTap over a Y.Doc whose shared XmlFragment
 // `prosemirror` syncs with the doc's DocHub through a y-websocket provider on /docs/<id>/sync.
-import { Editor, Extension, InputRule } from "@tiptap/core";
+import { Editor, Extension } from "@tiptap/core";
 import Collaboration from "@tiptap/extension-collaboration";
 import CollaborationCaret from "@tiptap/extension-collaboration-caret";
 import BubbleMenu from "@tiptap/extension-bubble-menu";
@@ -10,7 +10,8 @@ import * as Y from "yjs";
 import { WebsocketProvider } from "y-websocket";
 import { prosemirrorToYXmlFragment } from "@tiptap/y-tiptap";
 import { Awareness } from "y-protocols/awareness";
-import { schema as docSchema, schemaExtensions, TASK_ID } from "./schema.js";
+import { schema as docSchema, schemaExtensions } from "./schema.js";
+import { TaskRefTyping, syncHold } from "./typing.js";
 import { markdownPasteSlice, toMarkdown, fromMarkdown, taskResolver } from "./markdown.js";
 import { SlashMenu, mentionSuggestions, bubbleMenuElement } from "./menus.js";
 import { nodeForUpload } from "./nodes.js";
@@ -33,27 +34,6 @@ export function colorFor(login = "") {
   for (const c of login) h = (h * 31 + c.charCodeAt(0)) >>> 0;
   return PALETTE[h % PALETTE.length];
 }
-
-/** Typing `MF-12 ` (a task the resolver knows) turns the id into a live task ref. */
-const TaskRefTyping = (tasks) =>
-  Extension.create({
-    name: "taskRefTyping",
-    addInputRules() {
-      return [
-        new InputRule({
-          find: new RegExp(`(?:^|\\s)(${TASK_ID.source})\\s$`),
-          handler: ({ state, range, match }) => {
-            const id = match[1];
-            const task = tasks()(id);
-            if (!task) return null;
-            const start = range.from + match[0].indexOf(id);
-            state.tr.replaceWith(start, start + id.length, state.schema.nodes.taskRef.create({ id, title: task.title ?? null }))
-              .insertText(" ", start + 1);
-          },
-        }),
-      ];
-    },
-  });
 
 /** Fills a fresh Y.Doc's shared type from Markdown: the offline demo doc's starting text (MF-362). */
 export function seedFromMarkdown(ydoc, markdown, ctx = {}) {
@@ -96,12 +76,14 @@ export function createDocEditor({ el, docId, me, members = () => [], tasks = () 
       maxBackoffTime: 10_000,
     });
   }
+  // Local edits wait for the first sync (MF-376): demo docs have nothing to wait for.
+  let synced = !!demo;
   const user = { login: me.login, name: me.name || me.login, color: colorFor(me.login), avatar: me.avatar ?? null };
   const resolver = () => taskResolver(tasks());
   const ctx = () => ({ members: members(), tasks: resolver() });
 
   const shell = document.createElement("div");
-  shell.className = "doc-editor-shell" + (sendThreadCommand ? " with-rail" : "");
+  shell.className = "doc-editor-shell" + (sendThreadCommand ? " with-rail" : "") + (synced ? "" : " syncing");
   const root = document.createElement("div");
   root.className = "doc-editor";
   shell.append(root);
@@ -158,6 +140,7 @@ export function createDocEditor({ el, docId, me, members = () => [], tasks = () 
       SlashMenu,
       HeadingMakeTasks(host, ydoc, () => editor),
       TaskRefTyping(resolver),
+      Extension.create({ name: "syncHold", addProseMirrorPlugins: () => [syncHold(() => synced)] }),
       Extension.create({ name: "docComments", addProseMirrorPlugins: () => [commentHighlights(() => ({ threads: sendThreadCommand ? threads() : [], active: rail?.active(), ydoc }))] }),
       BubbleMenu.configure({ element: bubble, shouldShow: ({ editor, from, to }) => (from !== to || editor.isActive("table")) && !editor.isActive("codeBlock") }),
       Extension.create({
@@ -211,8 +194,10 @@ export function createDocEditor({ el, docId, me, members = () => [], tasks = () 
     return [...out.values()];
   };
   provider.on("status", ({ status }) => onEvent("status", { status }));
-  provider.on("sync", (synced) => {
-    if (!synced) return;
+  provider.on("sync", (isSynced) => {
+    if (!isSynced) return;
+    synced = true;
+    shell.classList.remove("syncing");
     ensureStarterBlock(ydoc);
     onEvent("synced", {});
   });
