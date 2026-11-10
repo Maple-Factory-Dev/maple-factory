@@ -1744,6 +1744,7 @@ export const unions: Record<string, Union> = {
       "doc.create": { doc: "Make a shared doc, in a goal or standing alone.", fields: { title: "string", goal: "string?", icon: "string?" } },
       "doc.rename": { fields: { id: "uuid", title: "string" } },
       "doc.archive": { doc: "Archive a doc (read-only, hidden), or bring it back.", fields: { id: "uuid", archived: "bool" } },
+      "doc.move": { doc: "Move a doc to another goal, or out of any goal (goal left out or null).", fields: { id: "uuid", goal: "string?" } },
       "doc.comment": {
         doc: "Comment on a doc: start a thread on an anchored range, or reply to one (a reply reopens a resolved thread).",
         fields: { doc: "uuid", thread: "uuid?", text: "string", anchor: "DocAnchor?" },
