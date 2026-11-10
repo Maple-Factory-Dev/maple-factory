@@ -34,7 +34,7 @@ GCS or MinIO) instead of Cloudflare. The release is verified the same way:
 
 ```sh
 maple install --target celld --bucket s3://maple-fleet [--endpoint URL] --url https://maple.acme.dev --org acme
-maple install --target celld --dry-run --org acme --bucket s3://maple-fleet   # celld deploy --dry-run, nothing written
+maple install --target celld --dry-run --org acme --bucket s3://maple-fleet   # celld deploy --dry-run, nothing written to the bucket
 ```
 
 Bucket credentials come from `AWS_*` and are never saved; `CELLD` sets celld's command line. The fleet's

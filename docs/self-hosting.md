@@ -268,7 +268,9 @@ To try the whole path on one machine, add a MinIO bucket next to the fleet with 
 ```yaml
 services:
   minio:
-    image: pgsty/minio:latest          # a maintained build of MinIO; it supports conditional writes
+    # A maintained MinIO build (RELEASE.2026-08-04T00-00-00Z), pinned to the image this guide was tested
+    # with; it supports conditional writes. Swap in a newer build only if it still does.
+    image: pgsty/minio@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372
     command: server /data
     environment: { MINIO_ROOT_USER: maple, MINIO_ROOT_PASSWORD: maplemaple }
     ports: ["9000:9000"]

@@ -318,18 +318,12 @@ function celldDeployWorker(factory, config, version) {
   step("Worker", `${factory.name} ${version} ${ok("deployed")} ${dim(run.output.match(/Version ID: (\w+)/)?.[1] ?? "")}`);
 }
 
-/** Migrations, then the Worker, as on Cloudflare. A first install deploys first: celld d1 needs a running
- *  node, and nodes only take a lease once the bucket has a deployment. Nobody can sign in to a new factory
- *  before /setup, so the moment it runs on an empty schema doesn't matter. */
-function deployCelld(factory, dir, shared, { first = false } = {}) {
+/** Migrations, then the Worker, as on Cloudflare. A first install deploys first (installCelld): celld d1
+ *  needs a running node, and nodes only take a lease once the bucket has a deployment. */
+function deployCelld(factory, dir, shared) {
   const config = writeConfig(dir, shared, factory);
-  if (first) {
-    celldDeployWorker(factory, config, shared.version);
-    celldMigrate(factory, config, { wait: 120 });
-  } else {
-    celldMigrate(factory, config);
-    celldDeployWorker(factory, config, shared.version);
-  }
+  celldMigrate(factory, config);
+  celldDeployWorker(factory, config, shared.version);
   return config;
 }
 
@@ -369,8 +363,13 @@ async function installCelld(name) {
   step("Fleet bucket", `${factory.bucket}${factory.endpoint ? ` at ${factory.endpoint}` : ""}`);
   const dir = serverDir(name);
   const shared = await unpack(release, dir);
-  deployCelld(factory, dir, shared, { first: true });
+  // Deploy, remember the factory, then migrate: if no node takes a lease in time, the failure's
+  // `maple update --name … --force` finds it. Nobody can sign in before /setup, so the moment the
+  // Worker runs on an empty schema doesn't matter.
+  const config = writeConfig(dir, shared, factory);
+  celldDeployWorker(factory, config, shared.version);
   save({ ...factory, installedAt: new Date().toISOString() });
+  celldMigrate(factory, config, { wait: 120 });
   const health = await healthy(factory.url, 30);
   if (!health) {
     console.log(`\nDeployed to ${factory.bucket}. ${factory.url} isn't answering yet: check the proxy in front of the nodes (docs/self-hosting.md), then open ${factory.url}/setup.`);
