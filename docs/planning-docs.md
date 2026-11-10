@@ -222,9 +222,11 @@ interactive session:
   proposes wording (or a mermaid diagram) with `suggest_doc_edit`, which a person accepts or rejects. Other
   factory tools are refused. It can read code and the web; the prompt tells it never to edit files.
 - **Status:** `DocThread.agent` (`DocAgentRun`) follows the session: Starting → Thinking/Working (from
-  `session.activity`) → Done when its turn ends (runner state `done`) or it exits, Stopped, or Failed. An
-  answered ask stops counting toward the live limit and the budget; its session stays open for follow-ups for
-  15 minutes of quiet (`IDLE_GRACE_MS`), then the sweep closes it. The card shows it as a chip that pulses while
+  `session.activity`) → Done when its turn ends (runner state `done`) after it replied or suggested an edit that
+  turn, or Waiting ("its turn ended without a reply") when it didn't; Stopped, or Failed. A `done` within 10 s of
+  a typed follow-up, before any work, is taken as the previous turn's and ignored. An answered ask stops counting
+  toward the live limit and the budget, but its open session still counts toward the machine's load; it stays
+  open for follow-ups for 15 minutes of quiet (`IDLE_GRACE_MS`), then the sweep closes it (a Waiting card turns Done). The card shows it as a chip that pulses while
   it runs, with Stop (`doc.agentStop`: the asker, the machine's owner or an admin).
 - **Follow-ups:** a reply in a thread whose agent session is open (working, or answered and within its grace
   period) is typed into it (MachineHub `/input`) as "<who> in doc thread <id>: …", turning the chip back to

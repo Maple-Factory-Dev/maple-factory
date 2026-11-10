@@ -235,11 +235,12 @@ test("the budget sweep kills an ask past policy minutes and says so in the threa
 });
 
 test("an answered ask turns Done without the session ending, stops counting, takes follow-ups, and closes after the grace", async () => {
-  const { engine, store, thread, commands, inputs } = factory();
+  const { engine, store, thread, commands, inputs, call } = factory();
   store.savePolicy({ ...DEFAULT_POLICY, taskMinutes: 10 });
   const t = await engine.ask("sam", thread.id, "planner");
   const session = commands[0].id, start = t.agent!.startedAt;
   await engine.fromRunner("mac", { type: "session.activity", id: session, activity: { state: "working", message: null, at: 1 } } as never);
+  await call(session, "reply_to_doc_thread", { doc: DOC, thread: thread.id, text: "Friday works." });
   await engine.fromRunner("mac", { type: "session.activity", id: session, activity: { state: "done", message: null, at: 2 } } as never);
   assert.equal(store.thread(thread.id)!.agent!.status, "done");
   assert.equal(engine.liveAsks().length, 0, "an answered ask isn't counted as running");
@@ -252,7 +253,12 @@ test("an answered ask turns Done without the session ending, stops counting, tak
   assert.equal(inputs.at(-1).session, session);
   assert.equal(store.thread(thread.id)!.agent!.status, "thinking");
   assert.equal(engine.liveAsks().length, 1);
+  // A late 'done' from the previous turn, before the runner picks up the typed input, is ignored.
   await engine.fromRunner("mac", { type: "session.activity", id: session, activity: { state: "done", message: null, at: 3 } } as never);
+  assert.equal(store.thread(thread.id)!.agent!.status, "thinking");
+  await engine.fromRunner("mac", { type: "session.activity", id: session, activity: { state: "working", message: null, at: 4 } } as never);
+  await call(session, "reply_to_doc_thread", { doc: DOC, thread: thread.id, text: "Thursday works too." });
+  await engine.fromRunner("mac", { type: "session.activity", id: session, activity: { state: "done", message: null, at: 5 } } as never);
   assert.equal(store.thread(thread.id)!.agent!.status, "done");
   // Quiet past the grace period: the session is closed, the thread keeps Done, and a reply no longer types in.
   await engine.checkAskBudgets(Date.now() + asks.IDLE_GRACE_MS + 1000);
@@ -261,4 +267,44 @@ test("an answered ask turns Done without the session ending, stops counting, tak
   assert.equal(kills[0].id, session);
   assert.equal(store.thread(thread.id)!.agent!.status, "done");
   assert.equal(await engine.typeIntoAsk(store.thread(thread.id)!, "kim", "Tuesday?"), false);
+});
+
+test("a turn that ends without writing in the doc shows Waiting, not Done; it still closes after the grace", async () => {
+  const { engine, store, thread, commands, inputs, call } = factory();
+  await engine.ask("sam", thread.id, "planner");
+  const session = commands[0].id;
+  await engine.fromRunner("mac", { type: "session.activity", id: session, activity: { state: "working", message: null, at: 1 } } as never);
+  await engine.fromRunner("mac", { type: "session.activity", id: session, activity: { state: "done", message: null, at: 2 } } as never);
+  const run = store.thread(thread.id)!.agent!;
+  assert.equal(run.status, "waiting");
+  assert.match(run.message!, /without a reply/);
+  assert.equal(engine.liveAsks().length, 0, "it's idle, so it doesn't count as running");
+  // A reply nudges it; a turn that answers in the thread then shows Done. The first turn's reply doesn't count for the next.
+  assert.equal(await engine.typeIntoAsk(store.thread(thread.id)!, "sam", "Answer in the thread please"), true);
+  assert.equal(inputs.length, 1);
+  assert.equal(store.thread(thread.id)!.agent!.status, "thinking");
+  await engine.fromRunner("mac", { type: "session.activity", id: session, activity: { state: "working", message: null, at: 3 } } as never);
+  await call(session, "reply_to_doc_thread", { doc: DOC, thread: thread.id, text: "Friday is fine." });
+  await engine.fromRunner("mac", { type: "session.activity", id: session, activity: { state: "done", message: null, at: 4 } } as never);
+  assert.equal(store.thread(thread.id)!.agent!.status, "done");
+  // A Waiting ask that's closed after the grace doesn't stay live.
+  const t2 = newThread(DOC, "sam", "And the venue?", null as never, []);
+  store.saveThread(t2);
+  await engine.ask("sam", t2.id, "planner");
+  const s2 = commands.filter((c) => c.type === "session.open")[1].id;
+  await engine.fromRunner("mac", { type: "session.activity", id: s2, activity: { state: "done", message: null, at: 5 } } as never);
+  assert.equal(store.thread(t2.id)!.agent!.status, "waiting");
+  await engine.checkAskBudgets(Date.now() + asks.IDLE_GRACE_MS + 1000);
+  assert.equal(store.thread(t2.id)!.agent!.status, "done");
+});
+
+test("answered asks whose session is still open count toward machine load", async () => {
+  const { engine, store, thread, commands, call } = factory([mac({ id: "a", name: "a" }), mac({ id: "b", name: "b" })]);
+  await engine.ask("sam", thread.id, "planner");
+  const first = commands[0];
+  await call(first.id, "reply_to_doc_thread", { doc: DOC, thread: thread.id, text: "Yes." });
+  await engine.fromRunner(first.machine, { type: "session.activity", id: first.id, activity: { state: "done", message: null, at: 2 } } as never);
+  assert.equal(store.thread(thread.id)!.agent!.status, "done");
+  const pick = await engine.askPreflight("sam");
+  assert.notEqual(pick.machine.id, first.machine, "the machine holding the open, answered session is busier");
 });

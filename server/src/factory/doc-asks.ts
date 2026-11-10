@@ -30,7 +30,22 @@ export interface AskRecord {
   idleSince?: number | null;
   /** Time spent idle before the current turn, left out of the minute budget. */
   idleMs?: number;
+  /** When a follow-up was last typed in: a 'done' before the runner reports work again is the previous turn's. */
+  typedAt?: number | null;
+  /** When the current turn began (the last follow-up typed in, else startedAt): Done needs a reply since then. */
+  turnAt?: number | null;
+  /** When it last replied in a thread or suggested an edit: Done needs this at or after turnAt. */
+  repliedAt?: number | null;
 }
+
+/** How long after typing a follow-up a 'done' with no 'working' in between is taken as stale. */
+export const TYPED_GRACE_MS = 10_000;
+
+/** The agent label its doc-tool calls carry, which marks its comments in threads. */
+export const agentLabel = (r: { role: AskRole; by: string }): string => `${r.role} for @${r.by}`;
+
+/** The doc tools that count as answering in the doc (a thread reply or a suggestion). */
+export const ANSWER_TOOLS = ["reply_to_doc_thread", "suggest_doc_edit"];
 
 /** How long an answered ask's session stays open for follow-up replies before it's closed. */
 export const IDLE_GRACE_MS = 15 * 60_000;

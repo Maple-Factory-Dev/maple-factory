@@ -1588,7 +1588,8 @@ export class Engine {
    *  machine with their tags: its owner's first, else (shareable) a teammate's within what it lends. */
   private async proveChecks(machines: Machine[]) {
     const live = this.store.liveSessions();
-    const busy = (m: string, kind?: string) => live.filter((s) => s.machine === m && (!kind || s.kind === kind)).length;
+    const asksOn = this.askLoad();
+    const busy = (m: string, kind?: string) => live.filter((s) => s.machine === m && (!kind || s.kind === kind)).length + (kind ? 0 : asksOn(m));
     for (const listed of this.store.tasks()) {
       const task = this.store.task(listed.id);
       const a = task?.appleChecks;
@@ -1707,7 +1708,8 @@ export class Engine {
     }
     const priv = this.store.private(task.id);
     const live = this.store.liveSessions();
-    const busy = (m: string, kind?: string) => live.filter((s) => s.machine === m && (!kind || s.kind === kind)).length;
+    const asksOn = this.askLoad();
+    const busy = (m: string, kind?: string) => live.filter((s) => s.machine === m && (!kind || s.kind === kind)).length + (kind ? 0 : asksOn(m));
 
     let machine: Machine | undefined;
     let kind: TaskSession["kind"] = "personal";
@@ -2852,7 +2854,12 @@ export class Engine {
       if (name === "tools/list") return { result: { summary: "", data: { tools: personalTools().filter((t) => isDocTool(t.name)) } } };
       if (!isDocTool(name)) return { error: `${name} isn't available to an agent asked from a doc; answer with reply_to_doc_thread or suggest_doc_edit.` };
       try {
-        return { result: await this.docs.run({ author: ask.by, agent: `${ask.role} for @${ask.by}` }, name, args) };
+        const result = await this.docs.run({ author: ask.by, agent: asks.agentLabel(ask) }, name, args);
+        if (asks.ANSWER_TOOLS.includes(name)) {
+          const latest = this.askRecord(sessionId);
+          if (latest) this.saveAsk({ ...latest, repliedAt: now() });
+        }
+        return { result };
       } catch (e) {
         return { error: e instanceof Error ? e.message : String(e) };
       }
@@ -4178,6 +4185,12 @@ export class Engine {
     return this.askSessions().map((id) => this.askRecord(id)).filter((r): r is asks.AskRecord => !!r && !r.ended);
   }
 
+  /** Open ask sessions per machine (answered ones still hold a runner slot until they close). */
+  private askLoad(): (machine: string) => number {
+    const open = this.openAsks();
+    return (m) => open.filter((a) => a.machine === m).length;
+  }
+
   /** Sets a thread's agent run and tells every member. */
   private setRun(threadId: string, patch: Partial<DocAgentRun>) {
     const t = this.store.thread(threadId);
@@ -4193,8 +4206,8 @@ export class Engine {
     if (limit) fail(limit);
     const machines = await this.hooks.machines();
     const live = this.store.liveSessions();
-    const askLoad = this.liveAsks();
-    const busy = (m: string, kind?: string) => live.filter((x) => x.machine === m && (!kind || x.kind === kind)).length + (kind ? 0 : askLoad.filter((a) => a.machine === m).length);
+    const asksOn = this.askLoad();
+    const busy = (m: string, kind?: string) => live.filter((x) => x.machine === m && (!kind || x.kind === kind)).length + (kind ? 0 : asksOn(m));
     const picked = asks.pickMachine(machines, by, agent, {
       paused: (m) => !!this.store.settings(m.id).paused,
       hasAgent: (m, a) => this.hasAgent(m, a),
@@ -4253,12 +4266,17 @@ export class Engine {
     const status = asks.statusFor(state, step);
     const message = step ? unwrapPasted(step).slice(0, 200) : null;
     if (status === "done") {
-      // Its turn ended: show the thread answered and stop counting it as running; the session stays open so a
-      // reply in the thread is typed into it, until it's been quiet for IDLE_GRACE_MS (checkAskBudgets).
-      if (!r.idleSince) this.saveAsk({ ...r, idleSince: now() });
-      this.setRun(r.thread, { status, message: null, endedAt: now() });
+      // A 'done' that lands right after a follow-up was typed, before any work, is the previous turn's.
+      if (r.typedAt && now() - r.typedAt < asks.TYPED_GRACE_MS) return;
+      // Its turn ended: stop counting it as running; the session stays open so a reply in the thread is typed
+      // into it, until it's been quiet for IDLE_GRACE_MS (checkAskBudgets). Done only if it wrote in the doc
+      // this turn; otherwise it's waiting (it asked something in its terminal, say).
+      if (!r.idleSince) this.saveAsk({ ...r, idleSince: now(), typedAt: null });
+      if ((r.repliedAt ?? -1) >= (r.turnAt ?? r.startedAt)) this.setRun(r.thread, { status, message: null, endedAt: now() });
+      else this.setRun(r.thread, { status: "waiting", message: "Its turn ended without a reply in the thread. Reply here to nudge it." });
       return;
     }
+    if (r.typedAt) this.saveAsk({ ...r, typedAt: null });
     if (status !== t.agent.status || message !== (t.agent.message ?? null)) this.setRun(r.thread, { status, message });
   }
 
@@ -4275,6 +4293,8 @@ export class Engine {
     if (r.ended) return;
     await this.toRunner(r.machine, { type: "session.kill", id: r.session }, "factory");
     this.saveAsk({ ...r, ended: true });
+    const t = this.store.thread(r.thread);
+    if (t?.agent?.session === r.session && asks.live(t.agent)) this.setRun(r.thread, { status: "done", endedAt: now() });
   }
 
   /** Who may stop a thread's agent: the asker, the machine's owner or an admin. */
@@ -4296,7 +4316,8 @@ export class Engine {
     if (!run || !r || r.ended || r.thread !== thread.id) return false;
     const res = await machineHub(this.env, run.machine).fetch("https://hub/input", { method: "POST", body: JSON.stringify({ session: run.session, text: asks.followUp(by, thread.id, thread.doc, text) }) });
     if (!res.ok) return false;
-    if (r.idleSince) this.saveAsk({ ...r, idleSince: null, idleMs: (r.idleMs ?? 0) + (now() - r.idleSince) });
+    const at = now();
+    this.saveAsk({ ...r, typedAt: at, turnAt: at, ...(r.idleSince ? { idleSince: null, idleMs: (r.idleMs ?? 0) + (at - r.idleSince) } : {}) });
     if (run.status === "waiting" || run.status === "done") this.setRun(thread.id, { status: "thinking", message: null, endedAt: null });
     return true;
   }
