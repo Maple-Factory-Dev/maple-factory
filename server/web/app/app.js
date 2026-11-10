@@ -2014,10 +2014,36 @@ function thread(t, th, known) {
       : h("button", { class: "link reply-link", onclick: toggle }, th.replies.length ? `Reply · ${th.replies.length}` : "Reply"));
 }
 
+const HAND_REASONS = {
+  reviewLoop: "review rounds ran out", proofBurden: "can't produce a proof", needsInput: "needs input",
+  overBudget: "over budget", sessionEnded: "session ended", mergeFailed: "didn't merge",
+};
+
+/** A question, hand or permission prompt as it was offered, and on its answer what was picked (MF-428). */
+function askCard(e) {
+  const a = e.ask;
+  const answered = a.picked != null || a.note != null;
+  const chip = a.kind === "hand" ? `Needs a hand${a.reason && HAND_REASONS[a.reason] ? ` · ${HAND_REASONS[a.reason]}` : ""}` : a.kind === "prompt" ? "Permission" : "Question";
+  const picked = (o) => a.picked != null && o.title === a.picked;
+  const options = a.kind === "prompt" ? [] : a.options;
+  return h("div", { class: `event ask-card${answered ? " answered" : ""}` },
+    h("div", { class: "row" }, h("b", {}, name(e.who)), " ", e.text, h("span", { class: `ask-kind ${a.kind}` }, chip), h("span", { class: "when" }, ago(e.at))),
+    a.kind === "prompt"
+      ? [h("div", { class: "ask-text" }, a.text), a.command && h("pre", { class: "ask-command" }, a.command),
+          answered && h("div", { class: `ask-verdict ${a.picked === "Yes" ? "yes" : "no"}` }, a.picked === "Yes" ? "Allowed" : "Denied", " by ", name(e.who))]
+      : h("div", { class: "ask-text" }, a.text),
+    options.length > 0 && h("ul", { class: "ask-options" }, options.map((o) => h("li", { class: picked(o) ? "picked" : "" },
+      h("span", { class: "ask-title" }, picked(o) ? "✓ " : "", o.title),
+      o.recommended && h("span", { class: "ask-tag" }, "recommended"),
+      picked(o) && h("span", { class: "ask-by" }, `picked by ${name(e.who)}`),
+      o.detail && h("div", { class: "ask-detail" }, o.detail)))),
+    a.note && h("blockquote", { class: "ask-note" }, a.note));
+}
+
 function timeline(t) {
   const known = knownTasks();
   const items = [
-    ...t.events.map((e) => ({ at: e.at, el: h("div", { class: "event" }, h("b", {}, name(e.who)), " ", e.text, h("span", { class: "when" }, ago(e.at))) })),
+    ...t.events.map((e) => ({ at: e.at, el: e.ask ? askCard(e) : h("div", { class: "event" }, h("b", {}, name(e.who)), " ", e.text, h("span", { class: "when" }, ago(e.at))) })),
     ...threads(t.comments).map((th) => ({ at: th.at, el: thread(t, th, known) })),
     ...t.changes.map((c) => ({ at: c.at, el: h("div", { class: "comment" }, h("div", { class: "row" }, h("b", {}, name(c.author)), h("span", { class: "muted" }, `asked for a change${c.anchor ? ` · ${c.anchor}` : ""} · ${c.status}`), h("span", { class: "when faint" }, ago(c.at))), markdown(c.text, h, known)) })),
   ].sort((a, b) => b.at - a.at);
