@@ -2703,6 +2703,10 @@ final class AppState {
                 case "open": if let named { destination = .doc(named.id) }
                 default: break
                 }
+            #if DEBUG
+            // The main window's connection pill (MF-401): `connection:toonew` as if the factory were newer than this build.
+            case "connection" where parts[1] == "toonew": client?._setStatusForTesting(.tooNew)
+            #endif
             case "wait": try? await Task.sleep(for: .seconds(Double(parts[1]) ?? 1))
             case "shot": await Headless.shot(parts[1])
             // A live session opened from Machines (`opensession:<machine>:<id>`), and its Share popover (`share:open`).
