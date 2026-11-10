@@ -1,7 +1,7 @@
 // What each factory session is told. Agents report back only through the `maple` MCP tools
 // (tools.ts); the prompts say which, and when to stop.
 
-import type { Decision, Goal, PromptAdditions, RiskClassifier, Role, SensitiveArea, Task } from "../wire.ts";
+import type { Decision, Goal, Memory, PromptAdditions, RiskClassifier, Role, SensitiveArea, Task } from "../wire.ts";
 import { goalRepos, taskRepo } from "./repos.ts";
 import type { BudgetUse } from "./policy.ts";
 
@@ -66,6 +66,50 @@ function extra(role: Role, org: PromptAdditions | null, goal: Goal | null, repo:
   return (orgText ? `\n\n## Org instructions\n${orgText}` : "") + (repoText ? `\n\n## Repo instructions\n${repoText}` : "") + (goalText ? `\n\n## Goal instructions\n${goalText}` : "");
 }
 
+/** About how long the "What the factory remembers" section's list may be (MF-393). */
+export const MEMORY_SECTION_MAX = 3000;
+
+const SCOPE_WEIGHT = { goal: 3, repo: 2, org: 1 } as const;
+/** How much an FTS hit on the task's title and brief adds, and how fast recency fades (half-life). */
+const MATCH_BONUS = 2;
+const RECENCY_HALF_LIFE_MS = 14 * 24 * 60 * 60 * 1000;
+
+const memoryLine = (m: Memory) => `- [${m.kind}] ${m.text} (${m.id})`;
+
+/** The memories a prompt carries: ranked by scope (goal > repo > org), a match on the task's title and brief
+ *  (`matched` ids), uses and recency, then whole entries in that order while the list stays within `cap`. */
+export function pickMemories(candidates: Memory[], matched: Iterable<string> = [], cap = MEMORY_SECTION_MAX, at = Date.now()): Memory[] {
+  const hit = new Set(matched);
+  const score = (m: Memory) => {
+    const age = Math.max(0, at - Math.max(m.lastUsedAt ?? 0, m.updatedAt));
+    return SCOPE_WEIGHT[m.scope.kind] + (hit.has(m.id) ? MATCH_BONUS : 0) + Math.log2(1 + (m.uses ?? 0)) + Math.pow(0.5, age / RECENCY_HALF_LIFE_MS);
+  };
+  const ranked = candidates.map((m) => ({ m, s: score(m) })).sort((a, b) => b.s - a.s || (a.m.id < b.m.id ? -1 : a.m.id > b.m.id ? 1 : 0));
+  const out: Memory[] = [];
+  let used = 0;
+  for (const { m } of ranked) {
+    const len = memoryLine(m).length + (out.length ? 1 : 0);
+    if (used + len > cap) break;
+    out.push(m);
+    used += len;
+  }
+  return out;
+}
+
+/** "## What the factory remembers" (MF-393): the picked memories, and when to recall, remember and (the reviewer) forget. */
+export function memorySection(role: Role, memories: Memory[]): string {
+  const list = memories.length ? memories.map(memoryLine).join("\n") : "Nothing remembered for this org, repo or goal yet.";
+  const before = role === "planner" ? "`submit_plan`" : role === "builder" ? "`finish`" : "`submit_review`";
+  const forget = role === "reviewer"
+    ? "\nIf the diff shows a memory above is wrong, `forget` it (with a reason), or `remember` the right version with `supersedes` set to its id."
+    : "";
+  return `\n\n## What the factory remembers
+Notes earlier agents and people left for this org, repo and goal. Call \`recall\` (with a few words) for more.
+${list}
+
+Before ${before}, \`remember\` anything non-obvious you found that a later agent couldn't work out for itself: not what the code, git history or this prompt already say.${forget}`;
+}
+
 function changes(task: Task) {
   const queued = task.changes.filter((c) => c.status !== "applied");
   if (!queued.length) return "";
@@ -120,11 +164,11 @@ function riskChecks(checks: SensitiveArea[]) {
   return `\n\n## Risk checks\nThe org's checks; each one that applies raises the change to at least its level. Path checks are also matched against the diff's files once there's code.\n${on.map(line).join("\n")}`;
 }
 
-export function plannerPrompt(task: Task, goal: Goal | null, org: PromptAdditions | null = null, inFlight: Moving[] = [], repo: PromptAdditions | null = null, checks: SensitiveArea[] = [], routing: Routing | null = null, decision: Decision | null = null): string {
+export function plannerPrompt(task: Task, goal: Goal | null, org: PromptAdditions | null = null, inFlight: Moving[] = [], repo: PromptAdditions | null = null, checks: SensitiveArea[] = [], routing: Routing | null = null, decision: Decision | null = null, memory = ""): string {
   const others = goal ? goalRepos(goal).filter((r) => r.toLowerCase() !== taskRepo(task, goal)?.toLowerCase()) : [];
   return `You are the planner for a software factory task. You write the plan; you do NOT change code.
 
-${brief(task, goal, fromDocSection(task, true, decision))}${extra("planner", org, goal, repo)}${riskChecks(checks)}${moving(inFlight)}${comments(task)}${changes(task)}${
+${brief(task, goal, fromDocSection(task, true, decision))}${extra("planner", org, goal, repo)}${memory}${riskChecks(checks)}${moving(inFlight)}${comments(task)}${changes(task)}${
     others.length
       ? `\n\n## The goal's other repos\n${others.map((r) => `- ${r}`).join("\n")}\nThis task changes ${taskRepo(task, goal)} only. If the work also needs changes in one of these, plan just this repo's part and list each other repo's part in \`otherRepos\` (repo, title, brief): it becomes its own task, planned and built there once this one merges.`
       : ""
@@ -170,14 +214,14 @@ export function budgetSection(use: BudgetUse | null): string {
   return `\n\n## Budget\nThis task has ${parts.join(" and ")} left (all its sessions count). As soon as it looks like you'll go past that (stuck proving something, say, or the fix keeps growing), call \`raise_hand\` with reason \`overBudget\`: where you are, what's left, and the options. Ask before you reach it, not after.`;
 }
 
-export function builderPrompt(task: Task, goal: Goal | null, resumed: { reason: string } | null, org: PromptAdditions | null = null, others: Moving[] = [], repo: PromptAdditions | null = null, checks: ChecksHere | string[] = [], budget: BudgetUse | null = null): string {
+export function builderPrompt(task: Task, goal: Goal | null, resumed: { reason: string } | null, org: PromptAdditions | null = null, others: Moving[] = [], repo: PromptAdditions | null = null, checks: ChecksHere | string[] = [], budget: BudgetUse | null = null, memory = ""): string {
   const here: ChecksHere = Array.isArray(checks) ? { run: checks, skipped: [] } : checks;
   const steps = task.plan.map((s, i) => `${i + 1}. ${s.text} (${s.file})${s.progress === "done" ? " — done" : ""}`).join("\n");
   const done = task.doneWhen.map((d, i) => `${i + 1}. ${d.text} — proof: ${d.proof}${d.status === "proven" ? " (proven)" : ""}`).join("\n");
   const review = task.autoReview?.findings.filter((f) => f.status === "open");
   return `You are the builder for a software factory task, working in this git worktree on its own branch.
 
-${brief(task, goal)}${extra("builder", org, goal, repo)}
+${brief(task, goal)}${extra("builder", org, goal, repo)}${memory}
 
 ## Approved plan (v${task.planVersion})
 ${task.planSummary ?? ""}
@@ -260,7 +304,7 @@ Judge the diff against that guidance and fill \`classification\` in \`submit_rev
 `;
 }
 
-export function reviewerPrompt(task: Task, goal: Goal | null, base: string, org: PromptAdditions | null = null, repo: PromptAdditions | null = null, budget: BudgetUse | null = null, classifier: RiskClassifier | null = null): string {
+export function reviewerPrompt(task: Task, goal: Goal | null, base: string, org: PromptAdditions | null = null, repo: PromptAdditions | null = null, budget: BudgetUse | null = null, classifier: RiskClassifier | null = null, memory = ""): string {
   const done = task.doneWhen
     .map((d, i) => `${i + 1}. ${d.text} — ${d.evidence?.attested ? `ATTESTED by ${d.evidence.by}: ${d.evidence.reason ?? "(no reason given)"}` : d.evidence ? `evidence (${d.evidence.kind}): ${d.evidence.summary}${d.evidence.output.length ? "\n   " + d.evidence.output.slice(-15).join("\n   ") : ""}` : "NO EVIDENCE"}`)
     .join("\n");
@@ -271,7 +315,7 @@ export function reviewerPrompt(task: Task, goal: Goal | null, base: string, org:
     : "";
   return `You are the review agent for a software factory task. You review; you do not change code.
 
-${brief(task, goal)}${extra("reviewer", org, goal, repo)}
+${brief(task, goal)}${extra("reviewer", org, goal, repo)}${memory}
 
 ## The plan it was built to
 ${task.planSummary ?? ""}
