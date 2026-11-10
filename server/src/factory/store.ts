@@ -2,7 +2,7 @@
 // the apps see them), the sessions working on them, and per-machine settings. One Durable Object
 // owns it all, so every change is serialized without locks.
 
-import type { Decision, DecisionEvent, Doc, DocThread, Goal, GoalFollow, Recurring, GoalTally, IntakeRequest, MachineSettings, McpConnector, MergeHold, Note, OrgRepo, PromptAdditions, QuietHours, RepoWorktreeScripts, RiskAcceptance, RiskPolicy, Role, Task, WorktreeScripts } from "../wire.ts";
+import type { Decision, DecisionEvent, Doc, DocThread, Goal, GoalFollow, Recurring, GoalTally, IntakeRequest, MachineSettings, McpConnector, Memory, MemoryScope, MemoryStatus, MergeHold, Note, OrgRepo, PromptAdditions, QuietHours, RepoWorktreeScripts, RiskAcceptance, RiskPolicy, Role, Task, WorktreeScripts } from "../wire.ts";
 import { DEFAULT_POLICY } from "./policy.ts";
 import { validateQuietHours } from "../quiet-hours.ts";
 import { inferEvents, type StatEvent } from "./stats.ts";
@@ -112,6 +112,19 @@ export interface SessionCostRow {
   updated: number;
 }
 
+export type MemoryLogAction = "created" | "edited" | "status" | "deleted";
+/** One entry in a memory's append-only log. `textBefore` is the text an edit replaced (or a delete removed);
+ *  null when the text didn't change. `state` is the memory after the change (before it, for a delete). */
+export interface MemoryLogEntry { seq: number; memory: string; at: number; by: string; action: MemoryLogAction; textBefore: string | null; state: Memory }
+
+/** Free text as an FTS5 query: each word a quoted prefix term, so operators (AND, NEAR, *, ^, parentheses, column
+ *  filters) and stray quotes in it are only ever words and can't raise a syntax error. Null when it has no words. */
+export function ftsQuery(text: string, any = false): string | null {
+  const words = (typeof text === "string" ? text : "").match(/[\p{L}\p{N}_]+/gu) ?? [];
+  if (!words.length) return null;
+  return words.slice(0, 16).map((w) => `"${w}"*`).join(any ? " OR " : " ");
+}
+
 export const DEFAULT_SETTINGS: MachineSettings = { capacity: null, teamSlots: 0, lendIdle: false, loadCap: 0.85, paused: false, pausedUntil: null };
 
 /** How far back the snapshot sends finished tasks. */
@@ -180,6 +193,13 @@ export class Store {
       CREATE INDEX IF NOT EXISTS decision_log_decision ON decision_log (decision, seq);
       CREATE TRIGGER IF NOT EXISTS decision_log_no_update BEFORE UPDATE ON decision_log BEGIN SELECT RAISE(ABORT, 'decision_log is append-only'); END;
       CREATE TRIGGER IF NOT EXISTS decision_log_no_delete BEFORE DELETE ON decision_log BEGIN SELECT RAISE(ABORT, 'decision_log is append-only'); END;
+      CREATE TABLE IF NOT EXISTS memories (id TEXT PRIMARY KEY, scope_kind TEXT NOT NULL, scope_key TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, updated_at INTEGER NOT NULL, json TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS memories_scope ON memories (scope_kind, scope_key, status);
+      CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(id UNINDEXED, text, tags, tokenize='porter unicode61');
+      CREATE TABLE IF NOT EXISTS memory_log (seq INTEGER PRIMARY KEY AUTOINCREMENT, memory TEXT NOT NULL, at INTEGER NOT NULL, by TEXT NOT NULL, action TEXT NOT NULL, text_before TEXT, json TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS memory_log_memory ON memory_log (memory, seq);
+      CREATE TRIGGER IF NOT EXISTS memory_log_no_update BEFORE UPDATE ON memory_log BEGIN SELECT RAISE(ABORT, 'memory_log is append-only'); END;
+      CREATE TRIGGER IF NOT EXISTS memory_log_no_delete BEFORE DELETE ON memory_log BEGIN SELECT RAISE(ABORT, 'memory_log is append-only'); END;
     `);
     // A repo's prompt additions came later: added once, to a table made before them.
     if (!this.sql.exec<{ name: string }>("PRAGMA table_info(repo_scripts)").toArray().some((c) => c.name === "prompts")) {
@@ -631,6 +651,103 @@ export class Store {
 
   openDecisionCount(docId: string): number {
     return this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM decisions WHERE doc = ? AND status = 'proposed'", docId).toArray()[0]?.n ?? 0;
+  }
+
+  // Shared agent memory (MF-391): the current state in `memories`, its text and tags in the standalone FTS5 table
+  // `memories_fts` (porter stemming), and every change in the append-only `memory_log` (triggers refuse UPDATE and
+  // DELETE) with the text an edit replaced. saveMemory and deleteMemory are the only ways in: each writes all
+  // three in one synchronous step, which a Durable Object commits as one transaction. An org-wide memory's
+  // scope_key is '' so scope filters are plain equality.
+
+  saveMemory(memory: Memory, who: { by: string; at: number }): MemoryLogEntry {
+    const before = this.memory(memory.id);
+    const action: MemoryLogAction = !before ? "created" : before.text === memory.text && before.status !== memory.status ? "status" : "edited";
+    const textBefore = before && before.text !== memory.text ? before.text : null;
+    this.sql.exec(
+      `INSERT INTO memories (id, scope_kind, scope_key, status, updated_at, json) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT (id) DO UPDATE SET scope_kind = excluded.scope_kind, scope_key = excluded.scope_key, status = excluded.status, updated_at = excluded.updated_at, json = excluded.json`,
+      memory.id, memory.scope.kind, memory.scope.key ?? "", memory.status, memory.updatedAt, JSON.stringify(memory),
+    );
+    this.sql.exec("DELETE FROM memories_fts WHERE id = ?", memory.id);
+    this.sql.exec("INSERT INTO memories_fts (id, text, tags) VALUES (?, ?, ?)", memory.id, memory.text, memory.tags.join(" "));
+    return this.logMemory(memory, who, action, textBefore);
+  }
+
+  /** Remove a memory for good; its last text stays in the log. Null when it isn't there. */
+  deleteMemory(id: string, who: { by: string; at: number }): MemoryLogEntry | null {
+    const memory = this.memory(id);
+    if (!memory) return null;
+    this.sql.exec("DELETE FROM memories WHERE id = ?", id);
+    this.sql.exec("DELETE FROM memories_fts WHERE id = ?", id);
+    return this.logMemory(memory, who, "deleted", memory.text);
+  }
+
+  private logMemory(memory: Memory, who: { by: string; at: number }, action: MemoryLogAction, textBefore: string | null): MemoryLogEntry {
+    const row = this.sql.exec<{ seq: number }>(
+      "INSERT INTO memory_log (memory, at, by, action, text_before, json) VALUES (?, ?, ?, ?, ?, ?) RETURNING seq",
+      memory.id, who.at, who.by, action, textBefore, JSON.stringify(memory),
+    ).toArray()[0];
+    return { seq: Number(row.seq), memory: memory.id, at: who.at, by: who.by, action, textBefore, state: memory };
+  }
+
+  memory(id: string): Memory | null {
+    const row = this.sql.exec<{ json: string }>("SELECT json FROM memories WHERE id = ?", id).toArray()[0];
+    return row ? JSON.parse(row.json) : null;
+  }
+
+  /** Memories of any status (or one), in one scope when given, oldest first. */
+  memories(filter: { scope?: MemoryScope | null; status?: MemoryStatus | null } = {}): Memory[] {
+    const where: string[] = [];
+    const args: (string | number)[] = [];
+    if (filter.scope) { where.push("scope_kind = ? AND scope_key = ?"); args.push(filter.scope.kind, filter.scope.key ?? ""); }
+    if (filter.status) { where.push("status = ?"); args.push(filter.status); }
+    return this.sql.exec<{ json: string }>(`SELECT json FROM memories ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY rowid`, ...args)
+      .toArray().map((r) => JSON.parse(r.json));
+  }
+
+  /** What the feed snapshot sends. */
+  activeMemories(): Memory[] {
+    return this.memories({ status: "active" });
+  }
+
+  /** A memory's log, oldest first; it outlives the memory. */
+  memoryLog(id: string): MemoryLogEntry[] {
+    return this.sql.exec<{ seq: number; memory: string; at: number; by: string; action: string; text_before: string | null; json: string }>(
+      "SELECT seq, memory, at, by, action, text_before, json FROM memory_log WHERE memory = ? ORDER BY seq", id,
+    ).toArray().map((r) => ({ seq: Number(r.seq), memory: r.memory, at: Number(r.at), by: r.by, action: r.action as MemoryLogAction, textBefore: r.text_before, state: JSON.parse(r.json) }));
+  }
+
+  /** These memories were given to an agent: count it. Not an edit, so no log entry and `updatedAt` stays. */
+  touchMemories(ids: string[], at: number): void {
+    for (const id of ids) {
+      this.sql.exec(
+        "UPDATE memories SET json = json_set(json, '$.uses', COALESCE(json_extract(json, '$.uses'), 0) + 1, '$.lastUsedAt', ?) WHERE id = ?",
+        at, id,
+      );
+    }
+  }
+
+  /** Memories in any of `scopes` (all scopes when none are given) that match `query`, best match first (bm25).
+   *  With no words in the query: the newest first. `any` matches memories holding any of the words rather than
+   *  all of them. */
+  searchMemories(opts: { scopes?: MemoryScope[] | null; query?: string | null; status?: MemoryStatus; limit?: number; any?: boolean } = {}): Memory[] {
+    const where = ["m.status = ?"];
+    const args: (string | number)[] = [opts.status ?? "active"];
+    if (opts.scopes) {
+      if (!opts.scopes.length) return [];
+      where.push(`(${opts.scopes.map(() => "(m.scope_kind = ? AND m.scope_key = ?)").join(" OR ")})`);
+      for (const s of opts.scopes) args.push(s.kind, s.key ?? "");
+    }
+    const limit = Math.max(1, Math.min(Math.floor(opts.limit ?? 20), 200));
+    const match = ftsQuery(opts.query ?? "", opts.any);
+    const rows = match
+      ? this.sql.exec<{ json: string }>(
+          `SELECT m.json FROM memories_fts JOIN memories m ON m.id = memories_fts.id
+           WHERE memories_fts MATCH ? AND ${where.join(" AND ")} ORDER BY memories_fts.rank, m.updated_at DESC LIMIT ?`,
+          match, ...args, limit,
+        )
+      : this.sql.exec<{ json: string }>(`SELECT m.json FROM memories m WHERE ${where.join(" AND ")} ORDER BY m.updated_at DESC, m.rowid DESC LIMIT ?`, ...args, limit);
+    return rows.toArray().map((r) => JSON.parse(r.json));
   }
 
   // Recurring tasks: a goal's saved prompts that start a new task every interval.

@@ -472,6 +472,145 @@ public enum Wire {
         public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
+    /// How widely a shared memory applies (MF-391).
+    public enum MemoryScopeKind: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// The whole factory.
+        case org
+        /// One repo.
+        case repo
+        /// One goal.
+        case goal
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [MemoryScopeKind] = [.org, .repo, .goal]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "org": self = .org
+            case "repo": self = .repo
+            case "goal": self = .goal
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .org: "org"
+            case .repo: "repo"
+            case .goal: "goal"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: MemoryScopeKind, b: MemoryScopeKind) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
+    /// What sort of thing a shared memory records.
+    public enum MemoryKind: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// Something true about the code or the product.
+        case fact
+        /// How things are done here.
+        case convention
+        /// A trap worth knowing before you step in it.
+        case gotcha
+        /// How a person or the team likes things.
+        case preference
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [MemoryKind] = [.fact, .convention, .gotcha, .preference]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "fact": self = .fact
+            case "convention": self = .convention
+            case "gotcha": self = .gotcha
+            case "preference": self = .preference
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .fact: "fact"
+            case .convention: "convention"
+            case .gotcha: "gotcha"
+            case .preference: "preference"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: MemoryKind, b: MemoryKind) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
+    /// Where a shared memory stands.
+    public enum MemoryStatus: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// In use: agents are given it.
+        case active
+        /// Waiting for a person to accept it.
+        case proposed
+        /// Kept for history; no longer given to agents.
+        case archived
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [MemoryStatus] = [.active, .proposed, .archived]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "active": self = .active
+            case "proposed": self = .proposed
+            case "archived": self = .archived
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .active: "active"
+            case .proposed: "proposed"
+            case .archived: "archived"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: MemoryStatus, b: MemoryStatus) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
     /// githubstatus.com's overall indicator.
     public enum GitHubIndicator: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// All systems operational.
@@ -4961,6 +5100,96 @@ public enum Wire {
         }
     }
 
+    /// Where a shared memory applies.
+    public struct MemoryScope: Codable, Hashable, Sendable {
+        public var kind: MemoryScopeKind
+        /// The repo (`owner/name`) or the goal's id. None for the whole org.
+        public var key: String?
+
+        public init(kind: MemoryScopeKind, key: String? = nil) {
+            self.kind = kind
+            self.key = key
+        }
+    }
+
+    /// Where a shared memory came from.
+    public struct MemorySource: Codable, Hashable, Sendable {
+        /// The member who wrote it (or, for an agent, the person it works for).
+        public var by: String
+        /// The task it was learned on, e.g. "MF-391".
+        public var task: String?
+        /// The agent's role on that task.
+        public var role: String?
+        /// Set when an agent wrote it, e.g. "MF-391 builder".
+        public var agent: String?
+        /// The machine the agent ran on.
+        public var machine: String?
+        /// The accepted doc decision it records.
+        public var decision: String?
+
+        public init(by: String, task: String? = nil, role: String? = nil, agent: String? = nil, machine: String? = nil, decision: String? = nil) {
+            self.by = by
+            self.task = task
+            self.role = role
+            self.agent = agent
+            self.machine = machine
+            self.decision = decision
+        }
+    }
+
+    /// One thing the factory's agents remember between tasks (MF-391): a short note scoped to the org, a repo or a goal. The server owns it and keeps the previous text of every edit.
+    public struct Memory: Codable, Hashable, Sendable {
+        public var id: String
+        public var scope: MemoryScope
+        public var kind: MemoryKind
+        /// At most 600 characters.
+        public var text: String
+        /// Lowercase, at most 8.
+        public var tags: [String]
+        public var status: MemoryStatus
+        public var source: MemorySource
+        /// The older memory this one replaces: that one is archived when this becomes active.
+        public var supersedes: String?
+        public var createdAt: UInt64
+        /// Last change to its text, tags, kind, scope or status.
+        public var updatedAt: UInt64
+        /// When it was last given to an agent.
+        public var lastUsedAt: UInt64?
+        /// How many times it has been given to an agent.
+        public var uses: UInt32
+
+        public init(id: String, scope: MemoryScope, kind: MemoryKind, text: String, tags: [String] = [], status: MemoryStatus, source: MemorySource, supersedes: String? = nil, createdAt: UInt64, updatedAt: UInt64, lastUsedAt: UInt64? = nil, uses: UInt32) {
+            self.id = id
+            self.scope = scope
+            self.kind = kind
+            self.text = text
+            self.tags = tags
+            self.status = status
+            self.source = source
+            self.supersedes = supersedes
+            self.createdAt = createdAt
+            self.updatedAt = updatedAt
+            self.lastUsedAt = lastUsedAt
+            self.uses = uses
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            scope = try c.decode(MemoryScope.self, forKey: .scope)
+            kind = try c.decode(MemoryKind.self, forKey: .kind)
+            text = try c.decode(String.self, forKey: .text)
+            tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
+            status = try c.decode(MemoryStatus.self, forKey: .status)
+            source = try c.decode(MemorySource.self, forKey: .source)
+            supersedes = try c.decodeIfPresent(String.self, forKey: .supersedes)
+            createdAt = try c.decode(UInt64.self, forKey: .createdAt)
+            updatedAt = try c.decode(UInt64.self, forKey: .updatedAt)
+            lastUsedAt = try c.decodeIfPresent(UInt64.self, forKey: .lastUsedAt)
+            uses = try c.decode(UInt32.self, forKey: .uses)
+        }
+    }
+
     /// Someone with the app open, and the task they're looking at.
     public struct Presence: Codable, Hashable, Sendable {
         public var login: String
@@ -9340,6 +9569,7 @@ public enum Wire {
         /// Every shared doc, archived ones too. None: an older server.
         public var docs: [Doc]?
         public var decisions: [Decision]?
+        public var memories: [Memory]?
         public var follows: [GoalFollow]
         /// Your quiet hours. None: none set, or an older server.
         public var quietHours: QuietHours?
@@ -9377,7 +9607,7 @@ public enum Wire {
         public var name: String?
         public var protocolVersion: UInt32
 
-        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], tallies: [GoalTally]? = nil, olderTasks: UInt32? = nil, policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, connectors: [McpConnector]? = nil, integrations: [Integration]? = nil, online: [Presence] = [], notes: [Note] = [], docs: [Doc]? = nil, decisions: [Decision]? = nil, follows: [GoalFollow] = [], quietHours: QuietHours? = nil, intake: [IntakeRequest] = [], repos: [OrgRepo] = [], repoOwners: [String]? = nil, mergeHolds: [MergeHold]? = nil, githubApp: GitHubAppInfo? = nil, secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, setupRuns: [RepoSetupRun]? = nil, scoutRuns: [ScoutRun]? = nil, recurring: [Recurring]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, githubStatus: GitHubStatus? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
+        public init(org: String, me: Member, members: [Member] = [], machines: [Machine] = [], ended: [EndedSession] = [], goals: [Goal] = [], tasks: [Task] = [], tallies: [GoalTally]? = nil, olderTasks: UInt32? = nil, policy: RiskPolicy, acceptances: [RiskAcceptance] = [], prompts: PromptAdditions? = nil, connectors: [McpConnector]? = nil, integrations: [Integration]? = nil, online: [Presence] = [], notes: [Note] = [], docs: [Doc]? = nil, decisions: [Decision]? = nil, memories: [Memory]? = nil, follows: [GoalFollow] = [], quietHours: QuietHours? = nil, intake: [IntakeRequest] = [], repos: [OrgRepo] = [], repoOwners: [String]? = nil, mergeHolds: [MergeHold]? = nil, githubApp: GitHubAppInfo? = nil, secrets: [RepoSecret] = [], scripts: [RepoWorktreeScripts]? = nil, setupRuns: [RepoSetupRun]? = nil, scoutRuns: [ScoutRun]? = nil, recurring: [Recurring]? = nil, runnerLatest: String? = nil, runnerReleases: [RunnerRelease]? = nil, serverVersion: String? = nil, serverUpdate: ServerUpdate? = nil, githubStatus: GitHubStatus? = nil, icon: String? = nil, name: String? = nil, protocolVersion: UInt32) {
             self.org = org
             self.me = me
             self.members = members
@@ -9396,6 +9626,7 @@ public enum Wire {
             self.notes = notes
             self.docs = docs
             self.decisions = decisions
+            self.memories = memories
             self.follows = follows
             self.quietHours = quietHours
             self.intake = intake
@@ -9438,6 +9669,7 @@ public enum Wire {
             notes = try c.decodeIfPresent([Note].self, forKey: .notes) ?? []
             docs = try c.decodeIfPresent([Doc].self, forKey: .docs)
             decisions = try c.decodeIfPresent([Decision].self, forKey: .decisions)
+            memories = try c.decodeIfPresent([Memory].self, forKey: .memories)
             follows = try c.decodeIfPresent([GoalFollow].self, forKey: .follows) ?? []
             quietHours = try c.decodeIfPresent(QuietHours.self, forKey: .quietHours)
             intake = try c.decodeIfPresent([IntakeRequest].self, forKey: .intake) ?? []
@@ -9624,6 +9856,24 @@ public enum Wire {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             id = try c.decode(String.self, forKey: .id)
             events = try c.decodeIfPresent([DecisionEvent].self, forKey: .events) ?? []
+        }
+    }
+
+    /// A shared memory was added or changed (archiving included), to every member.
+    public struct ServerToClientMemoryUpdated: Codable, Hashable, Sendable {
+        public var memory: Memory
+
+        public init(memory: Memory) {
+            self.memory = memory
+        }
+    }
+
+    /// A shared memory was deleted for good.
+    public struct ServerToClientMemoryRemoved: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
         }
     }
 
@@ -10009,6 +10259,8 @@ public enum Wire {
         case docThreadUpdated(ServerToClientDocThreadUpdated)
         case decisionUpdated(ServerToClientDecisionUpdated)
         case decisionLog(ServerToClientDecisionLog)
+        case memoryUpdated(ServerToClientMemoryUpdated)
+        case memoryRemoved(ServerToClientMemoryRemoved)
         case draftUpdated(ServerToClientDraftUpdated)
         case scoutUpdated(ServerToClientScoutUpdated)
         case recurringUpdated(ServerToClientRecurringUpdated)
@@ -10062,6 +10314,8 @@ public enum Wire {
             case "doc.thread.updated": self = .docThreadUpdated(try ServerToClientDocThreadUpdated(from: decoder))
             case "decision.updated": self = .decisionUpdated(try ServerToClientDecisionUpdated(from: decoder))
             case "decision.log": self = .decisionLog(try ServerToClientDecisionLog(from: decoder))
+            case "memory.updated": self = .memoryUpdated(try ServerToClientMemoryUpdated(from: decoder))
+            case "memory.removed": self = .memoryRemoved(try ServerToClientMemoryRemoved(from: decoder))
             case "draft.updated": self = .draftUpdated(try ServerToClientDraftUpdated(from: decoder))
             case "scout.updated": self = .scoutUpdated(try ServerToClientScoutUpdated(from: decoder))
             case "recurring.updated": self = .recurringUpdated(try ServerToClientRecurringUpdated(from: decoder))
@@ -10147,6 +10401,12 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .decisionLog(let body):
                 try c.encode("decision.log", forKey: .type)
+                try body.encode(to: encoder)
+            case .memoryUpdated(let body):
+                try c.encode("memory.updated", forKey: .type)
+                try body.encode(to: encoder)
+            case .memoryRemoved(let body):
+                try c.encode("memory.removed", forKey: .type)
                 try body.encode(to: encoder)
             case .draftUpdated(let body):
                 try c.encode("draft.updated", forKey: .type)

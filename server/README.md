@@ -247,11 +247,12 @@ manifest needs those four scopes added and a reinstall. The setup guide is maple
 @Maple: `src/slack.ts` checks each request's signature and timestamp, answers Slack within its 3 seconds and does
 the rest in `waitUntil`, drops retried event_ids, reads the mention's thread and copies its files into R2 as
 attachments. OrgHub's `factory/slack-asks.ts` runs a read-only agent on an online machine (`draft.run`, id
-`slack-<uuid>`, in a worktree of the channel's best-suited goal) and replaces "Looking into it…" with its answer; a
-proposed task comes with Create task / Not now, and Create task opens a request whose reply address is the thread
+`slack-<uuid>`, in a worktree of the channel's best-suited goal) and posts its answer as a new reply in the thread,
+then deletes "Looking into it…" (Slack notifies on new messages, not edits; if the delete fails it's edited to
+"Answered below."). A proposed task comes with Create task / Not now, and Create task opens a request whose reply address is the thread
 (`slack:<channel>|<thread ts>|<ask>`) and makes the task in planning. Each channel's goals are picked when Maple
 joins it (kv `slack:channel:<id>`; `@Maple goals` picks again); archived goals drop out at use time.
-An ask whose machine goes offline, or whose 30 minutes run out, says so in place of "Looking into it…"; the files
+An ask whose machine goes offline, or whose 30 minutes run out, says so the same way, as a new reply; the files
 of an ask that never became a task are deleted from R2 when it's set aside (Not now) or forgotten. A Slack
 thread's replies don't reach the task's agent, so its accepted message points to the factory for the agent's questions.
 
