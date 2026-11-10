@@ -6,6 +6,7 @@
 // (tools.ts); a session that ends without reporting is classified by its end's cause (`ended`).
 
 import type { Env } from "../env.ts";
+import { Memories } from "./memories.ts";
 import { ArtifactKindValues, PriorityValues, RoleValues, TaskStateValues } from "../wire.ts";
 import type {
   Artifact, ArtifactKind, ChangeRequest, CheckRun, ClientMessage, Comment, DiffCommit, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
@@ -204,7 +205,11 @@ export class Engine {
   /** Agents' doc tools and a person's suggestion Accept / Reject (MF-365). */
   readonly docs: DocTools;
 
+  /** Shared agent memory (MF-391). */
+  readonly memories: Memories;
+
   constructor(private env: Env, private store: Store, private hooks: Hooks, private intake: Intake, private secrets: Secrets) {
+    this.memories = new Memories(store, { broadcast: (m) => hooks.broadcast(m) });
     this.docs = new DocTools(env, store, { broadcast: (m) => hooks.broadcast(m), members: () => hooks.members(), notify: (t) => hooks.docMentions?.(t) });
     // Maple's own one-off runs (Draft with AI, Scout, Set up with AI, @Maple in Slack) only stop for an
     // "Everything" pause; Pause New Work holds back tasks, not these.

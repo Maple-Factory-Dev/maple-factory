@@ -167,6 +167,53 @@ pub enum DecisionAction {
     Other,
 }
 
+/// How widely a shared memory applies (MF-391).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MemoryScopeKind {
+    /// The whole factory.
+    Org,
+    /// One repo.
+    Repo,
+    /// One goal.
+    Goal,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
+/// What sort of thing a shared memory records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MemoryKind {
+    /// Something true about the code or the product.
+    Fact,
+    /// How things are done here.
+    Convention,
+    /// A trap worth knowing before you step in it.
+    Gotcha,
+    /// How a person or the team likes things.
+    Preference,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
+/// Where a shared memory stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MemoryStatus {
+    /// In use: agents are given it.
+    Active,
+    /// Waiting for a person to accept it.
+    Proposed,
+    /// Kept for history; no longer given to agents.
+    Archived,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
 /// githubstatus.com's overall indicator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2564,6 +2611,66 @@ pub struct DecisionEvent {
     pub after: Option<Decision>,
 }
 
+/// Where a shared memory applies.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryScope {
+    pub kind: MemoryScopeKind,
+    /// The repo (`owner/name`) or the goal's id. None for the whole org.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+}
+
+/// Where a shared memory came from.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemorySource {
+    /// The member who wrote it (or, for an agent, the person it works for).
+    pub by: String,
+    /// The task it was learned on, e.g. "MF-391".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+    /// The agent's role on that task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    /// Set when an agent wrote it, e.g. "MF-391 builder".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    /// The machine the agent ran on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<String>,
+    /// The accepted doc decision it records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision: Option<Uuid>,
+}
+
+/// One thing the factory's agents remember between tasks (MF-391): a short note scoped to the org, a repo or a goal. The server owns it and keeps the previous text of every edit.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Memory {
+    pub id: Uuid,
+    pub scope: MemoryScope,
+    pub kind: MemoryKind,
+    /// At most 600 characters.
+    pub text: String,
+    /// Lowercase, at most 8.
+    #[serde(default)]
+    pub tags: Vec<String>,
+    pub status: MemoryStatus,
+    pub source: MemorySource,
+    /// The older memory this one replaces: that one is archived when this becomes active.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supersedes: Option<Uuid>,
+    pub created_at: u64,
+    /// Last change to its text, tags, kind, scope or status.
+    pub updated_at: u64,
+    /// When it was last given to an agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<u64>,
+    /// How many times it has been given to an agent.
+    pub uses: u32,
+}
+
 /// Someone with the app open, and the task they're looking at.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -4681,6 +4788,8 @@ pub enum ServerToClient {
         docs: Option<Vec<Doc>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         decisions: Option<Vec<Decision>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        memories: Option<Vec<Memory>>,
         #[serde(default)]
         follows: Vec<GoalFollow>,
         /// Your quiet hours. None: none set, or an older server.
@@ -4818,6 +4927,16 @@ pub enum ServerToClient {
         id: Uuid,
         #[serde(default)]
         events: Vec<DecisionEvent>,
+    },
+    /// A shared memory was added or changed (archiving included), to every member.
+    #[serde(rename = "memory.updated")]
+    MemoryUpdated {
+        memory: Memory,
+    },
+    /// A shared memory was deleted for good.
+    #[serde(rename = "memory.removed")]
+    MemoryRemoved {
+        id: Uuid,
     },
     /// Your draft, to your apps only.
     #[serde(rename = "draft.updated")]
