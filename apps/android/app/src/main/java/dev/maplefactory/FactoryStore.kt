@@ -20,6 +20,8 @@ import dev.maplefactory.wire.ChangeRequest
 import dev.maplefactory.wire.ChangeStatus
 import dev.maplefactory.wire.ClientMessage
 import dev.maplefactory.wire.Comment
+import dev.maplefactory.wire.DecisionStatus
+import dev.maplefactory.wire.DocComment
 import dev.maplefactory.wire.ServerToClient
 import dev.maplefactory.wire.Task
 import dev.maplefactory.wire.TaskEvent
@@ -72,6 +74,8 @@ class FactoryStore(app: Application) : AndroidViewModel(app) {
     val unread = mutableStateMapOf<String, Int>()
     /** A task to open once the factory's feed has it: a link, or `-task`. */
     var pendingTask by mutableStateOf<String?>(null)
+    /** A doc to open once the feed has it: a maplefactory://doc/<id> link, or `-doc`. */
+    var pendingDoc by mutableStateOf<String?>(null)
     /** Bumped whenever another factory opens, so the screens reset to its place. */
     var opened by mutableStateOf(0)
         private set
@@ -332,6 +336,27 @@ class FactoryStore(app: Application) : AndroidViewModel(app) {
     fun retryTask(id: String) = send(ClientMessage.TaskRetry(id = id))
     fun follow(goal: String, following: Boolean) = send(ClientMessage.GoalFollow(id = goal, following = following))
 
+    // Docs (MF-370)
+
+    /** The open factory's token, for the docs embed's `mapleDocs.load`. */
+    val docToken: String? get() = token
+
+    /** Asks for a doc's comment threads; they come back as `doc.threads`. */
+    fun openDoc(id: String) { if (status == Status.Live) send(ClientMessage.DocThreads(doc = id)) }
+    fun docReply(doc: String, thread: String, text: String) = send(ClientMessage.DocComment(doc = doc, thread = thread, text = text))
+    fun docResolve(doc: String, thread: String) = send(ClientMessage.DocResolve(doc = doc, thread = thread))
+    fun acceptDecision(id: String, chosen: String?, why: String?) = send(ClientMessage.DecisionAccept(id = id, chosen = chosen, why = why))
+    fun rejectDecision(id: String, why: String?) = send(ClientMessage.DecisionReject(id = id, why = why))
+
+    /** A command the docs embed made (comments, suggestions, decisions), relayed to the socket as it is. */
+    fun sendDocCommand(json: String) {
+        if (status == Status.Demo) {
+            runCatching { WireJson.decodeFromString(ClientMessage.serializer(), json) }.getOrNull()?.let { demoSend(it) }
+            return
+        }
+        socket?.send(json)
+    }
+
     /** Tells the factory which task you're looking at, so others see you there. */
     fun viewing(id: String?) = send(ClientMessage.Presence(viewing = id))
 
@@ -407,6 +432,29 @@ class FactoryStore(app: Application) : AndroidViewModel(app) {
             is ClientMessage.TaskComment -> update(message.id) { it.copy(comments = it.comments + Comment(UUID.randomUUID().toString(), me, message.text, now)) }
             is ClientMessage.TaskSteer -> update(message.id) {
                 it.copy(changes = it.changes + ChangeRequest(UUID.randomUUID().toString(), me, message.text, now, status = ChangeStatus.Queued))
+            }
+            is ClientMessage.DocComment -> {
+                val thread = feed.docThreads[message.doc].orEmpty().firstOrNull { it.id == message.thread } ?: return
+                apply(ServerToClient.DocThreadUpdated(thread.copy(comments = thread.comments + DocComment(UUID.randomUUID().toString(), me, message.text, now))))
+            }
+            is ClientMessage.DocResolve -> {
+                val thread = feed.docThreads[message.doc].orEmpty().firstOrNull { it.id == message.thread } ?: return
+                apply(ServerToClient.DocThreadUpdated(thread.copy(resolved = true, resolvedBy = me, resolvedAt = now)))
+                feed.doc(message.doc)?.let { apply(ServerToClient.DocUpdated(it.copy(openThreads = feed.openThreads(it.id).size.toLong()))) }
+                notice = FeedState.Notice.Toast("Thread resolved", null)
+            }
+            is ClientMessage.DecisionAccept, is ClientMessage.DecisionReject -> {
+                val accept = message as? ClientMessage.DecisionAccept
+                val id = accept?.id ?: (message as ClientMessage.DecisionReject).id
+                val decision = feed.decisions.firstOrNull { it.id == id } ?: return
+                apply(ServerToClient.DecisionUpdated(decision.copy(
+                    status = if (accept != null) DecisionStatus.Accepted else DecisionStatus.Rejected,
+                    chosen = accept?.chosen ?: decision.chosen,
+                    why = accept?.why ?: (message as? ClientMessage.DecisionReject)?.why,
+                    decidedBy = me, decidedAt = now,
+                )))
+                feed.doc(decision.doc)?.let { doc -> apply(ServerToClient.DocUpdated(doc.copy(openDecisions = feed.decisions(doc.id).count { it.status == DecisionStatus.Proposed }.toLong()))) }
+                notice = FeedState.Notice.Toast(if (accept != null) "Decision accepted" else "Decision rejected", null)
             }
             is ClientMessage.GoalFollow -> feed = feed.copy(follows = feed.follows + (message.id to message.following))
             else -> Unit

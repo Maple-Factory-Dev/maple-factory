@@ -165,4 +165,76 @@ class FeedStateTest {
         assertTrue(state.fetching.isEmpty())
         assertEquals(OlderTasks(merged = 3, finished = 4), state.older["g1"])
     }
+
+    // Docs (MF-370)
+
+    private fun doc(id: String, updated: Long, goal: String? = "g1", extra: String = "") =
+        """{"id":"$id","title":"Doc $id","goal":${goal?.let { "\"$it\"" } ?: "null"},"createdBy":"andrea","createdAt":1,"updatedAt":$updated$extra}"""
+
+    private fun decision(id: String, status: String, at: Long, goal: String = "g1", extra: String = "") =
+        """{"id":"$id","doc":"d1","goal":"$goal","question":"Q $id","options":[{"id":"a","label":"A"},{"id":"b","label":"B","note":"cheaper"}],
+            "rationale":"why","status":"$status","proposedBy":"sam","proposedAt":$at$extra}"""
+
+    private fun thread(id: String, doc: String = "d1", extra: String = "") =
+        """{"id":"$id","doc":"$doc","comments":[{"id":"c-$id","author":"sam","text":"hi","at":1}],"createdBy":"sam","createdAt":1$extra}"""
+
+    private val withDocs = snapshot.trimEnd().removeSuffix("}") +
+        ""","docs":[${doc("d1", 5)},${doc("d2", 9)},${doc("d3", 7, extra = ",\"archived\":true")},${doc("d4", 8, goal = null)}],
+            "decisions":[${decision("x1", "proposed", 3)},${decision("x2", "accepted", 4, extra = ",\"decidedBy\":\"andrea\",\"decidedAt\":10")},${decision("x3", "proposed", 6, goal = "g2")}]}"""
+
+    @Test fun snapshotCarriesDocsAndDecisions() {
+        val state = FeedState().on(withDocs)
+        assertEquals(4, state.docs.size)
+        assertEquals(listOf("d2", "d4", "d1"), state.activeDocs.map { it.id })
+        assertEquals(listOf("d2", "d1"), state.docs("g1").map { it.id })
+        assertEquals(1, state.openDecisionCount("g1"))
+        assertEquals(1, state.openDecisionCount("g2"))
+    }
+
+    @Test fun docDeltasUpsertAndRemove() {
+        var state = FeedState().on(withDocs)
+        state = state.on("""{"type":"doc.updated","doc":${doc("d5", 20)}}""")
+        assertEquals("d5", state.docs.first().id)
+        state = state.on("""{"type":"doc.updated","doc":${doc("d1", 30, extra = ",\"openThreads\":2")}}""")
+        assertEquals(5, state.docs.size)
+        assertEquals(2L, state.doc("d1")?.openThreads)
+        assertEquals("d1", state.activeDocs.first().id)
+        state = state.on("""{"type":"doc.removed","id":"d2"}""")
+        assertNull(state.doc("d2"))
+    }
+
+    @Test fun threadsAreStoredByDoc() {
+        var state = FeedState().on(withDocs)
+        state = state.on("""{"type":"doc.threads","doc":"d1","threads":[${thread("t1")},${thread("t2")}]}""")
+        assertEquals(listOf("t1", "t2"), state.docThreads["d1"]?.map { it.id })
+        state = state.on("""{"type":"doc.thread.updated","thread":${thread("t2", extra = ",\"resolved\":true")}}""")
+        assertEquals(listOf("t1"), state.openThreads("d1").map { it.id })
+        state = state.on("""{"type":"doc.thread.updated","thread":${thread("t9", doc = "d2")}}""")
+        assertEquals(listOf("t9"), state.docThreads["d2"]?.map { it.id })
+        // doc.threads replaces what was there.
+        state = state.on("""{"type":"doc.threads","doc":"d1","threads":[]}""")
+        assertTrue(state.docThreads["d1"]!!.isEmpty())
+    }
+
+    @Test fun decisionUpdatedUpserts() {
+        var state = FeedState().on(withDocs)
+        state = state.on("""{"type":"decision.updated","decision":${decision("x1", "rejected", 3, extra = ",\"decidedBy\":\"andrea\",\"decidedAt\":12")}}""")
+        assertEquals(3, state.decisions.size)
+        assertEquals(dev.maplefactory.wire.DecisionStatus.Rejected, state.decisions.first { it.id == "x1" }.status)
+        assertEquals(0, state.openDecisionCount("g1"))
+        state = state.on("""{"type":"decision.updated","decision":${decision("x4", "proposed", 15)}}""")
+        assertEquals("x4", state.decisions.last().id)
+        assertEquals(1, state.openDecisionCount("g1"))
+    }
+
+    @Test fun filterDecisionsByStatusPersonAndGoal() {
+        val list = FeedState().on(withDocs).decisions
+        val f = FeedState.DecisionFilter.entries.associateWith { FeedState.filterDecisions(list, it).map { d -> d.id } }
+        assertEquals(listOf("x3", "x1"), f[FeedState.DecisionFilter.Open])
+        assertEquals(listOf("x2"), f[FeedState.DecisionFilter.Accepted])
+        assertTrue(f[FeedState.DecisionFilter.Rejected]!!.isEmpty())
+        assertEquals(listOf("x2", "x3", "x1"), f[FeedState.DecisionFilter.All])
+        assertEquals(listOf("x2"), FeedState.filterDecisions(list, FeedState.DecisionFilter.All, person = "andrea").map { it.id })
+        assertEquals(listOf("x2", "x1"), FeedState.filterDecisions(list, FeedState.DecisionFilter.All, goal = "g1").map { it.id })
+    }
 }

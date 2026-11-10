@@ -11,6 +11,13 @@ import dev.maplefactory.wire.CICheck
 import dev.maplefactory.wire.CheckStatus
 import dev.maplefactory.wire.CheckVerdict
 import dev.maplefactory.wire.Comment
+import dev.maplefactory.wire.Decision
+import dev.maplefactory.wire.DecisionOption
+import dev.maplefactory.wire.DecisionStatus
+import dev.maplefactory.wire.Doc
+import dev.maplefactory.wire.DocAnchor
+import dev.maplefactory.wire.DocComment
+import dev.maplefactory.wire.DocThread
 import dev.maplefactory.wire.Diff
 import dev.maplefactory.wire.DoneItem
 import dev.maplefactory.wire.Evidence
@@ -100,6 +107,73 @@ object DemoData {
         runnerLatest = "0.65.0",
         serverVersion = "0.51.0",
         hasSnapshot = true,
+        docs = acmeDocs(),
+        docThreads = mapOf(DOC_ID to docThreads()),
+        decisions = docDecisions(),
+    )
+
+    // Docs (MF-370)
+
+    const val DOC_ID = "demo-doc-1"
+
+    /** The demo doc's text, for the bundled embed's offline `demo` mode. */
+    const val DOC_MARKDOWN = """# Mobile docs plan
+
+Docs live next to the goal's tasks. On a phone you mostly **read**, **comment** and **decide**; heavy editing stays on the Mac.
+
+## What ships
+
+- [x] Docs list on each goal, with open threads and decisions
+- [x] The doc itself, in the same editor the Mac uses
+- [ ] Reply to and resolve comment threads
+- [ ] Accept or reject proposed decisions
+
+## Open question
+
+How should a phone show a doc that's being edited live? See the decision under Decisions.
+
+> This demo runs offline. Sign in to edit your factory's docs with your team.
+"""
+
+    private fun acmeDocs() = listOf(
+        Doc(id = DOC_ID, title = "Mobile docs plan", goal = "g-app", createdBy = ME, createdAt = ago(60.0 * 24 * 3), updatedAt = ago(12.0), icon = "📱", openThreads = 2, openDecisions = 1),
+        Doc(id = "demo-doc-2", title = "Push notification copy", goal = "g-app", createdBy = "sam", createdAt = ago(60.0 * 24 * 6), updatedAt = ago(60.0 * 26)),
+        Doc(id = "demo-doc-3", title = "API versioning", goal = "g-api", createdBy = "kit", createdAt = ago(60.0 * 24 * 9), updatedAt = ago(60.0 * 5), openThreads = 1),
+    )
+
+    // The anchors' positions are placeholders: the demo embed draws no highlights, so only the quote shows.
+    private fun docThreads() = listOf(
+        DocThread(
+            id = "demo-thread-1", doc = DOC_ID, anchor = DocAnchor(from = "", to = "", quote = "heavy editing stays on the Mac"),
+            comments = listOf(
+                DocComment("demo-c1", "sam", "Should we at least allow fixing typos on the phone?", ago(95.0)),
+                DocComment("demo-c2", ME, "Yes, small edits are fine. It's the same editor.", ago(80.0)),
+            ),
+            createdBy = "sam", createdAt = ago(95.0),
+        ),
+        DocThread(
+            id = "demo-thread-2", doc = DOC_ID, anchor = DocAnchor(from = "", to = "", quote = "Reply to and resolve comment threads"),
+            comments = listOf(
+                DocComment("demo-c3", ME, "Is this one task or two?", ago(30.0)),
+                DocComment("demo-c4", "kit", "One task: replies and resolve share the thread view and the same two socket commands (doc.comment, doc.resolve).", ago(28.0), agent = "APP-12 planner"),
+            ),
+            createdBy = ME, createdAt = ago(30.0),
+        ),
+    )
+
+    private fun docDecisions() = listOf(
+        Decision(
+            id = "demo-decision-1", doc = DOC_ID, goal = "g-app",
+            question = "How should the phone show a doc that's being edited live?",
+            options = listOf(
+                DecisionOption("live", "Live editor", "The same TipTap embed as the Mac, with cursors."),
+                DecisionOption("snapshot", "Read-only snapshot", "Rendered Markdown, refreshed on open."),
+                DecisionOption("hybrid", "Read first, tap to edit", "Snapshot by default; the editor on demand."),
+            ),
+            chosen = "live",
+            rationale = "One editor everywhere keeps comments, suggestions and decision cards working the same on every device.",
+            status = DecisionStatus.Proposed, proposedBy = "kit", agent = "APP-12 planner", proposedAt = ago(45.0),
+        ),
     )
 
     private fun northwind() = FeedState(
