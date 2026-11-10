@@ -86,14 +86,14 @@ import Testing
         LastTaskGoal.store("Docs site", factory: nil, defaults: state.taskGoalDefaults)
         #expect(state.newTaskGoal.name == "Docs site")
 
-        let saved = FactoryData.liveGoals
-        defer { FactoryData.liveGoals = saved }
-        FactoryData.liveGoals = FactoryData.seedGoals.map { goal in
+        // Injected, not written to the global FactoryData.liveGoals that suites running alongside read.
+        let archived = FactoryData.seedGoals.map { goal in
             var goal = goal
             if goal.name == "Docs site" { goal.archived = true }
             return goal
         }
-        #expect(LastTaskGoal.load(factory: nil, defaults: state.taskGoalDefaults) == nil)
+        state.taskGoalGoals = archived
+        #expect(LastTaskGoal.load(factory: nil, defaults: state.taskGoalDefaults, goals: archived.filter { !$0.archived }) == nil)
         state.startCompose()
         #expect(state.draft.goal == usual)
         #expect(state.draft.goal != "Docs site")

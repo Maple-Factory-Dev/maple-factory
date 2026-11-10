@@ -33,15 +33,14 @@ import Testing
         #expect(AppState.clickAction(opening: .panel, panelOpen: true, selected: "MF-1", id: "MF-1") == .closePanel)
     }
 
-    /// Runs `body` on a fresh AppState, then puts back the stored setting it changes.
+    /// Runs `body` on a fresh AppState with its own defaults suite, so the setting it changes never
+    /// reaches the shared AppDefaults that other suites' AppState() reads. (Tests write a private
+    /// UserDefaults(suiteName:), never AppDefaults.)
     @MainActor private func withState(_ body: (AppState) -> Void) {
-        let saved = AppDefaults.object(forKey: Opening.key)
-        let savedPanel = AppDefaults.object(forKey: "taskPanelOpen")
-        defer {
-            AppDefaults.set(saved, forKey: Opening.key)
-            AppDefaults.set(savedPanel, forKey: "taskPanelOpen")
-        }
-        body(AppState())
+        let suite = "TaskOpeningTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        body(AppState(boardDefaults: defaults))
     }
 
     @MainActor @Test func taskPanelEnabledFollowsTheSetting() {

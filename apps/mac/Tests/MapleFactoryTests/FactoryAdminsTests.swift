@@ -25,6 +25,43 @@ import Testing
         #expect(FactoryData.me.github == "afomera")
     }
 
+    /// What FactoryData's live state is right now, comparable before and after.
+    private func liveState() -> [String] {
+        [FactoryData.liveGoals.map { $0.map(\.name).joined(separator: ",") } ?? "nil",
+         FactoryData.livePeople.map { $0.compactMap(\.github).joined(separator: ",") } ?? "nil",
+         FactoryData.livePresence.map { $0.compactMap(\.person.github).joined(separator: ",") } ?? "nil",
+         FactoryData.me.github ?? "nil"]
+    }
+
+    /// Only the app's client (publishesLive) writes FactoryData's live goals, people, presence and me.
+    /// A test's, unconnected or switched to a saved factory, leaves them exactly as they were, not even nil.
+    @Test func aNonAppClientLeavesFactoryDataLiveStateAlone() throws {
+        let before = liveState()
+        let unconnected = FactoryClient()
+        unconnected.apply(try decode(snapshot))
+        #expect(liveState() == before)
+
+        let suite = "FactoryAdminsTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        // Nothing port 9 answers: the switch only needs the saved factory and its token.
+        let server = try #require(URL(string: "http://localhost:9"))
+        let saved = SavedFactory(server: server, org: "acme", name: "acme", lastUsed: Date(), icon: nil)
+        SavedFactories.store([saved], defaults)
+        defaults.set([server.absoluteString: "token"], forKey: "devFactoryTokens")
+        let connected = FactoryClient(defaults: defaults)
+        #expect(!connected.publishesLive)
+        #expect(connected.switchTo(saved))
+        #expect(connected.server == server)
+        connected.apply(try decode(snapshot))
+        #expect(connected.members.count == 2)
+        #expect(liveState() == before)
+        connected.signOut()
+        #expect(liveState() == before)
+        // The shared defaults never saw that factory.
+        #expect(AppDefaults.string(forKey: "factoryURL") != server.absoluteString)
+    }
+
     @Test func membersUpdatedMakesMeAdmin() throws {
         let client = FactoryClient()
         client.apply(try decode(snapshot))
