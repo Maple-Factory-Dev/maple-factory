@@ -17,7 +17,10 @@ export const SECTIONS = [
   { key: "integrations", title: "Integrations" },
   { key: "merging", title: "Merging & risk" },
   { key: "account", title: "Account" },
+  { key: "connected", title: "Connected apps" },
 ];
+/** The sections every member sees; the rest are admins' only. */
+const MEMBER_SECTIONS = ["account", "connected"];
 
 /** The Account › Slack row's text for `/api/me`'s `slack` ({ user, team, name, teamName, linkedAt } or null). */
 export function slackLinkLabel(slack) {
@@ -230,6 +233,10 @@ export function createSettings({ state, h, send, toast, render, ago }) {
   let slack; // GET /api/me's slack: the link, null when not linked; undefined until loaded
   let slackBusy = false;
   let iconBusy = false;
+  let mcp; // GET /api/mcp-tokens: { url, tokens }, once loaded; undefined until asked for
+  let mcpBusy = false;
+  let minted = null; // the personal token just made, shown once: { token, label, url }
+  const mint = { label: "", read: true, write: false };
   const testing = new Set(); // integrations with a test on its way: kinds
 
   /** The form's draft, synced to the server's value for it. */
@@ -730,11 +737,106 @@ export function createSettings({ state, h, send, toast, render, ago }) {
     ];
   }
 
-  const BODIES = { general, repos, secrets, people, prompts, integrations, merging, account };
+  /** Your MCP clients (src/mcp-auth.ts): the /mcp URL, your OAuth grants and personal tokens, and a new token. Every member sees this. */
+  function connected() {
+    const load = () => fetch("/api/mcp-tokens").then((res) => (res.ok ? res.json() : Promise.reject(new Error())))
+      .then((got) => { mcp = got; render(); }, () => { mcp = { failed: true, tokens: [] }; render(); });
+    if (mcp === undefined) {
+      mcp = { loading: true, tokens: [] };
+      load();
+    }
+    const revoke = async (t) => {
+      mcpBusy = true;
+      render();
+      try {
+        const res = await fetch(`/api/mcp-tokens/${t.id}`, { method: "DELETE" });
+        if (!res.ok) throw new Error(await res.text());
+        toast(`Revoked ${t.name}.`);
+      } catch (e) {
+        toast(e.message || "Couldn't revoke it.");
+      }
+      mcpBusy = false;
+      await load();
+    };
+    const create = async () => {
+      const scopes = [mint.read && "docs:read", mint.write && "docs:write"].filter(Boolean);
+      mcpBusy = true;
+      render();
+      try {
+        const res = await fetch("/api/mcp-tokens", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ label: mint.label.trim(), scopes }) });
+        if (!res.ok) throw new Error(await res.text());
+        const got = await res.json();
+        minted = { token: got.token, label: got.label, url: got.url || mcp.url };
+        mint.label = "";
+        toast(`Made ${got.label}. Copy it now: it isn't shown again.`);
+      } catch (e) {
+        toast(e.message || "Couldn't make the token.");
+      }
+      mcpBusy = false;
+      await load();
+    };
+    const copyText = (text, what) => navigator.clipboard?.writeText(text).then(() => toast(`Copied ${what}.`), () => toast("Couldn't copy it; select it and copy instead."));
+    const copyBtn = (text, what) => h("button", { type: "button", class: "btn small", onclick: () => copyText(text, what) }, "Copy");
+    const snippet = (title, text) => h("div", { class: "set-row stacked" },
+      h("span", { class: "set-label" }, h("span", {}, title), copyBtn(text, title)),
+      h("pre", { class: "out", style: "white-space:pre-wrap;word-break:break-all" }, text));
+    const url = mcp.url ?? `${location.origin}/mcp`;
+    const ready = mint.label.trim() && (mint.read || mint.write);
+    const tokens = mcp.tokens ?? [];
+    let shown = null;
+    if (minted) {
+      const claude = `claude mcp add --transport http maple ${minted.url} --header "Authorization: Bearer ${minted.token}"`;
+      const cursor = JSON.stringify({ mcpServers: { maple: { url: minted.url, headers: { Authorization: `Bearer ${minted.token}` } } } }, null, 2);
+      shown = h("div", { class: "card set-card" },
+        h("div", { class: "set-row" },
+          h("span", { class: "set-label" }, h("span", {}, minted.label),
+            h("span", { class: "set-detail" }, "Copy this token now. It isn't shown again; if you lose it, revoke it and make another.")),
+          copyBtn(minted.token, "the token")),
+        h("pre", { class: "out", style: "white-space:pre-wrap;word-break:break-all" }, minted.token),
+        snippet("Claude Code", claude),
+        snippet("Cursor (~/.cursor/mcp.json)", cursor),
+        h("div", { class: "set-actions" }, h("span", { class: "spacer" }),
+          h("button", { type: "button", class: "btn primary", onclick: () => { minted = null; render(); } }, "Done")));
+    }
+    return [
+      h("p", { class: "muted" }, "Let Claude, Cursor and other MCP clients read your factory's docs and, with docs:write, comment, suggest edits and propose decisions as you. They never change a doc's text: a person accepts every suggestion and decides every decision."),
+      h("div", { class: "card set-card" },
+        h("div", { class: "set-row" },
+          h("span", { class: "set-label" }, h("span", {}, "MCP server"),
+            h("span", { class: "set-detail" }, "In Claude Desktop or claude.ai: Settings › Connectors › Add custom connector, paste this URL, and approve here.")),
+          h("span", { class: "set-inline", style: "flex:none;display:flex;align-items:center;gap:8px" },
+            h("span", { class: "mono" }, url), copyBtn(url, "the URL"))),
+        h("p", { class: "set-detail muted", style: "margin:0" }, h("a", { href: "https://maplefactory.dev/docs/mcp", target: "_blank", rel: "noopener" }, "Setting up Claude Code, Cursor and others"))),
+      shown,
+      h("h2", {}, "Connected"),
+      h("div", { class: "card set-card" },
+        mcp.loading ? h("p", { class: "muted", style: "margin:0" }, "Loading…")
+          : mcp.failed ? h("p", { class: "muted", style: "margin:0" }, "Couldn't read your connected apps.")
+          : !tokens.length ? h("p", { class: "muted", style: "margin:0" }, "Nothing connected yet. Add the URL above as a connector, or make a personal token below.")
+          : tokens.map((t) => h("div", { class: "set-row" },
+            h("span", { class: "set-label" },
+              h("span", {}, t.name, " ", h("span", { class: "pill" }, t.kind === "oauth" ? "OAuth" : "Personal token")),
+              h("span", { class: "set-detail" }, [(t.scopes ?? []).join(", "), `Created ${ago(t.createdAt)}`, t.lastUsed ? `Last used ${ago(t.lastUsed)}` : "Never used"].filter(Boolean).join(" · "))),
+            h("span", { class: "set-inline", style: "flex:none;display:flex;align-items:center;gap:8px" },
+              ...(ask(`mcp-revoke:${t.id}`, `Revoke ${t.name}?`, "Revoke", () => revoke(t))
+                ?? [h("button", { type: "button", class: "btn small danger-text", disabled: mcpBusy, onclick: () => { confirming.add(`mcp-revoke:${t.id}`); render(); } }, "Revoke")]))))),
+      h("h2", {}, "New personal token"),
+      h("div", { class: "card set-card" },
+        field("Name", "So you know which app it's in, like \u201cCursor on my laptop\u201d.",
+          keep("mcp-label", h("input", { type: "text", maxlength: "80", placeholder: "Cursor on my laptop", value: mint.label,
+            oninput: (e) => { mint.label = e.target.value; render(); }, onkeydown: (e) => e.key === "Enter" && ready && !mcpBusy && create() }))),
+        toggle("docs:read", "List and read docs.", mint.read, (on) => { mint.read = on; render(); }),
+        toggle("docs:write", "Comment, reply, resolve threads, suggest edits and propose decisions, as you.", mint.write, (on) => { mint.write = on; render(); }),
+        h("div", { class: "set-actions" }, h("span", { class: "spacer" }),
+          h("button", { type: "button", class: "btn primary", disabled: !ready || mcpBusy, onclick: create }, mcpBusy ? "Working…" : "Create"))),
+    ];
+  }
+
+  const BODIES = { general, repos, secrets, people, prompts, integrations, merging, account, connected };
 
   function view(sub) {
     const admin = state.me?.role === "admin";
-    const sections = admin ? SECTIONS : SECTIONS.filter((s) => s.key === "account");
+    const sections = admin ? SECTIONS : SECTIONS.filter((s) => MEMBER_SECTIONS.includes(s.key));
     const key = sections.some((s) => s.key === sub) ? sub : sections[0].key;
     const current = SECTIONS.find((s) => s.key === key);
     return h("div", { class: "settings" },

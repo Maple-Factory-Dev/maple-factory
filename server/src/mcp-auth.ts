@@ -8,7 +8,7 @@
 import type { Env } from "./env.ts";
 import { currentMember, revoked, stillMember, toMember, type MemberRow } from "./auth.ts";
 import type { Member } from "./wire.ts";
-import { audit, b64url, html, publicOrigin, randomToken, readCapped, sha256, sign, text, verify } from "./util.ts";
+import { audit, b64url, html, isLocal, publicOrigin as configuredOrigin, randomToken, readCapped, sha256, sign, text, verify } from "./util.ts";
 
 export const SCOPES = ["docs:read", "docs:write"] as const;
 export type Scope = (typeof SCOPES)[number];
@@ -22,6 +22,11 @@ const MAX_REDIRECTS = 5;
 const MAX_CLIENTS = 1000;
 const MAX_LABEL = 80;
 const MAX_TOKENS_PER_MEMBER = 50;
+
+/** Where clients reach us: PUBLIC_URL, except on localhost (wrangler dev), where the request's own origin keeps its port. */
+function publicOrigin(request: Request, env: Env): string {
+  return isLocal(request) ? new URL(request.url).origin : configuredOrigin(request, env);
+}
 
 export interface McpCaller {
   member: Member;
@@ -280,7 +285,8 @@ async function authorize(request: Request, env: Env, url: URL, origin: string): 
   const scopes = parseScopes(params.get("scope"));
   if (!scopes.length) return back({ error: "invalid_scope" });
 
-  const me = request.headers.get("authorization") ? null : await currentMember(request, env);
+  // A web session, or an app's own token (strictly more power than what it grants), never an MCP token.
+  const me = await currentMember(request, env);
   if (!me) {
     if (request.method === "POST") return text("Sign in first.", 401);
     const next = `/oauth/authorize?${url.searchParams.toString().replace(/\+/g, "%20")}`;

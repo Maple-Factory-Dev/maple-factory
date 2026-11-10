@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MCP: Claude, Cursor and your docs · Maple Factory</title>
+  <meta name="description" content="Connect Claude Desktop, claude.ai, Claude Code or Cursor to your factory’s docs over MCP: read them, comment, suggest edits and propose decisions, as you.">
+  <meta name="theme-color" content="#faf5ec" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1b0e1f" media="(prefers-color-scheme: dark)">
+  <link rel="icon" type="image/png" href="/img/favicon.png">
+  <link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
+  <script>
+    try { var t = localStorage.getItem('mf-theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/main.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="/" aria-label="Maple Factory home">
+        <picture><source srcset="/img/icon-512.webp" type="image/webp"><img src="/img/icon-512.jpg" alt="" width="30" height="30"></picture>
+        <span>Maple Factory</span>
+      </a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="/#process">How it works</a>
+        <a href="/#install">Install</a>
+        <a href="/download">Download</a>
+      </nav>
+      <div class="nav-actions">
+        <button class="theme-toggle" type="button" aria-label="Switch theme" title="Switch theme">
+          <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6"/></svg>
+          <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="deploy security" aria-labelledby="mcp-title">
+      <div class="wrap deploy-inner">
+        <p class="kicker">MCP</p>
+        <h1 id="mcp-title">Your docs, in Claude and Cursor.</h1>
+        <p class="deploy-lede">Your factory runs a remote MCP server. Connect Claude Desktop, claude.ai, Claude Code or Cursor to it, and they can read your planning docs, comment on them, suggest edits and propose decisions, as you. A person still accepts every edit and decides every decision.</p>
+
+        <nav class="sec-toc" aria-label="On this page">
+          <a href="#endpoint">The endpoint</a>
+          <a href="#what">What it can do</a>
+          <a href="#scopes">Scopes</a>
+          <a href="#claude">Claude Desktop and claude.ai</a>
+          <a href="#claude-code">Claude Code</a>
+          <a href="#cursor">Cursor</a>
+          <a href="#revoking">Revoking</a>
+          <a href="#security">Security</a>
+        </nav>
+
+        <section class="sec-part" id="endpoint" aria-labelledby="endpoint-title">
+          <h2 id="endpoint-title">The endpoint</h2>
+          <p>It’s <code>https://YOUR-FACTORY/mcp</code>, over MCP’s streamable HTTP transport, with <code>YOUR-FACTORY</code> replaced by your factory’s host. The web app’s <b>Settings › Connected apps</b> shows the exact URL to copy. Every member can connect, not only admins.</p>
+        </section>
+
+        <section class="sec-part" id="what" aria-labelledby="what-title">
+          <h2 id="what-title">What it can and can’t do</h2>
+          <ul>
+            <li>It can list your factory’s docs and read one, with its block ids and open threads.</li>
+            <li>It can comment on a doc, reply to a thread, resolve a thread, suggest an edit and propose a decision.</li>
+            <li>It never edits a doc’s text. A suggested edit waits for a person to accept it, and a proposed decision waits for a person to decide it.</li>
+            <li>Everything it writes shows as you, with a <em>&lt;client&gt; via MCP</em> badge (like <em>Claude via MCP</em>), so everyone can tell it came from an agent.</li>
+            <li>It sees only docs: not tasks, code, secrets or settings.</li>
+          </ul>
+        </section>
+
+        <section class="sec-part" id="scopes" aria-labelledby="scopes-title">
+          <h2 id="scopes-title">Scopes</h2>
+          <ul>
+            <li><code>docs:read</code>: <code>list_docs</code> and <code>read_doc</code>.</li>
+            <li><code>docs:write</code>: <code>comment_on_doc</code>, <code>reply_to_doc_thread</code>, <code>resolve_doc_thread</code>, <code>suggest_doc_edit</code> and <code>propose_decision</code>.</li>
+          </ul>
+          <p>A client gets only the tools its scopes allow. Give it <code>docs:write</code> only if you want it writing as you.</p>
+        </section>
+
+        <section class="sec-part" id="claude" aria-labelledby="claude-title">
+          <h2 id="claude-title">Claude Desktop and claude.ai</h2>
+          <ol class="deploy-steps">
+            <li>
+              <h3>Add a custom connector</h3>
+              <p>In Claude Desktop or claude.ai, open <b>Settings › Connectors › Add custom connector</b>, name it Maple and paste your factory’s <code>/mcp</code> URL.</p>
+            </li>
+            <li>
+              <h3>Approve it in your factory</h3>
+              <p>Claude opens your factory’s consent page. Sign in with GitHub if you aren’t already, check which scopes it asks for, and approve. It shows up in <b>Settings › Connected apps</b> as an OAuth client.</p>
+            </li>
+          </ol>
+          <p>This is OAuth 2.1: the authorization code flow with PKCE (S256) and dynamic client registration, so there’s nothing to paste but the URL. Access tokens last an hour and the client refreshes them on its own; each refresh replaces the old pair. A refresh token goes unused for 30 days and the connector has to be approved again.</p>
+        </section>
+
+        <section class="sec-part" id="claude-code" aria-labelledby="claude-code-title">
+          <h2 id="claude-code-title">Claude Code</h2>
+          <p>Make a personal token in <b>Settings › Connected apps › New personal token</b>. It’s shown once, starting <code>mfp_</code>, with this command filled in:</p>
+          <pre class="doc-code"><code>claude mcp add --transport http maple https://YOUR-FACTORY/mcp --header "Authorization: Bearer mfp_…"</code></pre>
+        </section>
+
+        <section class="sec-part" id="cursor" aria-labelledby="cursor-title">
+          <h2 id="cursor-title">Cursor</h2>
+          <p>With a personal token, add this to <code>~/.cursor/mcp.json</code> (or a project’s <code>.cursor/mcp.json</code>):</p>
+          <pre class="doc-code"><code>{
+  "mcpServers": {
+    "maple": {
+      "url": "https://YOUR-FACTORY/mcp",
+      "headers": {
+        "Authorization": "Bearer mfp_…"
+      }
+    }
+  }
+}</code></pre>
+          <p>Any other client that speaks streamable HTTP and can send a header works the same way.</p>
+        </section>
+
+        <section class="sec-part" id="revoking" aria-labelledby="revoking-title">
+          <h2 id="revoking-title">Revoking</h2>
+          <ul>
+            <li>Your OAuth clients and personal tokens are listed in <b>Settings › Connected apps</b>, with their scopes, when they were made and when they were last used. <b>Revoke</b> stops one at once.</li>
+            <li>When an admin removes a member’s access in <b>Settings › People</b>, all of that member’s MCP tokens stop working too.</li>
+          </ul>
+        </section>
+
+        <section class="sec-part" id="security" aria-labelledby="security-title">
+          <h2 id="security-title">Security</h2>
+          <ul>
+            <li>Tokens are stored hashed (SHA-256); the factory can’t show one again after it’s made.</li>
+            <li>MCP tokens work only at <code>/mcp</code>. They can’t sign in to the web app or call its API, and they can’t manage tokens.</li>
+            <li>The apps’ own tokens (the Mac and phone apps’) don’t work at <code>/mcp</code>.</li>
+            <li>Issuing and revoking a token are recorded in the factory’s audit log. See <a href="/security">Security</a> for the rest.</li>
+          </ul>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap foot-inner">
+      <p class="foot-brand"><picture><source srcset="/img/icon-512.webp" type="image/webp"><img src="/img/icon-512.jpg" alt="" width="22" height="22" loading="lazy"></picture> Maple Factory</p>
+      <p class="foot-note">Set in <a href="https://afomera.dev/fonts">Atlas</a>. Boiled down in small batches.</p>
+      <p class="foot-links"><a href="/security">Security</a></p>
+      <p class="foot-copy">© <span id="year">2026</span> Maple Factory</p>
+    </div>
+  </footer>
+</body>
+</html>
