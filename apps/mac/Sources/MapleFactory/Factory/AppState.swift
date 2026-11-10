@@ -2872,6 +2872,8 @@ final class AppState {
             case "addmachine": NotificationCenter.default.post(name: LiveMachinesView.demoAdd, object: parts.count > 1 ? parts[1] : nil)
             case "backlog": sendToBacklog(parts[1])
             case "plan": plan(parts[1])
+            // `queued:<id>` puts a task in planning's queue, waiting on a slot (the mockup never queues one).
+            case "queued": update(parts[1]) { $0.state = .planning; $0.queued = true }
             case "review": approveChanges(parts[1])
             case "pass": passAutoReview(parts[1])
             case "merge": merge(parts[1])
