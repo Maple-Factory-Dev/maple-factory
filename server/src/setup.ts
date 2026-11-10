@@ -53,11 +53,14 @@ function manifest(origin: string, org: string, personal: boolean) {
       // Pushing and merging a change to .github/workflows/* needs it: GitHub refuses those without it.
       workflows: "write",
       statuses: "read",
+      // Comments on a pull request's conversation come as issue_comment events, which need it (MF-424).
+      issues: "read",
       // A personal account has no members; its owner is the only one who signs in.
       ...(personal ? {} : { members: "read" }),
       metadata: "read",
     },
-    default_events: ["check_run", "check_suite", "status", "pull_request"],
+    // PR comments, reviews and inline review comments show on the task, marked as from GitHub (MF-424).
+    default_events: ["check_run", "check_suite", "status", "pull_request", "issue_comment", "pull_request_review", "pull_request_review_comment"],
   };
 }
 
