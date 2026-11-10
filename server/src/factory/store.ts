@@ -2,7 +2,7 @@
 // the apps see them), the sessions working on them, and per-machine settings. One Durable Object
 // owns it all, so every change is serialized without locks.
 
-import type { Doc, DocThread, Goal, GoalFollow, Recurring, GoalTally, IntakeRequest, MachineSettings, McpConnector, MergeHold, Note, OrgRepo, PromptAdditions, QuietHours, RepoWorktreeScripts, RiskAcceptance, RiskPolicy, Role, Task, WorktreeScripts } from "../wire.ts";
+import type { Decision, DecisionEvent, Doc, DocThread, Goal, GoalFollow, Recurring, GoalTally, IntakeRequest, MachineSettings, McpConnector, MergeHold, Note, OrgRepo, PromptAdditions, QuietHours, RepoWorktreeScripts, RiskAcceptance, RiskPolicy, Role, Task, WorktreeScripts } from "../wire.ts";
 import { DEFAULT_POLICY } from "./policy.ts";
 import { validateQuietHours } from "../quiet-hours.ts";
 import { inferEvents, type StatEvent } from "./stats.ts";
@@ -170,6 +170,12 @@ export class Store {
       CREATE TABLE IF NOT EXISTS repo_scripts (repo TEXT PRIMARY KEY, doc TEXT NOT NULL, updated_by TEXT NOT NULL, updated_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS recurring (id TEXT PRIMARY KEY, goal TEXT NOT NULL, doc TEXT NOT NULL, next_at INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS recurring_next ON recurring (next_at);
+      CREATE TABLE IF NOT EXISTS decisions (id TEXT PRIMARY KEY, doc TEXT NOT NULL, goal TEXT, status TEXT NOT NULL, updated_at INTEGER NOT NULL, json TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS decisions_doc ON decisions (doc);
+      CREATE TABLE IF NOT EXISTS decision_log (seq INTEGER PRIMARY KEY AUTOINCREMENT, decision TEXT NOT NULL, at INTEGER NOT NULL, by TEXT NOT NULL, json TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS decision_log_decision ON decision_log (decision, seq);
+      CREATE TRIGGER IF NOT EXISTS decision_log_no_update BEFORE UPDATE ON decision_log BEGIN SELECT RAISE(ABORT, 'decision_log is append-only'); END;
+      CREATE TRIGGER IF NOT EXISTS decision_log_no_delete BEFORE DELETE ON decision_log BEGIN SELECT RAISE(ABORT, 'decision_log is append-only'); END;
     `);
     // A repo's prompt additions came later: added once, to a table made before them.
     if (!this.sql.exec<{ name: string }>("PRAGMA table_info(repo_scripts)").toArray().some((c) => c.name === "prompts")) {
@@ -523,9 +529,12 @@ export class Store {
     const open = new Map(
       this.sql.exec<{ doc: string; n: number }>("SELECT doc, COUNT(*) AS n FROM doc_threads WHERE json_extract(json, '$.resolved') IS NOT 1 GROUP BY doc").toArray().map((r) => [r.doc, r.n]),
     );
+    const openDecisions = new Map(
+      this.sql.exec<{ doc: string; n: number }>("SELECT doc, COUNT(*) AS n FROM decisions WHERE status = 'proposed' GROUP BY doc").toArray().map((r) => [r.doc, r.n]),
+    );
     return this.sql.exec<{ json: string }>("SELECT json FROM docs ORDER BY updated_at DESC").toArray().map((r) => {
       const d: Doc = JSON.parse(r.json);
-      return { ...d, openThreads: open.get(d.id) || null };
+      return { ...d, openThreads: open.get(d.id) || null, openDecisions: openDecisions.get(d.id) || null };
     });
   }
 
@@ -534,14 +543,14 @@ export class Store {
     const row = this.sql.exec<{ json: string }>("SELECT json FROM docs WHERE id = ?", id).toArray()[0];
     if (!row) return null;
     const d: Doc = JSON.parse(row.json);
-    return { ...d, openThreads: this.openThreadCount(id) || null };
+    return { ...d, openThreads: this.openThreadCount(id) || null, openDecisions: this.openDecisionCount(id) || null };
   }
 
   saveDoc(doc: Doc) {
     this.sql.exec(
       `INSERT INTO docs (id, goal, created_by, created_at, updated_at, archived, json) VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (id) DO UPDATE SET goal = excluded.goal, updated_at = excluded.updated_at, archived = excluded.archived, json = excluded.json`,
-      doc.id, doc.goal ?? null, doc.createdBy, doc.createdAt, doc.updatedAt, doc.archived ? 1 : 0, JSON.stringify({ ...doc, openThreads: undefined }),
+      doc.id, doc.goal ?? null, doc.createdBy, doc.createdAt, doc.updatedAt, doc.archived ? 1 : 0, JSON.stringify({ ...doc, openThreads: undefined, openDecisions: undefined }),
     );
   }
 
@@ -579,6 +588,45 @@ export class Store {
 
   openThreadCount(docId: string): number {
     return this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM doc_threads WHERE doc = ? AND json_extract(json, '$.resolved') IS NOT 1", docId).toArray()[0]?.n ?? 0;
+  }
+
+  // Doc decisions (MF-367): the current state in `decisions`, every change in the append-only `decision_log`
+  // (triggers refuse UPDATE and DELETE). recordDecision is the only way in: it writes both in one synchronous
+  // step, which a Durable Object commits as one transaction.
+
+  recordDecision(decision: Decision, event: Omit<DecisionEvent, "seq">): DecisionEvent {
+    const row = this.sql.exec<{ seq: number }>(
+      "INSERT INTO decision_log (decision, at, by, json) VALUES (?, ?, ?, ?) RETURNING seq",
+      decision.id, event.at, event.by, JSON.stringify(event),
+    ).toArray()[0];
+    this.sql.exec(
+      `INSERT INTO decisions (id, doc, goal, status, updated_at, json) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT (id) DO UPDATE SET goal = excluded.goal, status = excluded.status, updated_at = excluded.updated_at, json = excluded.json`,
+      decision.id, decision.doc, decision.goal ?? null, decision.status, event.at, JSON.stringify(decision),
+    );
+    return { ...event, seq: Number(row.seq) };
+  }
+
+  /** Every decision, or one doc's, oldest first. */
+  decisions(docId?: string): Decision[] {
+    const rows = docId
+      ? this.sql.exec<{ json: string }>("SELECT json FROM decisions WHERE doc = ? ORDER BY rowid", docId)
+      : this.sql.exec<{ json: string }>("SELECT json FROM decisions ORDER BY rowid");
+    return rows.toArray().map((r) => JSON.parse(r.json));
+  }
+
+  decision(id: string): Decision | null {
+    const row = this.sql.exec<{ json: string }>("SELECT json FROM decisions WHERE id = ?", id).toArray()[0];
+    return row ? JSON.parse(row.json) : null;
+  }
+
+  decisionLog(id: string): DecisionEvent[] {
+    return this.sql.exec<{ seq: number; json: string }>("SELECT seq, json FROM decision_log WHERE decision = ? ORDER BY seq", id)
+      .toArray().map((r) => ({ ...JSON.parse(r.json), seq: Number(r.seq) }));
+  }
+
+  openDecisionCount(docId: string): number {
+    return this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM decisions WHERE doc = ? AND status = 'proposed'", docId).toArray()[0]?.n ?? 0;
   }
 
   // Recurring tasks: a goal's saved prompts that start a new task every interval.
