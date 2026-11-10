@@ -1125,6 +1125,9 @@ struct MergeHoldBanner: View {
                 .help("Let merges into \(hold.repo) go again; the tasks waiting merge on their own")
         }
         .liftConfirmation(isPresented: $confirmsLift, hold: hold, lift: lift)
+        .onReceive(NotificationCenter.default.publisher(for: LineStoppedBanner.demoLift)) { note in
+            if (note.object as? String)?.lowercased() == hold.repo.lowercased() { confirmsLift = true }
+        }
     }
 }
 

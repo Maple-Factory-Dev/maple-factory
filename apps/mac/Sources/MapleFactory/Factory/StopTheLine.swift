@@ -145,7 +145,8 @@ struct StopTheLinePopover: View {
 struct LineStoppedBanner: View {
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
-    /// A headless script's `stopline:liftask`: opens the Lift confirmation.
+    /// A headless script's `stopline:liftask`: opens the Lift confirmation (`stopline:liftask:<repo>`: that hold's
+    /// "Lift hold" in the popover or Settings › Repositories).
     static let demoLift = Notification.Name("LineStoppedBanner.demoLift")
     /// "Lift" asks first (MF-412).
     @State private var confirmsLift = false
@@ -177,8 +178,8 @@ struct LineStoppedBanner: View {
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Line stopped")
             .transition(.move(edge: .top).combined(with: .opacity))
-            .onReceive(NotificationCenter.default.publisher(for: Self.demoLift)) { _ in
-                if client.mergeHolds.count == 1 { confirmsLift = true }
+            .onReceive(NotificationCenter.default.publisher(for: Self.demoLift)) { note in
+                if note.object == nil, client.mergeHolds.count == 1 { confirmsLift = true }
             }
         }
     }
