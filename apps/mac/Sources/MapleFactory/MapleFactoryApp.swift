@@ -55,6 +55,7 @@ struct MapleFactoryApp: App {
                 // Every @AppStorage reads the headless run's own suite when there is one.
                 .defaultAppStorage(AppDefaults)
                 .background { if Headless.isOn { HeadlessWindow() } }
+                .background(TaskKeyWindowTag())
         }
         // Links never make a window of their own; the one there (or the one launch opens) takes them.
         .handlesExternalEvents(matching: [])

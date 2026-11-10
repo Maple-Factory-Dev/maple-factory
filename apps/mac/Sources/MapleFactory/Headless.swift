@@ -76,6 +76,8 @@ enum Headless {
                                            windowNumber: window.windowNumber, context: nil, characters: characters,
                                            charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)
         else { return }
+        // Local monitors see a key before any key equivalent does.
+        if TaskKeyMonitor.handleFirst(event) { return }
         if window.performKeyEquivalent(with: event) { return }
         if !modifiers.isEmpty, NSApp.mainMenu?.performKeyEquivalent(with: event) == true { return }
         NSApp.postEvent(event, atStart: false)

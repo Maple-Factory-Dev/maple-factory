@@ -88,8 +88,18 @@ enum TextFocus {
 @MainActor final class TaskKeyMonitor {
     private var monitor: Any?
 
+    /// The installed monitor's state, so a headless key press can go through the monitor first, as AppKit does.
+    private static weak var installedState: AppState?
+
+    /// Headless: a key the monitor takes, before key equivalents, as a real local monitor sees it.
+    static func handleFirst(_ event: NSEvent) -> Bool {
+        guard let state = installedState else { return false }
+        return handle(event, state: state)
+    }
+
     func install(_ state: AppState) {
         guard monitor == nil else { return }
+        Self.installedState = state
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak state] event in
             guard let state, Self.handle(event, state: state) else { return event }
             return nil
@@ -121,16 +131,32 @@ enum TextFocus {
         }
     }
 
+    /// The windows ContentView lives in, tagged by `TaskKeyWindowTag`; Settings, About and the rest aren't them.
+    static let mainWindows = NSHashTable<NSWindow>.weakObjects()
+
     private static func handle(_ event: NSEvent, state: AppState) -> Bool {
-        guard event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
-              // The main window only (a popover or sheet is a window of its own). Headless, it's never key.
-              let window = event.window, window.isKeyWindow || Headless.isOn, window.isMainWindow || Headless.isOn,
-              window.attachedSheet == nil, !(window is NSPanel),
-              !state.keysBelongToTyping(in: window),
+        let flags = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        // The main window only (a popover or sheet is a window of its own). Headless, it's never key.
+        guard let window = event.window, mainWindows.contains(window),
+              window.isKeyWindow || Headless.isOn, window.isMainWindow || Headless.isOn,
+              window.attachedSheet == nil, !(window is NSPanel) else { return false }
+
+        // ⌘⌥↓ / ⌘⌥↑: the full view's Next / Previous Task, as the Go menu's items (a menu item SwiftUI hasn't
+        // re-enabled yet, or a window that isn't key, would otherwise drop them). Also from the comment field:
+        // ⌘⌥ arrows do nothing in text, and the full view puts the cursor there.
+        if flags == [.command, .option], event.keyCode == 125 || event.keyCode == 126,
+           state.focusedTask != nil, !state.showPalette, !state.isComposing {
+            state.stepTask(forward: event.keyCode == 125)
+            return true
+        }
+
+        guard flags.isEmpty, !state.keysBelongToTyping(in: window),
               let key = key(code: event.keyCode, characters: event.charactersIgnoringModifiers) else { return false }
 
-        // Esc: out of the full view, back to the rows it came from; else the panel's peek closes.
+        // Esc: out of the full view, back to the rows it came from; else the panel's peek closes. An overlay
+        // drawn in the window (the lightbox, an attest form) closes on its own Esc first.
         if key == .close {
+            if state.lightbox != nil || state.attestingItem != nil { return false }
             if state.focusedTask != nil { state.closeFocus(); return true }
             if state.showInspector, state.taskPanelEnabled { state.closeTaskPanel(); return true }
             return false
@@ -158,6 +184,20 @@ enum TextFocus {
         case .close: return false
         }
         return true
+    }
+}
+
+/// Tags the window ContentView is in, so the key monitor leaves Settings, About and other windows alone.
+struct TaskKeyWindowTag: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { TagView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class TagView: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            // Not the window's identifier: SwiftUI keeps its own there.
+            if let window { MainActor.assumeIsolated { _ = TaskKeyMonitor.mainWindows.add(window) } }
+        }
     }
 }
 

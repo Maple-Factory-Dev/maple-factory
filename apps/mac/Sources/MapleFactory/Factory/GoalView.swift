@@ -418,6 +418,14 @@ struct BoardColumns: View {
         }
         .scrollIndicators(.automatic)
         .taskKeyboardNav(.columns(columns.map { Self.page($0.tasks, limit: limits[$0.id] ?? Self.pageSize).shown.map(\.id) }))
+        .onChange(of: state.keyboardCursor) { _, cursor in
+            // The cursor on a column's last shown card shows the next page, so ↓ walks the whole column.
+            guard let cursor else { return }
+            for entry in columns {
+                let page = Self.page(entry.tasks, limit: limits[entry.id] ?? Self.pageSize)
+                if page.remaining > 0, page.shown.last?.id == cursor { limits[entry.id] = page.shown.count + Self.pageSize }
+            }
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onScrollGeometryChange(for: Bool.self) { geometry in
             geometry.contentSize.width - geometry.visibleRect.maxX > 1
