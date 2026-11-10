@@ -308,3 +308,52 @@ test("diagram prefs round-trip through storage and fall back when storage throws
   assert.equal(readDiagramPref(undefined), null);
   assert.equal(diagramMode({ stored: readDiagramPref(throwingStore), editable: true }), "preview");
 });
+
+// MF-376: typing `MF-12 ` leaves the task ref and exactly one space, with the caret after it.
+test("typing MF-12 and a space turns it into a task ref with one space after", async () => {
+  const { EditorState, TextSelection } = await import("@tiptap/pm/state");
+  const { TASK_REF_TYPED, taskRefTyped } = await import("../docs-editor/src/typing.js");
+  for (const before of ["see ", ""]) {
+    // TipTap has already inserted the typed space when the rule's handler runs.
+    const text = `${before}MF-12 `;
+    const doc = schema.node("doc", null, [schema.node("paragraph", null, [schema.text(`${text}tail`)])]);
+    const caret = 1 + text.length;
+    let state = EditorState.create({ schema, doc, selection: TextSelection.create(doc, caret) });
+    const textBefore = state.doc.textBetween(1, caret);
+    const match = textBefore.match(TASK_REF_TYPED);
+    assert.ok(match, "the rule matches");
+    const tr = state.tr;
+    taskRefTyped({ state: { tr, schema }, range: { from: caret - match[0].length, to: caret }, match }, ctx.tasks);
+    state = state.apply(tr);
+    const para = state.doc.firstChild!;
+    assert.equal(para.childCount, before ? 3 : 2);
+    const ref = para.child(before ? 1 : 0);
+    assert.equal(ref.type.name, "taskRef");
+    assert.equal(ref.attrs.id, "MF-12");
+    assert.equal(para.child(before ? 2 : 1).text, " tail", "exactly one space after the ref");
+    assert.equal(state.selection.from, 1 + before.length + 2, "the caret sits right after the space");
+  }
+});
+
+test("an unknown id typed with a space stays plain text", async () => {
+  const { TASK_REF_TYPED, taskRefTyped } = await import("../docs-editor/src/typing.js");
+  const match = "MF-999 ".match(TASK_REF_TYPED)!;
+  assert.equal(taskRefTyped({ state: {}, range: { from: 1, to: 8 }, match }, ctx.tasks), null);
+});
+
+// MF-376: edits typed into the stand-in paragraph before the provider's first sync were merged badly with the
+// server's state; the editor now holds local edits until then, while the server's own update goes through.
+test("local edits wait for the first sync; the server's update and later edits go through", async () => {
+  const { EditorState } = await import("@tiptap/pm/state");
+  const { ySyncPluginKey } = await import("@tiptap/y-tiptap");
+  const { syncHold } = await import("../docs-editor/src/typing.js");
+  let synced = false;
+  const state = EditorState.create({ schema, plugins: [syncHold(() => synced)] });
+  const typed = (s: InstanceType<typeof EditorState>) => s.tr.insertText("x", 1);
+  assert.equal(state.applyTransaction(typed(state)).state.doc.textContent, "", "typing before sync is held");
+  const remote = state.tr.insertText("server", 1).setMeta(ySyncPluginKey, { isChangeOrigin: true });
+  const afterSync = state.applyTransaction(remote).state;
+  assert.equal(afterSync.doc.textContent, "server", "the server's state lands before sync");
+  synced = true;
+  assert.equal(afterSync.applyTransaction(typed(afterSync)).state.doc.textContent, "xserver", "typing after sync lands");
+});

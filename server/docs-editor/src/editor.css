@@ -275,3 +275,6 @@
 .doc-maketasks-error { color: var(--danger, #c33); font-size: 13px; min-height: 1em; }
 .doc-maketasks-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .doc-decision-tasks { margin: 6px 0 0; padding-left: 18px; font-size: 13px; }
+
+/* Before the first sync (MF-376) the editor takes no edits: say so instead of swallowing keystrokes silently. */
+.doc-editor-shell.syncing .doc-prose { opacity: .55; cursor: progress; }
