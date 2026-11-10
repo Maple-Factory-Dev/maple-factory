@@ -43,6 +43,8 @@ struct DocEditorView: NSViewRepresentable {
     let tasks: [[String: Any]]
     /// The doc's comment threads, JSON-encoded (MF-364): pushed with `mapleDocs.updateThreads` when they change.
     var threadsJSON: String = "[]"
+    /// The doc's decisions, JSON-encoded (MF-367): pushed with `mapleDocs.updateDecisions` when they change.
+    var decisionsJSON: String = "[]"
     let dark: Bool
     let status: DocEditorStatus
     /// Bumped by Retry to reload the page.
@@ -51,7 +53,7 @@ struct DocEditorView: NSViewRepresentable {
     var focusOnSync = false
     /// Called after that focus, so it happens once.
     var onFocused: () -> Void = {}
-    /// The embed's `command` events (doc.comment / doc.resolve / doc.reopen), for the app's socket.
+    /// The embed's `command` events (doc.comment / doc.resolve / doc.reopen, decision.*), for the app's socket.
     var onCommand: ([String: Any]) -> Void = { _ in }
     let openTask: (String) -> Void
 
@@ -78,9 +80,11 @@ struct DocEditorView: NSViewRepresentable {
         let reload = coordinator.view?.docId != docId || coordinator.view?.source != source || coordinator.view?.reloadToken != reloadToken
         let themeChanged = coordinator.view?.dark != dark
         let threadsChanged = coordinator.view?.threadsJSON != threadsJSON
+        let decisionsChanged = coordinator.view?.decisionsJSON != decisionsJSON
         coordinator.update(self)
         if reload { coordinator.loadPage() } else if themeChanged { coordinator.setTheme() }
         if !reload && threadsChanged { coordinator.pushThreads() }
+        if !reload && decisionsChanged { coordinator.pushDecisions() }
     }
 
     static func dismantleNSView(_ web: WKWebView, coordinator: Coordinator) {
@@ -152,10 +156,17 @@ struct DocEditorView: NSViewRepresentable {
                                      in: nil, in: .page) { _ in }
         }
 
+        func pushDecisions() {
+            guard let view else { return }
+            web?.callAsyncJavaScript("window.mapleDocs?.updateDecisions(JSON.parse(json))", arguments: ["json": view.decisionsJSON],
+                                     in: nil, in: .page) { _ in }
+        }
+
         private func load() {
             guard let view, let web else { return }
             var args: [String: Any] = ["docId": view.docId, "me": view.me, "members": view.members, "tasks": view.tasks]
             if let threads = try? JSONSerialization.jsonObject(with: Data(view.threadsJSON.utf8)) { args["threads"] = threads }
+            if let decisions = try? JSONSerialization.jsonObject(with: Data(view.decisionsJSON.utf8)) { args["decisions"] = decisions }
             switch view.source {
             case .live(_, let token): args["token"] = token
             case .demo(let markdown): args["demo"] = ["markdown": markdown]

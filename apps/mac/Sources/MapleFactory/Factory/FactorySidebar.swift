@@ -30,6 +30,10 @@ struct FactorySidebar: View {
                 navRow("Docs", icon: "doc.richtext", destination: .docs,
                        badge: client.isSignedIn ? FeedState.openThreadTotal(client.docs).nonZeroBadge : nil,
                        count: "\(DocsIndex.docs(client).count)")
+                if client.isSignedIn {
+                    navRow("Decisions", icon: "checkmark.seal", destination: .decisions,
+                           badge: FeedState.openDecisionTotal(client.decisions).nonZeroBadge)
+                }
                 navRow("Usage", icon: "gauge.with.dots.needle.33percent", destination: .usage)
                 if client.canSeeStats {
                     navRow("Statistics", icon: "chart.bar.xaxis", destination: .statistics)

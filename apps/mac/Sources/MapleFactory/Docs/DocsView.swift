@@ -120,6 +120,25 @@ struct ThreadBadge: View {
     }
 }
 
+/// A goal's open decisions (MF-367): opens the Decisions page; nothing when there are none.
+struct DecisionBadge: View {
+    @Environment(AppState.self) private var state
+    let count: Int
+    var body: some View {
+        if count > 0 {
+            Button { state.destination = .decisions } label: {
+                Label("\(count) open decision\(count == 1 ? "" : "s")", systemImage: "checkmark.seal")
+                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Capsule().fill(Color.orange.opacity(0.14)))
+            }
+            .buttonStyle(.plain)
+            .help("Decisions in this goal's docs waiting for a person")
+        }
+    }
+}
+
 /// One doc in a list: opens on click; a context menu renames it inline, archives it or copies its link.
 struct DocRow: View {
     @Environment(AppState.self) private var state
@@ -190,6 +209,7 @@ struct GoalDocsSection: View {
                 Text("Docs").font(.system(size: 13, weight: .semibold))
                 Text("\(docs.count)").font(.system(size: 12).monospacedDigit()).foregroundStyle(Theme.textMuted)
                 ThreadBadge(count: FeedState.openThreadTotal(docs))
+                if let goalId { DecisionBadge(count: FeedState.openDecisionCount(client.decisions, goal: goalId)) }
                 Spacer()
                 if client.isSignedIn {
                     Button { creating = true } label: { Label("New doc", systemImage: "plus").font(.system(size: 12)) }
@@ -266,7 +286,7 @@ struct DocPage: View {
             }
             if let source {
                 DocEditorView(docId: id, source: source, me: me, members: members, tasks: tasks,
-                              threadsJSON: threadsJSON, dark: scheme == .dark,
+                              threadsJSON: threadsJSON, decisionsJSON: decisionsJSON, dark: scheme == .dark,
                               status: status, reloadToken: reload,
                               focusOnSync: state.focusDoc == id,
                               onFocused: { if state.focusDoc == id { state.focusDoc = nil } },
@@ -286,6 +306,13 @@ struct DocPage: View {
     /// The doc's threads as JSON for `mapleDocs.updateThreads` (MF-364).
     private var threadsJSON: String {
         let list = client.docThreads[id] ?? []
+        guard let data = try? JSONEncoder().encode(list) else { return "[]" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// The doc's decisions as JSON for `mapleDocs.updateDecisions` (MF-367).
+    private var decisionsJSON: String {
+        let list = client.decisions.filter { $0.doc == id }
         guard let data = try? JSONEncoder().encode(list) else { return "[]" }
         return String(decoding: data, as: UTF8.self)
     }

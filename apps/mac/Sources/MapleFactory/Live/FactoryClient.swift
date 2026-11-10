@@ -68,6 +68,8 @@ import Foundation
     @ObservationIgnored var onDocCreated: ((String) -> Void)?
     /// Comment threads of docs we've opened (MF-364), by doc id.
     private(set) var docThreads: [String: [Wire.DocThread]] = [:]
+    /// Doc decisions (MF-367): from the snapshot and `decision.updated`.
+    private(set) var decisions: [Wire.Decision] = []
     /// Your Draft with AI runs, by id.
     private(set) var drafts: [String: Wire.Draft] = [:]
     /// Goals you chose to follow (true) or stop following (false), by id.
@@ -485,6 +487,7 @@ import Foundation
             online = snapshot.online
             notes = snapshot.notes.map(LiveAdapter.note)
             docs = snapshot.docs ?? []
+            decisions = snapshot.decisions ?? []
             follows = Dictionary(snapshot.follows.map { ($0.goal, $0.following) }, uniquingKeysWith: { _, last in last })
             quietHours = snapshot.quietHours
             intakeRequests = snapshot.intake
@@ -675,6 +678,10 @@ import Foundation
             }
         case .docThreads, .docThreadUpdated:
             FeedState.applyThreads(message, to: &docThreads)
+        case .decisionUpdated(let update):
+            FeedState.upsertDecision(update.decision, into: &decisions)
+        case .decisionLog:
+            break
         case .pushDevices:
             // Phone push devices: only the iPhone and Android apps register or list them.
             break
@@ -1101,7 +1108,7 @@ import Foundation
     func askDocThreads(_ id: String) { send(.docThreads(.init(doc: id))) }
     /// Relays the docs embed's `command` event: only doc.comment / doc.resolve / doc.reopen / doc.suggestion get through.
     func sendDocCommand(_ command: [String: Any]) {
-        guard let type = command["type"] as? String, ["doc.comment", "doc.resolve", "doc.reopen", "doc.suggestion"].contains(type),
+        guard let type = command["type"] as? String, ["doc.comment", "doc.resolve", "doc.reopen", "doc.suggestion", "decision.propose", "decision.edit", "decision.accept", "decision.reject"].contains(type),
               let data = try? JSONSerialization.data(withJSONObject: command),
               let message = try? JSONDecoder().decode(Wire.ClientMessage.self, from: data) else { return }
         send(message)

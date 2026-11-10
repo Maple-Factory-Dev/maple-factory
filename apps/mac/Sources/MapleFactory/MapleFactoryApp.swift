@@ -273,6 +273,7 @@ struct ContentView: View {
         case .intake: page = "requests"
         case .allGoals: page = "goals"
         case .docs: page = "docs"
+        case .decisions: page = "decisions"
         case .doc: page = "doc"
         }
         return state.showInspector ? "\(page)+task.panel" : page
@@ -543,6 +544,7 @@ extension ContentView {
         case .allGoals: AllGoalsView()
         case .goal(let name): GoalView(name: name)
         case .docs: DocsView()
+        case .decisions: DecisionsView()
         case .doc(let id): DocPage(id: id)
         }
     }
