@@ -1810,7 +1810,7 @@ export class Engine {
     const prompt = role === "planner" ? plannerPrompt(task, goal, org, others, repoPrompts, this.store.policy().areas, {
       rules: pathRules(this.store.scriptsFor(taskRepo(task, goal))).map((r) => `${r.glob} ${r.tags.join(",")}`),
       machines: machines.filter((m) => m.owner === task.owner).map((m) => ({ name: m.name, tags: m.tags ?? [], online: m.online })),
-    }) : role === "builder" ? builderPrompt(task, goal, resumed, org, others, repoPrompts, checksFor(this.store.scriptsFor(taskRepo(task, goal)), machine.tags ?? []), this.budget(task)) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main", org, repoPrompts, this.budget(task), this.store.policy().classifier ?? null);
+    }, task.fromDoc?.decision ? this.store.decision(task.fromDoc.decision) ?? null : null) : role === "builder" ? builderPrompt(task, goal, resumed, org, others, repoPrompts, checksFor(this.store.scriptsFor(taskRepo(task, goal)), machine.tags ?? []), this.budget(task)) : reviewerPrompt(task, goal, priv.base ?? goal.base ?? "main", org, repoPrompts, this.budget(task), this.store.policy().classifier ?? null);
     const existing = Boolean(priv.worktree && task.machine === machine.id);
     // A restart on the same machine and worktree picks the agent's own conversation up; elsewhere it starts afresh.
     const from = priv.resumeFrom;

@@ -6,6 +6,7 @@ import * as Y from "yjs";
 import { DatabaseSync } from "node:sqlite";
 import { Engine } from "../src/factory/engine.ts";
 import { Store } from "../src/factory/store.ts";
+import { plannerPrompt, builderPrompt } from "../src/factory/prompts.ts";
 import { initProseMirrorDoc } from "@tiptap/y-tiptap";
 import { schema } from "../docs-editor/src/schema.js";
 import { splitSection, composeBrief, checkSource } from "../src/factory/doc-tasks.ts";
@@ -210,4 +211,25 @@ test("doc.makeTasks: bad sources make no tasks", async () => {
   // A doc with no goal takes the one picked.
   await f.make({ doc: LOOSE, goal: "g2", tasks: one });
   assert.deepEqual(f.drafts().map((t) => [t.id, t.goal, t.after, t.effort]), [["OT-1", "g2", [], null]]);
+});
+
+test("the planner's prompt carries the doc section and the decision's chosen option and rationale; the builder's just the link", async () => {
+  const f = factory();
+  await f.engine.docs.propose("ada", { id: DEC, doc: DOC, question: "Which index?", options: [{ id: "a", label: "Postgres FTS" }, { id: "b", label: "Typesense", note: "hosted" }], rationale: "Typo tolerance matters most." }, { agent: "SR-0 planner", quote: "Build the index." });
+  f.engine.docs.decideDecision("ada", { id: DEC, accept: true, chosen: "b", why: null });
+  await f.make({ doc: DOC, decision: DEC, tasks: [{ title: "Set up Typesense", brief: "Do it." }] });
+  const [task] = f.drafts();
+  const goal = f.store.goal("g")!;
+  const p = plannerPrompt(task, goal, null, [], null, [], null, f.store.decision(DEC));
+  assert.match(p, /## From doc\nThis task was made from "Search plan › Indexing"/);
+  assert.match(p, /<doc-section>\n[\s\S]*<\/doc-section>/);
+  assert.match(p, /Decision \(accepted\): Which index\?\nChosen: Typesense — hosted\nRationale: Typo tolerance matters most\./);
+  assert.match(p, new RegExp(`read_doc \\{doc: "${DOC}"\\}`));
+  // A heading's section is in the planner's prompt as it read when the task was made.
+  await f.make({ doc: DOC, anchor: f.heading(DOC, "## Billing"), tasks: [{ title: "Bill", brief: "Charge." }] });
+  const bill = f.drafts().find((t) => t.title === "Bill")!;
+  assert.match(plannerPrompt(bill, goal), /<doc-section>\n## Billing\n\nCharge monthly\.\n<\/doc-section>/);
+  const b = builderPrompt(task, goal, null);
+  assert.match(b, /## From doc\nMade from "Search plan › Indexing" \(doc .*, decision .*\)\./);
+  assert.doesNotMatch(b, /<doc-section>/);
 });
