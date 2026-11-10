@@ -115,6 +115,7 @@ export class OrgHub extends DurableObject<Env> {
     await this.engine.pollCI();
     await this.engine.mergeDue();
     await this.engine.checkBudgets();
+    await this.engine.checkAskBudgets();
     await this.engine.runRecurring();
     await this.engine.pump();
     await this.engine.slack.sweep();
