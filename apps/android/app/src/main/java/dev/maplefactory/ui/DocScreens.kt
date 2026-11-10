@@ -42,6 +42,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -157,14 +158,15 @@ fun DocScreen(store: FactoryStore, id: String, tab: DocTab, onTab: (DocTab) -> U
         return
     }
     LaunchedEffect(id, store.status) { store.openDoc(id) }
-    val threads = store.feed.openThreads(id)
+    val threads = store.feed.docThreads[id].orEmpty()
+    val openThreads = threads.filter { it.resolved != true }
     val decisions = store.feed.decisions(id)
     Column(Modifier.fillMaxSize()) {
         PrimaryTabRow(selectedTabIndex = tab.ordinal, containerColor = MaterialTheme.colorScheme.background) {
             for (t in DocTab.entries) {
                 val count = when (t) {
                     DocTab.Doc -> 0
-                    DocTab.Comments -> threads.size
+                    DocTab.Comments -> openThreads.size
                     DocTab.Decisions -> decisions.count { it.status == DecisionStatus.Proposed }
                 }
                 Tab(selected = t == tab, onClick = { onTab(t) }, text = { Text(if (count > 0) "${t.title} · $count" else t.title) })
@@ -221,6 +223,11 @@ private fun DocWebView(store: FactoryStore, doc: Doc, threads: List<DocThread>, 
     }
 
     val main = remember { Handler(Looper.getMainLooper()) }
+    val nonce = remember { java.util.UUID.randomUUID().toString() }
+    val embedUrl = remember(demo, theme, store.server) {
+        if (demo) Uri.parse("https://$ASSET_HOST/docs/embed.html?theme=$theme")
+        else Uri.parse(store.server ?: "").buildUpon().appendEncodedPath("app/docs/embed").appendQueryParameter("theme", theme).build()
+    }
     AndroidView(
         modifier = Modifier.fillMaxSize(),
         factory = { context ->
@@ -229,6 +236,21 @@ private fun DocWebView(store: FactoryStore, doc: Doc, threads: List<DocThread>, 
                 settings.domStorageEnabled = true
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 webViewClient = object : WebViewClient() {
+                    // Only the embed loads here. Task links open natively; any other link goes to the browser.
+                    override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                        if (!request.isForMainFrame) return !DocRoute.sameOrigin(request.url, embedUrl)
+                        when (val route = DocRoute.route(request.url, embedUrl)) {
+                            DocRoute.Allow -> return false
+                            is DocRoute.Task -> main.post { currentOpenTask(route.id) }
+                            DocRoute.External -> runCatching {
+                                view.context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, request.url))
+                            }
+                        }
+                        return true
+                    }
+
+                    override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) { ready = false }
+
                     override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                         val url = request.url
                         if (url.host != ASSET_HOST) return null
@@ -246,11 +268,17 @@ private fun DocWebView(store: FactoryStore, doc: Doc, threads: List<DocThread>, 
                     @JavascriptInterface
                     fun postMessage(json: String) {
                         main.post {
+                            // The bridge reaches every frame and any page: only the embed's own main frame is heard.
                             val msg = runCatching { WireJson.parseToJsonElement(json).jsonObject }.getOrNull() ?: return@post
-                            when ((msg["type"] as? JsonPrimitive)?.content) {
+                            if (!DocRoute.isEmbed(url?.let(Uri::parse), embedUrl)) return@post
+                            val type = (msg["type"] as? JsonPrimitive)?.content
+                            // Past `ready`, a message must carry the nonce only the embed's main frame was given.
+                            if (type != "ready" && (msg["nonce"] as? JsonPrimitive)?.content != nonce) return@post
+                            when (type) {
                                 "ready" -> {
+                                    if (ready) return@post // once per page load, so a frame can't re-run load()
                                     ready = true
-                                    evaluateJavascript("mapleDocs.load(${loadArgs()})", null)
+                                    evaluateJavascript("window.__mapleAndroidNonce = \"$nonce\"; mapleDocs.load(${loadArgs()})", null)
                                 }
                                 "command" -> (msg["command"] as? JsonObject)?.let { store.sendDocCommand(it.toString()) }
                                 "openTask" -> msg["id"]?.jsonPrimitive?.content?.let { currentOpenTask(it) }
@@ -259,25 +287,61 @@ private fun DocWebView(store: FactoryStore, doc: Doc, threads: List<DocThread>, 
                         }
                     }
                 }, "MapleAndroid")
-                val url = if (demo) "https://$ASSET_HOST/docs/embed.html?theme=$theme"
-                else Uri.parse(store.server ?: "").buildUpon().appendEncodedPath("app/docs/embed").appendQueryParameter("theme", theme).build().toString()
-                loadUrl(url)
+                loadUrl(embedUrl.toString())
                 web = this
             }
         },
     )
 }
 
+/**
+ * The doc WebView's navigation and bridge policy, as on iOS: only the embed page loads in the view (and subframes
+ * on its origin); a task link on the server opens natively, anything else goes to the browser.
+ */
+sealed interface DocRoute {
+    data object Allow : DocRoute
+    data class Task(val id: String) : DocRoute
+    data object External : DocRoute
+
+    companion object {
+        private val TASK = Regex("^/?task/([A-Za-z]+-\\d+)$")
+
+        fun sameOrigin(url: Uri?, embed: Uri): Boolean =
+            url != null && url.scheme == embed.scheme && url.host == embed.host && url.port == embed.port
+
+        /** The page is the embed itself, so its bridge messages are trusted. */
+        fun isEmbed(url: Uri?, embed: Uri): Boolean = sameOrigin(url, embed) && url?.path == embed.path
+
+        fun route(url: Uri, embed: Uri): DocRoute {
+            if (!sameOrigin(url, embed)) return External
+            if (url.path == embed.path) return Allow
+            url.fragment?.let { TASK.find(it) }?.let { return Task(it.groupValues[1]) }
+            return External
+        }
+    }
+}
+
 // Comments tab
 
 @Composable
 private fun CommentsTab(store: FactoryStore, doc: Doc, threads: List<DocThread>) {
-    if (threads.isEmpty()) {
-        EmptyState("No open comments", Icons.Outlined.ChatBubbleOutline, "Select text in the doc to comment on it.")
-        return
-    }
+    var showResolved by remember(doc.id) { mutableStateOf(false) }
+    val open = threads.filter { it.resolved != true }
+    val resolved = threads.filter { it.resolved == true }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        items(threads, key = { it.id }) { ThreadCard(store, doc, it) }
+        if (open.isEmpty()) item("empty") {
+            EmptyState("No open comments", Icons.Outlined.ChatBubbleOutline, "Select text in the doc to comment on it.")
+        }
+        items(open, key = { it.id }) { ThreadCard(store, doc, it) }
+        if (resolved.isNotEmpty()) {
+            item("toggle") {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Show resolved (${resolved.size})", Modifier.weight(1f), color = secondaryText)
+                    Switch(checked = showResolved, onCheckedChange = { showResolved = it })
+                }
+            }
+            if (showResolved) items(resolved, key = { it.id }) { ThreadCard(store, doc, it) }
+        }
     }
 }
 
@@ -314,11 +378,18 @@ private fun ThreadCard(store: FactoryStore, doc: Doc, thread: DocThread) {
                 reply = ""
             }, enabled = reply.isNotBlank()) { Icon(Icons.AutoMirrored.Filled.Send, "Send") }
         }
-        Row {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (thread.resolved == true) {
+                Text("Resolved${thread.resolvedBy?.let { " by $it" } ?: ""}", style = MaterialTheme.typography.bodySmall, color = tertiaryText)
+            }
             Spacer(Modifier.weight(1f))
-            OutlinedButton(onClick = { store.docResolve(doc.id, thread.id) }) {
-                Icon(Icons.Filled.Check, null, Modifier.size(16.dp))
-                Text("Resolve", Modifier.padding(start = 6.dp))
+            if (thread.resolved == true) {
+                OutlinedButton(onClick = { store.docReopen(doc.id, thread.id) }) { Text("Reopen") }
+            } else {
+                OutlinedButton(onClick = { store.docResolve(doc.id, thread.id) }) {
+                    Icon(Icons.Filled.Check, null, Modifier.size(16.dp))
+                    Text("Resolve", Modifier.padding(start = 6.dp))
+                }
             }
         }
     }

@@ -345,16 +345,33 @@ class FactoryStore(app: Application) : AndroidViewModel(app) {
     fun openDoc(id: String) { if (status == Status.Live) send(ClientMessage.DocThreads(doc = id)) }
     fun docReply(doc: String, thread: String, text: String) = send(ClientMessage.DocComment(doc = doc, thread = thread, text = text))
     fun docResolve(doc: String, thread: String) = send(ClientMessage.DocResolve(doc = doc, thread = thread))
+    fun docReopen(doc: String, thread: String) = send(ClientMessage.DocReopen(doc = doc, thread = thread))
     fun acceptDecision(id: String, chosen: String?, why: String?) = send(ClientMessage.DecisionAccept(id = id, chosen = chosen, why = why))
     fun rejectDecision(id: String, why: String?) = send(ClientMessage.DecisionReject(id = id, why = why))
 
-    /** A command the docs embed made (comments, suggestions, decisions), relayed to the socket as it is. */
+    /**
+     * A command the docs embed made (comments, suggestions, decisions). Only the doc and decision types the editor's
+     * rail sends get through, decoded and sent like any other message, never relayed raw.
+     */
     fun sendDocCommand(json: String) {
-        if (status == Status.Demo) {
-            runCatching { WireJson.decodeFromString(ClientMessage.serializer(), json) }.getOrNull()?.let { demoSend(it) }
-            return
+        val message = docCommand(json) ?: return
+        send(message)
+    }
+
+    companion object {
+        /** The commands the docs editor may send, as on iOS. */
+        val DOC_COMMANDS = setOf(
+            "doc.comment", "doc.resolve", "doc.reopen", "doc.suggestion", "doc.ask", "doc.agentStop",
+            "decision.propose", "decision.edit", "decision.accept", "decision.reject",
+        )
+
+        /** The editor's command, if its type is allowed and it decodes as a wire message. */
+        fun docCommand(json: String): ClientMessage? {
+            val type = runCatching { (WireJson.parseToJsonElement(json) as? kotlinx.serialization.json.JsonObject)?.get("type") as? kotlinx.serialization.json.JsonPrimitive }
+                .getOrNull()?.takeIf { it.isString }?.content ?: return null
+            if (type !in DOC_COMMANDS) return null
+            return runCatching { WireJson.decodeFromString(ClientMessage.serializer(), json) }.getOrNull()
         }
-        socket?.send(json)
     }
 
     /** Tells the factory which task you're looking at, so others see you there. */
@@ -442,6 +459,11 @@ class FactoryStore(app: Application) : AndroidViewModel(app) {
                 apply(ServerToClient.DocThreadUpdated(thread.copy(resolved = true, resolvedBy = me, resolvedAt = now)))
                 feed.doc(message.doc)?.let { apply(ServerToClient.DocUpdated(it.copy(openThreads = feed.openThreads(it.id).size.toLong()))) }
                 notice = FeedState.Notice.Toast("Thread resolved", null)
+            }
+            is ClientMessage.DocReopen -> {
+                val thread = feed.docThreads[message.doc].orEmpty().firstOrNull { it.id == message.thread } ?: return
+                apply(ServerToClient.DocThreadUpdated(thread.copy(resolved = false, resolvedBy = null, resolvedAt = null)))
+                feed.doc(message.doc)?.let { apply(ServerToClient.DocUpdated(it.copy(openThreads = feed.openThreads(it.id).size.toLong()))) }
             }
             is ClientMessage.DecisionAccept, is ClientMessage.DecisionReject -> {
                 val accept = message as? ClientMessage.DecisionAccept

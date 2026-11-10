@@ -27,7 +27,8 @@
     const msg = { type, ...data };
     try {
       if (window.webkit?.messageHandlers?.maple) window.webkit.messageHandlers.maple.postMessage(msg);
-      else if (window.MapleAndroid?.postMessage) window.MapleAndroid.postMessage(JSON.stringify(msg));
+      // The bridge reaches every frame, so the app hands this frame a nonce with load() and hears nothing else without it.
+      else if (window.MapleAndroid?.postMessage) window.MapleAndroid.postMessage(JSON.stringify({ ...msg, nonce: window.__mapleAndroidNonce }));
       else if (window.parent !== window) window.parent.postMessage({ source: "maple-docs", ...msg }, "*");
     } catch {}
     console.log("[maple-docs]", type, JSON.stringify(data));
