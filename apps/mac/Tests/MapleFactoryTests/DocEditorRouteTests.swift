@@ -67,4 +67,14 @@ struct DocEditorRouteTests {
         #expect(peer?.name == "octo")
         #expect(peer?.color == "#888888")
     }
+
+    // MARK: bridge messages from subframes (MF-387 review)
+
+    @Test func subframesMayOnlySendFrameDiagnostics() {
+        #expect(DocEditorView.acceptsMessage("frame", isMainFrame: false))
+        for type in ["openTask", "command", "error", "ready", "status", "synced", "peers"] {
+            #expect(!DocEditorView.acceptsMessage(type, isMainFrame: false))
+            #expect(DocEditorView.acceptsMessage(type, isMainFrame: true))
+        }
+    }
 }

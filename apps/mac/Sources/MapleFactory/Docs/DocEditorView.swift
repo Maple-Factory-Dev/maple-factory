@@ -184,6 +184,9 @@ struct DocEditorView: NSViewRepresentable {
 
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
             guard let body = message.body as? [String: Any], let type = body["type"] as? String, let view else { return }
+            guard DocEditorView.acceptsMessage(type, isMainFrame: message.frameInfo.isMainFrame) else {
+                print("[docs] dropped \(type) message from a subframe"); return
+            }
             switch type {
             case "ready": load()
             case "status": view.status.status = body["status"] as? String ?? view.status.status
@@ -234,6 +237,14 @@ struct DocEditorView: NSViewRepresentable {
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
             target?.userContentController(controller, didReceive: message)
         }
+    }
+}
+
+extension DocEditorView {
+    /// Subframes (the sandboxed diagram frames render agent-written source) may only send the diagnostic `frame`
+    /// message; everything that drives the editor or the app has to come from the embed's main frame.
+    static func acceptsMessage(_ type: String, isMainFrame: Bool) -> Bool {
+        isMainFrame || type == "frame"
     }
 }
 
