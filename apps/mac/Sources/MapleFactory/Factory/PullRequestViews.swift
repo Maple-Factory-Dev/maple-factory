@@ -296,6 +296,8 @@ struct PullRequestCard: View {
                     Spacer(minLength: 0)
                     if !failed.isEmpty {
                         smallButton("Re-run failed", icon: "arrow.clockwise") { state.rerunFailedChecks(task.id) }
+                    }
+                    if !failed.isEmpty, task.state == .reviewing {
                         smallButton("Fix with builder", icon: "wrench.and.screwdriver") { state.fixFailedChecks(task.id) }
                             .help("Send it back to its builder with each failed check's step and log to fix")
                     }
@@ -323,7 +325,7 @@ struct PullRequestCard: View {
             .disabled(pr.isLocal || check.status == .queued)
         Button("Re-run", systemImage: "arrow.clockwise") { state.rerunCheck(task.id, check: check.name) }
             .disabled(!Self.canRerun(check, pr: pr))
-        if check.status == .failed, pr.state != .merged {
+        if check.status == .failed, pr.state != .merged, task.state == .reviewing {
             Button("Fix with Builder", systemImage: "wrench.and.screwdriver") { state.fixFailedChecks(task.id) }
         }
         Divider()

@@ -174,3 +174,20 @@ test("task.fixChecks is rejected when no check failed, or the checks aren't on G
   });
   await assert.rejects(factory({ DB }).fix(), /aren't on GitHub/);
 });
+
+test("task.fixChecks is rejected unless the task is in review and not merging", async () => {
+  await withGitHub(runs, async () => {
+    const f = factory(APP_ENV, {}, { autoFixChecks: false });
+    await f.engine.refreshChecks("MF-1");
+    for (const state of ["building", "merged", "cancelled"]) {
+      const t = f.store.task("MF-1")!;
+      t.state = state as never;
+      f.store.saveTask(t);
+      await assert.rejects(f.fix(), /Only a task in review/);
+    }
+    f.toReview();
+    f.store.savePrivate("MF-1", { ...f.store.private("MF-1"), merging: true } as never);
+    await assert.rejects(f.fix(), /It's merging/);
+    assert.equal(ciChanges(f).length, 0);
+  });
+});

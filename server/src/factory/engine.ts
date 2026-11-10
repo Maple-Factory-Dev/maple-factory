@@ -1196,6 +1196,8 @@ export class Engine {
         // A person's own "fix CI": no try cap, and it goes even with autoFixChecks off.
         const priv = this.store.private(task.id);
         if (!githubApp(this.env) || !priv.gh || !task.pr) fail("Its checks aren't on GitHub.");
+        if (task.state !== "reviewing") fail("Only a task in review can go back to fix its checks.");
+        if (priv.merging) fail("It's merging; wait for the merge to finish.");
         const failed = (priv.checks ?? []).filter((c) => c.status === "failed");
         if (!failed.length) fail("No checks have failed.");
         this.event(task, who, `sent it back to fix ${failed.map((c) => c.name).join(", ")}`);
