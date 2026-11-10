@@ -558,6 +558,21 @@ pub enum PushEnvironment {
     Other,
 }
 
+/// What kind of ask a task event snapshots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AskKind {
+    /// An agent's question (`ask`).
+    Question,
+    /// A raised hand: the agent's or the factory's.
+    Hand,
+    /// A permission prompt in the agent's terminal.
+    Prompt,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum HandReason {
@@ -1370,12 +1385,49 @@ pub struct ChangeRequest {
     pub timing: Option<String>,
 }
 
+/// One option the UI offered on an ask.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AskSnapshotOption {
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended: Option<bool>,
+}
+
+/// What the UI offered when a task asked a person something, and on the answer, what they picked.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AskSnapshot {
+    pub kind: AskKind,
+    /// The question, the hand's summary, or the permission prompt's tool.
+    pub text: String,
+    /// A hand's reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<HandReason>,
+    #[serde(default)]
+    pub options: Vec<AskSnapshotOption>,
+    /// A permission prompt's command or summary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// The option the person picked (its title). None on the asking event, or when they typed an answer that isn't an option.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picked: Option<String>,
+    /// The person's note, or the answer they typed when it isn't an option.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskEvent {
     pub who: String,
     pub text: String,
     pub at: u64,
+    /// A snapshot of what was asked and offered, and on an answer what was picked. None on other events and on older ones.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ask: Option<AskSnapshot>,
 }
 
 /// A stretch of a task's time in one stage, and what it waited on: a new span starts whenever its state or wait changes.

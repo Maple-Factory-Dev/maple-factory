@@ -1659,6 +1659,51 @@ public enum Wire {
         public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
+    /// What kind of ask a task event snapshots.
+    public enum AskKind: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// An agent's question (`ask`).
+        case question
+        /// A raised hand: the agent's or the factory's.
+        case hand
+        /// A permission prompt in the agent's terminal.
+        case prompt
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [AskKind] = [.question, .hand, .prompt]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "question": self = .question
+            case "hand": self = .hand
+            case "prompt": self = .prompt
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .question: "question"
+            case .hand: "hand"
+            case .prompt: "prompt"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: AskKind, b: AskKind) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
     public enum HandReason: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Review rounds ran out.
         case reviewLoop
@@ -3207,15 +3252,68 @@ public enum Wire {
         }
     }
 
+    /// One option the UI offered on an ask.
+    public struct AskSnapshotOption: Codable, Hashable, Sendable {
+        public var title: String
+        public var detail: String?
+        public var recommended: Bool?
+
+        public init(title: String, detail: String? = nil, recommended: Bool? = nil) {
+            self.title = title
+            self.detail = detail
+            self.recommended = recommended
+        }
+    }
+
+    /// What the UI offered when a task asked a person something, and on the answer, what they picked.
+    public struct AskSnapshot: Codable, Hashable, Sendable {
+        public var kind: AskKind
+        /// The question, the hand's summary, or the permission prompt's tool.
+        public var text: String
+        /// A hand's reason.
+        public var reason: HandReason?
+        public var options: [AskSnapshotOption]
+        /// A permission prompt's command or summary.
+        public var command: String?
+        /// The option the person picked (its title). None on the asking event, or when they typed an answer that isn't an option.
+        public var picked: String?
+        /// The person's note, or the answer they typed when it isn't an option.
+        public var note: String?
+
+        public init(kind: AskKind, text: String, reason: HandReason? = nil, options: [AskSnapshotOption] = [], command: String? = nil, picked: String? = nil, note: String? = nil) {
+            self.kind = kind
+            self.text = text
+            self.reason = reason
+            self.options = options
+            self.command = command
+            self.picked = picked
+            self.note = note
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            kind = try c.decode(AskKind.self, forKey: .kind)
+            text = try c.decode(String.self, forKey: .text)
+            reason = try c.decodeIfPresent(HandReason.self, forKey: .reason)
+            options = try c.decodeIfPresent([AskSnapshotOption].self, forKey: .options) ?? []
+            command = try c.decodeIfPresent(String.self, forKey: .command)
+            picked = try c.decodeIfPresent(String.self, forKey: .picked)
+            note = try c.decodeIfPresent(String.self, forKey: .note)
+        }
+    }
+
     public struct TaskEvent: Codable, Hashable, Sendable {
         public var who: String
         public var text: String
         public var at: UInt64
+        /// A snapshot of what was asked and offered, and on an answer what was picked. None on other events and on older ones.
+        public var ask: AskSnapshot?
 
-        public init(who: String, text: String, at: UInt64) {
+        public init(who: String, text: String, at: UInt64, ask: AskSnapshot? = nil) {
             self.who = who
             self.text = text
             self.at = at
+            self.ask = ask
         }
     }
 

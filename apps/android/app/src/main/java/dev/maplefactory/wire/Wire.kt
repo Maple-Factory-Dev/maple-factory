@@ -647,6 +647,22 @@ enum class PushEnvironment(val raw: String) {
     object Serializer : WireEnumSerializer<PushEnvironment>("PushEnvironment", entries, { it.raw }, Unknown)
 }
 
+/** What kind of ask a task event snapshots. */
+@Serializable(with = AskKind.Serializer::class)
+enum class AskKind(val raw: String) {
+    /** An agent's question (`ask`). */
+    Question("question"),
+    /** A raised hand: the agent's or the factory's. */
+    Hand("hand"),
+    /** A permission prompt in the agent's terminal. */
+    Prompt("prompt"),
+    /** A value this build doesn't know yet; newer servers may send them. */
+    Unknown("unknown"),
+    ;
+
+    object Serializer : WireEnumSerializer<AskKind>("AskKind", entries, { it.raw }, Unknown)
+}
+
 @Serializable(with = HandReason.Serializer::class)
 enum class HandReason(val raw: String) {
     /** Review rounds ran out. */
@@ -1345,11 +1361,38 @@ data class ChangeRequest(
     val timing: String? = null,
 )
 
+/** One option the UI offered on an ask. */
+@Serializable
+data class AskSnapshotOption(
+    val title: String,
+    val detail: String? = null,
+    val recommended: Boolean? = null,
+)
+
+/** What the UI offered when a task asked a person something, and on the answer, what they picked. */
+@Serializable
+data class AskSnapshot(
+    val kind: AskKind,
+    /** The question, the hand's summary, or the permission prompt's tool. */
+    val text: String,
+    /** A hand's reason. */
+    val reason: HandReason? = null,
+    val options: List<AskSnapshotOption> = emptyList(),
+    /** A permission prompt's command or summary. */
+    val command: String? = null,
+    /** The option the person picked (its title). None on the asking event, or when they typed an answer that isn't an option. */
+    val picked: String? = null,
+    /** The person's note, or the answer they typed when it isn't an option. */
+    val note: String? = null,
+)
+
 @Serializable
 data class TaskEvent(
     val who: String,
     val text: String,
     val at: Long,
+    /** A snapshot of what was asked and offered, and on an answer what was picked. None on other events and on older ones. */
+    val ask: AskSnapshot? = null,
 )
 
 /** A stretch of a task's time in one stage, and what it waited on: a new span starts whenever its state or wait changes. */
