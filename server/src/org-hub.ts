@@ -816,7 +816,7 @@ export class OrgHub extends DurableObject<Env> {
           notes: this.store.notes(client.member.login),
           docs: this.store.docs(),
           decisions: this.store.decisions(),
-          memories: this.store.activeMemories(),
+          memories: this.store.memories(),
           follows: this.store.follows(client.member.login),
           quietHours: this.store.quietHours(client.member.login),
           intake: this.intake.list(),
@@ -1198,6 +1198,17 @@ export class OrgHub extends DurableObject<Env> {
         } catch (e) {
           this.send(ws, { type: "error", message: e instanceof Error ? e.message : String(e), requestId: msg.type });
         }
+        return;
+      }
+      case "memory.edit":
+      case "memory.status": {
+        // People only: this socket is a signed-in member's (agents reach memories through their tools), recorded as them.
+        const by = client.member.login;
+        const out = msg.type === "memory.edit"
+          ? this.engine.memories.edit(msg.id, { text: msg.text ?? undefined, kind: msg.kind ?? undefined, tags: msg.tags ?? undefined, scope: msg.scope ?? undefined }, by)
+          : this.engine.memories.setStatus(msg.id, msg.status, by);
+        if ("error" in out) return this.send(ws, { type: "error", message: out.error, requestId: msg.type });
+        if (msg.type === "memory.status" && msg.status === "archived") this.ctx.waitUntil(audit(this.env, by, "memory.archived", out.id, { reason: null, task: null, agent: null }));
         return;
       }
       case "decision.log": {

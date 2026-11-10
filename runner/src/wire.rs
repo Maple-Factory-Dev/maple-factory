@@ -4158,6 +4158,25 @@ pub enum ClientMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         why: Option<String>,
     },
+    /// Change a shared memory's text, kind, tags or scope; what's left out stays. People only (MF-394).
+    #[serde(rename = "memory.edit")]
+    MemoryEdit {
+        id: Uuid,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<MemoryKind>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tags: Option<Vec<String>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scope: Option<MemoryScope>,
+    },
+    /// Accept a proposed memory (active), archive one, or bring one back. People only (MF-394).
+    #[serde(rename = "memory.status")]
+    MemoryStatus {
+        id: Uuid,
+        status: MemoryStatus,
+    },
     /// Ask for a decision's append-only log; answered with `decision.log` to this connection.
     #[serde(rename = "decision.log")]
     DecisionLog {
@@ -4854,6 +4873,7 @@ pub enum ServerToClient {
         docs: Option<Vec<Doc>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         decisions: Option<Vec<Decision>>,
+        /// Every shared memory, proposed and archived ones too (MF-394). None: an older server.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         memories: Option<Vec<Memory>>,
         #[serde(default)]

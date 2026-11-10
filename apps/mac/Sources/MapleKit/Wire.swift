@@ -7968,6 +7968,34 @@ public enum Wire {
         }
     }
 
+    /// Change a shared memory's text, kind, tags or scope; what's left out stays. People only (MF-394).
+    public struct ClientMessageMemoryEdit: Codable, Hashable, Sendable {
+        public var id: String
+        public var text: String?
+        public var kind: MemoryKind?
+        public var tags: [String]?
+        public var scope: MemoryScope?
+
+        public init(id: String, text: String? = nil, kind: MemoryKind? = nil, tags: [String]? = nil, scope: MemoryScope? = nil) {
+            self.id = id
+            self.text = text
+            self.kind = kind
+            self.tags = tags
+            self.scope = scope
+        }
+    }
+
+    /// Accept a proposed memory (active), archive one, or bring one back. People only (MF-394).
+    public struct ClientMessageMemoryStatus: Codable, Hashable, Sendable {
+        public var id: String
+        public var status: MemoryStatus
+
+        public init(id: String, status: MemoryStatus) {
+            self.id = id
+            self.status = status
+        }
+    }
+
     /// Ask for a decision's append-only log; answered with `decision.log` to this connection.
     public struct ClientMessageDecisionLog: Codable, Hashable, Sendable {
         public var id: String
@@ -9099,6 +9127,8 @@ public enum Wire {
         case decisionEdit(ClientMessageDecisionEdit)
         case decisionAccept(ClientMessageDecisionAccept)
         case decisionReject(ClientMessageDecisionReject)
+        case memoryEdit(ClientMessageMemoryEdit)
+        case memoryStatus(ClientMessageMemoryStatus)
         case decisionLog(ClientMessageDecisionLog)
         case docMakeTasks(ClientMessageDocMakeTasks)
         case presence(ClientMessagePresence)
@@ -9217,6 +9247,8 @@ public enum Wire {
             case "decision.edit": self = .decisionEdit(try ClientMessageDecisionEdit(from: decoder))
             case "decision.accept": self = .decisionAccept(try ClientMessageDecisionAccept(from: decoder))
             case "decision.reject": self = .decisionReject(try ClientMessageDecisionReject(from: decoder))
+            case "memory.edit": self = .memoryEdit(try ClientMessageMemoryEdit(from: decoder))
+            case "memory.status": self = .memoryStatus(try ClientMessageMemoryStatus(from: decoder))
             case "decision.log": self = .decisionLog(try ClientMessageDecisionLog(from: decoder))
             case "doc.makeTasks": self = .docMakeTasks(try ClientMessageDocMakeTasks(from: decoder))
             case "presence": self = .presence(try ClientMessagePresence(from: decoder))
@@ -9374,6 +9406,12 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .decisionReject(let body):
                 try c.encode("decision.reject", forKey: .type)
+                try body.encode(to: encoder)
+            case .memoryEdit(let body):
+                try c.encode("memory.edit", forKey: .type)
+                try body.encode(to: encoder)
+            case .memoryStatus(let body):
+                try c.encode("memory.status", forKey: .type)
                 try body.encode(to: encoder)
             case .decisionLog(let body):
                 try c.encode("decision.log", forKey: .type)
@@ -9673,6 +9711,7 @@ public enum Wire {
         /// Every shared doc, archived ones too. None: an older server.
         public var docs: [Doc]?
         public var decisions: [Decision]?
+        /// Every shared memory, proposed and archived ones too (MF-394). None: an older server.
         public var memories: [Memory]?
         public var follows: [GoalFollow]
         /// Your quiet hours. None: none set, or an older server.

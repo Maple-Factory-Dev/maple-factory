@@ -840,3 +840,28 @@ details.fold[open] > .card { margin-top: 10px; }
 .pill.decision-accepted { background: color-mix(in srgb, #2f9e63 22%, transparent); }
 .pill.decision-rejected { background: color-mix(in srgb, #c2453d 22%, transparent); }
 .pill.decision-superseded { background: color-mix(in srgb, gray 22%, transparent); }
+/* The Memory page (MF-394). */
+.memory-filters { gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.memory-filters .chips { display: flex; gap: 4px; flex-wrap: wrap; }
+.memory-filters .chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border: 1px solid var(--stroke); border-radius: 999px; text-decoration: none; color: inherit; font-size: 13px; }
+.memory-filters .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.memory-filters .chip-count { opacity: .7; }
+.memory-row { align-items: flex-start; }
+.memory-row:hover { background: none; }
+.memory-row.archived .memory-text { color: var(--muted); }
+.memory-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.memory-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; }
+.memory-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.memory-tags { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12.5px; color: var(--muted); }
+.memory-source { overflow-wrap: anywhere; }
+.memory-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.memory-editor textarea { width: 100%; box-sizing: border-box; font: inherit; }
+.pill.memory-kind { text-transform: capitalize; }
+.pill.kind-fact { background: color-mix(in srgb, #3b82f6 18%, transparent); }
+.pill.kind-convention { background: color-mix(in srgb, #2f9e63 20%, transparent); }
+.pill.kind-gotcha { background: color-mix(in srgb, #c2453d 20%, transparent); }
+.pill.kind-preference { background: color-mix(in srgb, #8b5cf6 20%, transparent); }
+.pill.memory-proposed { background: color-mix(in srgb, #d99a1e 22%, transparent); }
+.pill.memory-stale { background: color-mix(in srgb, gray 22%, transparent); color: var(--muted); }
+.memory-event svg { vertical-align: -2px; color: var(--muted); }
+@media (max-width: 640px) { .memory-row { flex-direction: column; } .memory-actions { justify-content: flex-start; } }

@@ -176,6 +176,9 @@ struct RepoScriptsDetail: View {
                     PromptFields(prompts: $draft.prompts, editable: isAdmin, height: 90)
                 }
             }
+            SettingsSection("Memory", caption: "What agents remember about this repo between tasks (MF-391). Edit, archive or accept them here.") {
+                MemoryList(filter: MemoryFilter(scope: .repos, repos: [repo.name]), showsScopePicker: false)
+            }
             SettingsSection("Variables") {
                 SettingsBlock {
                     Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 6) {

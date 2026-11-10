@@ -476,6 +476,10 @@ public extension FeedState {
         .sorted { ($0.decidedAt ?? $0.proposedAt) > ($1.decidedAt ?? $1.proposedAt) }
     }
 
+    static func upsertMemory(_ m: Wire.Memory, into list: inout [Wire.Memory]) {
+        if let i = list.firstIndex(where: { $0.id == m.id }) { list[i] = m } else { list.append(m) }
+    }
+
     static func upsertDecision(_ d: Wire.Decision, into list: inout [Wire.Decision]) {
         if let i = list.firstIndex(where: { $0.id == d.id }) { list[i] = d } else { list.append(d) }
     }
