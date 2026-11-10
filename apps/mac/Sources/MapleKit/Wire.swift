@@ -3574,6 +3574,41 @@ public enum Wire {
         }
     }
 
+    /// The doc section or accepted decision a task was made from (MF-368): `doc.makeTasks` sets it, and the task page, the decision card and the planner's prompt read it.
+    public struct TaskDocSource: Codable, Hashable, Sendable {
+        public var doc: String
+        /// The doc's title when the task was made.
+        public var docTitle: String
+        /// The heading whose section it came from.
+        public var heading: String?
+        /// The selected text it came from, when it came from a selection.
+        public var quote: String?
+        /// The accepted decision it came from.
+        public var decision: String?
+        /// The section as Markdown, taken on the server when the task was made (at most 8,000 characters).
+        public var excerpt: String
+
+        public init(doc: String, docTitle: String, heading: String? = nil, quote: String? = nil, decision: String? = nil, excerpt: String) {
+            self.doc = doc
+            self.docTitle = docTitle
+            self.heading = heading
+            self.quote = quote
+            self.decision = decision
+            self.excerpt = excerpt
+        }
+    }
+
+    /// One task for doc.makeTasks to make.
+    public struct MakeTaskItem: Codable, Hashable, Sendable {
+        public var title: String
+        public var brief: String
+
+        public init(title: String, brief: String) {
+            self.title = title
+            self.brief = brief
+        }
+    }
+
     /// One draft for task.followUp to make.
     public struct FollowUpItem: Codable, Hashable, Sendable {
         /// The review finding it follows up (f3); none: a free-form note about the task.
@@ -3867,6 +3902,8 @@ public enum Wire {
         public var priority: Priority?
         /// What it follows up: one of a task's review findings (MF-98#f3), or the task itself (MF-98) for a note. None: not a follow-up (or an older server).
         public var followUpOf: String?
+        /// The doc section or decision it was made from (MF-368). None: not made from a doc (or an older server).
+        public var fromDoc: TaskDocSource?
         /// The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down.
         public var mergeAt: UInt64?
         /// Overlaps with other in-flight tasks and conflicts with its base, kept current as tasks merge.
@@ -3882,7 +3919,7 @@ public enum Wire {
         /// Checks its last finish couldn't run on that machine (`needs macos`), open until a person waives them. None: none (or an older server).
         public var checksNotRun: [TaskNotRun]?
 
-        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, suggestedTitle: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, requested: [String] = [], comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], stages: [StageSpan] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], diagrams: [Diagram] = [], artifacts: [Artifact] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, scoutedFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, priority: Priority? = nil, followUpOf: String? = nil, mergeAt: UInt64? = nil, mergeForecast: MergeForecast? = nil, classification: Classification? = nil, findings: Findings? = nil, requires: [String]? = nil, appleChecks: AppleChecks? = nil, checksNotRun: [TaskNotRun]? = nil) {
+        public init(id: String, goal: String, title: String, state: TaskState, owner: String, brief: String, createdAt: UInt64, updatedAt: UInt64, plan: [PlanStep] = [], planVersion: UInt32, planSummary: String? = nil, suggestedTitle: String? = nil, doneWhen: [DoneItem] = [], approvals: [String] = [], approvalsNeeded: UInt32, reviews: [String] = [], reviewsNeeded: UInt32, requested: [String] = [], comments: [Comment] = [], changes: [ChangeRequest] = [], events: [TaskEvent] = [], stages: [StageSpan] = [], question: Question? = nil, hand: Hand? = nil, worker: Worker? = nil, liveLog: String? = nil, intake: String? = nil, waiting: String? = nil, pr: PullRequest? = nil, diff: Diff? = nil, footprint: Footprint? = nil, risk: Risk? = nil, autoReview: AutoReview? = nil, mockups: [Mockup] = [], diagrams: [Diagram] = [], artifacts: [Artifact] = [], tickets: [TicketLink] = [], shareable: Bool, agent: String, model: String? = nil, branch: String? = nil, machine: String? = nil, splitFrom: String? = nil, scoutedFrom: String? = nil, repo: String? = nil, after: [String] = [], followUps: [FollowUp] = [], queueRank: Double? = nil, draftRank: Double? = nil, startAt: UInt64? = nil, force: Bool? = nil, effort: String? = nil, priority: Priority? = nil, followUpOf: String? = nil, fromDoc: TaskDocSource? = nil, mergeAt: UInt64? = nil, mergeForecast: MergeForecast? = nil, classification: Classification? = nil, findings: Findings? = nil, requires: [String]? = nil, appleChecks: AppleChecks? = nil, checksNotRun: [TaskNotRun]? = nil) {
             self.id = id
             self.goal = goal
             self.title = title
@@ -3937,6 +3974,7 @@ public enum Wire {
             self.effort = effort
             self.priority = priority
             self.followUpOf = followUpOf
+            self.fromDoc = fromDoc
             self.mergeAt = mergeAt
             self.mergeForecast = mergeForecast
             self.classification = classification
@@ -4002,6 +4040,7 @@ public enum Wire {
             effort = try c.decodeIfPresent(String.self, forKey: .effort)
             priority = try c.decodeIfPresent(Priority.self, forKey: .priority)
             followUpOf = try c.decodeIfPresent(String.self, forKey: .followUpOf)
+            fromDoc = try c.decodeIfPresent(TaskDocSource.self, forKey: .fromDoc)
             mergeAt = try c.decodeIfPresent(UInt64.self, forKey: .mergeAt)
             mergeForecast = try c.decodeIfPresent(MergeForecast.self, forKey: .mergeForecast)
             classification = try c.decodeIfPresent(Classification.self, forKey: .classification)
@@ -7590,6 +7629,44 @@ public enum Wire {
         }
     }
 
+    /// Make draft tasks from a doc section, a selection or an accepted decision (MF-368), in the doc's goal (or `goal` when the doc has none). Each gets `fromDoc` and a link back in its brief, and live embeds go into the doc after the source. Nothing is made if anything is refused.
+    public struct ClientMessageDocMakeTasks: Codable, Hashable, Sendable {
+        public var doc: String
+        /// The selection or heading it came from; none with no decision: the whole doc.
+        public var anchor: DocAnchor?
+        /// An accepted decision in this doc.
+        public var decision: String?
+        /// Only when the doc has no goal.
+        public var goal: String?
+        /// 1 to 20.
+        public var tasks: [MakeTaskItem]
+        /// Each waits on the one before (`after`).
+        public var chain: Bool
+        /// Group them under this effort name.
+        public var effort: String?
+
+        public init(doc: String, anchor: DocAnchor? = nil, decision: String? = nil, goal: String? = nil, tasks: [MakeTaskItem] = [], chain: Bool, effort: String? = nil) {
+            self.doc = doc
+            self.anchor = anchor
+            self.decision = decision
+            self.goal = goal
+            self.tasks = tasks
+            self.chain = chain
+            self.effort = effort
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            doc = try c.decode(String.self, forKey: .doc)
+            anchor = try c.decodeIfPresent(DocAnchor.self, forKey: .anchor)
+            decision = try c.decodeIfPresent(String.self, forKey: .decision)
+            goal = try c.decodeIfPresent(String.self, forKey: .goal)
+            tasks = try c.decodeIfPresent([MakeTaskItem].self, forKey: .tasks) ?? []
+            chain = try c.decode(Bool.self, forKey: .chain)
+            effort = try c.decodeIfPresent(String.self, forKey: .effort)
+        }
+    }
+
     /// The task this app is showing, if any, for teammates' presence.
     public struct ClientMessagePresence: Codable, Hashable, Sendable {
         public var viewing: String?
@@ -8665,6 +8742,7 @@ public enum Wire {
         case decisionAccept(ClientMessageDecisionAccept)
         case decisionReject(ClientMessageDecisionReject)
         case decisionLog(ClientMessageDecisionLog)
+        case docMakeTasks(ClientMessageDocMakeTasks)
         case presence(ClientMessagePresence)
         case sessionOpen(ClientMessageSessionOpen)
         case sessionAttach(ClientMessageSessionAttach)
@@ -8780,6 +8858,7 @@ public enum Wire {
             case "decision.accept": self = .decisionAccept(try ClientMessageDecisionAccept(from: decoder))
             case "decision.reject": self = .decisionReject(try ClientMessageDecisionReject(from: decoder))
             case "decision.log": self = .decisionLog(try ClientMessageDecisionLog(from: decoder))
+            case "doc.makeTasks": self = .docMakeTasks(try ClientMessageDocMakeTasks(from: decoder))
             case "presence": self = .presence(try ClientMessagePresence(from: decoder))
             case "session.open": self = .sessionOpen(try ClientMessageSessionOpen(from: decoder))
             case "session.attach": self = .sessionAttach(try ClientMessageSessionAttach(from: decoder))
@@ -8934,6 +9013,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .decisionLog(let body):
                 try c.encode("decision.log", forKey: .type)
+                try body.encode(to: encoder)
+            case .docMakeTasks(let body):
+                try c.encode("doc.makeTasks", forKey: .type)
                 try body.encode(to: encoder)
             case .presence(let body):
                 try c.encode("presence", forKey: .type)

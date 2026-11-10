@@ -698,6 +698,15 @@ export const structs: Record<string, Struct> = {
     fields: { version: "string", how: "string" },
     fieldDocs: { how: "One sentence: merge the update pull request in the factory's repo, or run `maple update`." },
   },
+  TaskDocSource: {
+    doc: "The doc section or accepted decision a task was made from (MF-368): `doc.makeTasks` sets it, and the task page, the decision card and the planner's prompt read it.",
+    fields: { doc: "uuid", docTitle: "string", heading: "string?", quote: "string?", decision: "uuid?", excerpt: "string" },
+    fieldDocs: { docTitle: "The doc's title when the task was made.", heading: "The heading whose section it came from.", quote: "The selected text it came from, when it came from a selection.", decision: "The accepted decision it came from.", excerpt: "The section as Markdown, taken on the server when the task was made (at most 8,000 characters)." },
+  },
+  MakeTaskItem: {
+    doc: "One task for doc.makeTasks to make.",
+    fields: { title: "string", brief: "string" },
+  },
   FollowUpItem: {
     doc: "One draft for task.followUp to make.",
     fields: { finding: "string?", title: "string", brief: "string", priority: "Priority?" },
@@ -814,6 +823,7 @@ export const structs: Record<string, Struct> = {
       effort: "string?",
       priority: "Priority?",
       followUpOf: "string?",
+      fromDoc: "TaskDocSource?",
       mergeAt: "u64?",
       mergeForecast: "MergeForecast?",
       classification: "Classification?",
@@ -843,6 +853,7 @@ export const structs: Record<string, Struct> = {
       splitFrom: "The task it was split off from to stay inside the PR budget.",
       scoutedFrom: "What a Scout run picked it up from: a task (MF-98), or one of its review findings (MF-98#f3).",
       priority: "How soon it should be done; a P0 that enters the queue goes to its front. None: not set (or an older server).",
+      fromDoc: "The doc section or decision it was made from (MF-368). None: not made from a doc (or an older server).",
       followUpOf: "What it follows up: one of a task's review findings (MF-98#f3), or the task itself (MF-98) for a note. None: not a follow-up (or an older server).",
       owner: "Login of whoever it belongs to; it runs on their machines first.",
       requested: "Logins asked to sign off, like GitHub review requests: to approve the plan while it waits for approval, or to review the changes once it's in review. One clears when that person approves. Empty on older tasks.",
@@ -1756,6 +1767,11 @@ export const unions: Record<string, Union> = {
       "decision.accept": { doc: "Accept a proposed decision; records who and when. People only.", fields: { id: "uuid", chosen: "string?", why: "string?" } },
       "decision.reject": { doc: "Reject a proposed decision. People only.", fields: { id: "uuid", why: "string?" } },
       "decision.log": { doc: "Ask for a decision's append-only log; answered with `decision.log` to this connection.", fields: { id: "uuid" } },
+      "doc.makeTasks": {
+        doc: "Make draft tasks from a doc section, a selection or an accepted decision (MF-368), in the doc's goal (or `goal` when the doc has none). Each gets `fromDoc` and a link back in its brief, and live embeds go into the doc after the source. Nothing is made if anything is refused.",
+        fields: { doc: "uuid", anchor: "DocAnchor?", decision: "uuid?", goal: "string?", tasks: "MakeTaskItem[]", chain: "bool", effort: "string?" },
+        fieldDocs: { anchor: "The selection or heading it came from; none with no decision: the whole doc.", decision: "An accepted decision in this doc.", goal: "Only when the doc has no goal.", tasks: "1 to 20.", chain: "Each waits on the one before (`after`).", effort: "Group them under this effort name." },
+      },
       presence: { doc: "The task this app is showing, if any, for teammates' presence.", fields: { viewing: "string?" } },
       "session.open": {
         fields: { machine: "string", agent: "string", cwd: "string", cols: "u16", rows: "u16", prompt: "string?" },

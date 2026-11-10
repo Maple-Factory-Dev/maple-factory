@@ -1661,6 +1661,34 @@ pub struct ServerUpdate {
     pub how: String,
 }
 
+/// The doc section or accepted decision a task was made from (MF-368): `doc.makeTasks` sets it, and the task page, the decision card and the planner's prompt read it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskDocSource {
+    pub doc: Uuid,
+    /// The doc's title when the task was made.
+    pub doc_title: String,
+    /// The heading whose section it came from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heading: Option<String>,
+    /// The selected text it came from, when it came from a selection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quote: Option<String>,
+    /// The accepted decision it came from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision: Option<Uuid>,
+    /// The section as Markdown, taken on the server when the task was made (at most 8,000 characters).
+    pub excerpt: String,
+}
+
+/// One task for doc.makeTasks to make.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MakeTaskItem {
+    pub title: String,
+    pub brief: String,
+}
+
 /// One draft for task.followUp to make.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1915,6 +1943,9 @@ pub struct Task {
     /// What it follows up: one of a task's review findings (MF-98#f3), or the task itself (MF-98) for a note. None: not a follow-up (or an older server).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub follow_up_of: Option<String>,
+    /// The doc section or decision it was made from (MF-368). None: not made from a doc (or an older server).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_doc: Option<TaskDocSource>,
     /// The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge_at: Option<u64>,
@@ -3956,6 +3987,28 @@ pub enum ClientMessage {
     #[serde(rename = "decision.log")]
     DecisionLog {
         id: Uuid,
+    },
+    /// Make draft tasks from a doc section, a selection or an accepted decision (MF-368), in the doc's goal (or `goal` when the doc has none). Each gets `fromDoc` and a link back in its brief, and live embeds go into the doc after the source. Nothing is made if anything is refused.
+    #[serde(rename = "doc.makeTasks")]
+    DocMakeTasks {
+        doc: Uuid,
+        /// The selection or heading it came from; none with no decision: the whole doc.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        anchor: Option<DocAnchor>,
+        /// An accepted decision in this doc.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        decision: Option<Uuid>,
+        /// Only when the doc has no goal.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        goal: Option<String>,
+        /// 1 to 20.
+        #[serde(default)]
+        tasks: Vec<MakeTaskItem>,
+        /// Each waits on the one before (`after`).
+        chain: bool,
+        /// Group them under this effort name.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effort: Option<String>,
     },
     /// The task this app is showing, if any, for teammates' presence.
     #[serde(rename = "presence")]
