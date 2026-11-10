@@ -93,7 +93,7 @@ struct TaskListView: View {
             }
 
             TaskProgressFooter(task: task, compact: true)
-                .frame(width: compact ? 150 : 190, alignment: .leading)
+                .frame(width: compact ? 150 : 240, alignment: .leading)
 
             HStack(spacing: 6) {
                 AvatarPair(owner: task.owner, agent: task.agent)
