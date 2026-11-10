@@ -76,6 +76,8 @@ enum Headless {
                                            windowNumber: window.windowNumber, context: nil, characters: characters,
                                            charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)
         else { return }
+        // Local monitors see a key before any key equivalent does.
+        if TaskKeyMonitor.handleFirst(event) { return }
         if window.performKeyEquivalent(with: event) { return }
         if !modifiers.isEmpty, NSApp.mainMenu?.performKeyEquivalent(with: event) == true { return }
         NSApp.postEvent(event, atStart: false)
@@ -154,6 +156,11 @@ enum Headless {
         let (characters, code): (String, UInt16) = switch name {
         case "esc": ("\u{1b}", 53)
         case "return": ("\r", 36)
+        case "space": (" ", 49)
+        case "down": (String(UnicodeScalar(NSDownArrowFunctionKey)!), 125)
+        case "up": (String(UnicodeScalar(NSUpArrowFunctionKey)!), 126)
+        case "left": (String(UnicodeScalar(NSLeftArrowFunctionKey)!), 123)
+        case "right": (String(UnicodeScalar(NSRightArrowFunctionKey)!), 124)
         default: (name, keyCodes[name] ?? 0)
         }
         return (characters, code, modifiers)
@@ -541,7 +548,7 @@ enum Headless {
                 continue
             }
             y -= rowHeight
-            let color: NSColor = item.isEnabled ? .labelColor : .tertiaryLabelColor
+            let color: NSColor = Self.isEnabled(item) ? .labelColor : .tertiaryLabelColor
             if let image = item.image {
                 // A template symbol, filled with the item's text color.
                 let size = image.size.width > 0 ? image.size : CGSize(width: 14, height: 14)
@@ -556,12 +563,40 @@ enum Headless {
             }
             let text = NSAttributedString(string: item.title, attributes: [.font: font, .foregroundColor: color])
             text.draw(at: CGPoint(x: frame.minX + 34, y: y + (rowHeight - text.size().height) / 2))
+            if let shortcut = Self.shortcut(item) {
+                let keys = NSAttributedString(string: shortcut, attributes: [.font: font, .foregroundColor: color])
+                keys.draw(at: CGPoint(x: frame.maxX - 14 - keys.size().width, y: y + (rowHeight - keys.size().height) / 2))
+            }
             if item.hasSubmenu {
                 NSAttributedString(string: "›", attributes: [.font: font, .foregroundColor: color])
                     .draw(at: CGPoint(x: frame.maxX - 18, y: y + (rowHeight - text.size().height) / 2))
             }
         }
         NSGraphicsContext.restoreGraphicsState()
+    }
+
+    /// Whether a menu bar menu's item is enabled now, as AppKit validates it when the menu opens (a window that's
+    /// never key doesn't get that), rather than the flag left from the last validation.
+    private static func isEnabled(_ item: NSMenuItem) -> Bool {
+        guard let action = item.action else { return item.isEnabled }
+        guard let target = NSApp.target(forAction: action, to: item.target, from: item) else { return false }
+        return (target as? NSMenuItemValidation)?.validateMenuItem(item) ?? item.isEnabled
+    }
+
+    /// An item's key equivalent as the menu shows it (⌥⌘↓).
+    private static func shortcut(_ item: NSMenuItem) -> String? {
+        guard !item.keyEquivalent.isEmpty else { return nil }
+        let flags = item.keyEquivalentModifierMask
+        let mods = (flags.contains(.control) ? "⌃" : "") + (flags.contains(.option) ? "⌥" : "") + (flags.contains(.shift) ? "⇧" : "") + (flags.contains(.command) ? "⌘" : "")
+        let key: String
+        switch item.keyEquivalent.unicodeScalars.first.map({ Int($0.value) }) {
+        case NSDownArrowFunctionKey: key = "↓"
+        case NSUpArrowFunctionKey: key = "↑"
+        case NSLeftArrowFunctionKey: key = "←"
+        case NSRightArrowFunctionKey: key = "→"
+        default: key = item.keyEquivalent.uppercased()
+        }
+        return mods + key
     }
 
     /// A sheet is its own window, so the content view's bitmap lacks it: drawn on top, dimming what's

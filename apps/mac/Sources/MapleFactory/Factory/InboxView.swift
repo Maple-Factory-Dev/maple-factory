@@ -36,6 +36,20 @@ struct InboxView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollIndicators(.never)
+        .taskKeyboardNav(.list(rowTasks), primary: { id in
+            if let item = shownItems.first(where: { $0.taskID == id }) { state.performInboxAction(item) }
+        })
+    }
+
+    /// The rows on screen, in order: each kind's group under the filter.
+    private var shownItems: [InboxItem] {
+        InboxItem.Kind.allCases.filter { filter == nil || filter == $0 }.flatMap { state.inbox($0, mine: mineOnly) }
+    }
+
+    /// One row per task for the arrow keys; a task in two groups is visited where it first shows.
+    private var rowTasks: [String] {
+        var seen = Set<String>()
+        return shownItems.map(\.taskID).filter { seen.insert($0).inserted }
     }
 
     private var header: some View {
@@ -157,6 +171,7 @@ struct InboxView: View {
         let task = state.task(item.taskID)
         let goal = FactoryData.goal(named: task.goal)
         let selected = state.openedTask == task.id
+        let cursor = state.keyboardCursor == task.id
 
         return HStack(alignment: .center, spacing: 12) {
             Image(systemName: item.kind.icon)
@@ -198,7 +213,7 @@ struct InboxView: View {
                 PresenceTag(person: viewer)
             }
 
-            actionButton(item)
+            actionButton(item, hint: cursor)
 
             Text(item.when)
                 .font(.system(size: 11.5).monospacedDigit())
@@ -207,16 +222,29 @@ struct InboxView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 11)
-        .background(selected ? Theme.fillSubtle : .clear)
+        .background(selected || cursor ? Theme.fillSubtle : .clear)
+        .keyboardCursorRing(cursor, cornerRadius: 8, inset: 2)
+        .id(task.id)
         .contentShape(Rectangle())
         .taskClicks(task.id)
     }
 
-    @ViewBuilder private func actionButton(_ item: InboxItem) -> some View {
+    @ViewBuilder private func actionButton(_ item: InboxItem, hint: Bool) -> some View {
         let kind = item.kind
         let primary = kind == .approval || kind == .review
 
-        Text(kind.action)
+        HStack(spacing: 5) {
+            Text(kind.action)
+            // The selected row's key for it.
+            if hint {
+                Text("A")
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Theme.textMuted)
+                    .padding(.horizontal, 4)
+                    .frame(height: 15)
+                    .background(RoundedRectangle(cornerRadius: 3).strokeBorder(Theme.stroke))
+            }
+        }
             .font(.system(size: 12, weight: primary ? .semibold : .medium))
             .foregroundStyle(Theme.text)
             .padding(.horizontal, 10)
@@ -227,20 +255,6 @@ struct InboxView: View {
                     .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.stroke))
             )
             .contentShape(Rectangle())
-            .onTapGesture { perform(item) }
-    }
-
-    private func perform(_ item: InboxItem) {
-        switch item.kind {
-        case .approval:
-            state.approvePlan(item.taskID)
-        case .failing:
-            state.rerunFailedChecks(item.taskID)
-        case .mention:
-            state.dismissedMentions.insert(item.id)
-            state.openFocus(item.taskID)
-        case .review, .question:
-            state.openFocus(item.taskID)
-        }
+            .onTapGesture { state.keyboardCursor = item.taskID; state.performInboxAction(item) }
     }
 }

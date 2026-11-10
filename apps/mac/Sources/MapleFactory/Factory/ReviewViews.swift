@@ -698,6 +698,7 @@ struct NeedsHandView: View {
                 ForEach(hands) { task in
                     if let hand = task.hand {
                         HandRaiseCard(task: task, hand: hand)
+                            .keyboardCursorRing(state.keyboardCursor == task.id, cornerRadius: 12)
                             .id(task.id)
                             .transition(.opacity.combined(with: .move(edge: .leading)))
                     }
@@ -709,6 +710,7 @@ struct NeedsHandView: View {
             .frame(maxWidth: .infinity)
         }
         .defaultScrollAnchor(.top)
+        .taskKeyboardNav(.list(hands.map(\.id)), primary: { id in state.openFocus(id) })
     }
 
     private var reasonSummary: some View {

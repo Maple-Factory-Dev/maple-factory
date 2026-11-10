@@ -56,6 +56,7 @@ struct MapleFactoryApp: App {
                 // Every @AppStorage reads the headless run's own suite when there is one.
                 .defaultAppStorage(AppDefaults)
                 .background { if Headless.isOn { HeadlessWindow() } }
+                .background(TaskKeyWindowTag())
         }
         // Links never make a window of their own; the one there (or the one launch opens) takes them.
         .handlesExternalEvents(matching: [])
@@ -70,6 +71,26 @@ struct MapleFactoryApp: App {
                 Button("Check for Updates…") { AboutView.checkForUpdates() }
                     .keyboardShortcut("u", modifiers: [.command, .shift])
                     .disabled((Updater.shared.available || Updater.shared.isDemo) && !Updater.shared.canCheckNow)
+            }
+            // Keyboard navigation through the rows on screen. The bare keys (↓ ↑ ← → J K, Return, Space, A)
+            // are read by TaskKeyMonitor so text fields keep them; the titles name them for discoverability.
+            CommandMenu("Go") {
+                let rows = !state.navLayout.isEmpty && state.focusedTask == nil
+                Button("Next Row  (↓ or J)") { state.moveCursor(.down) }.disabled(!rows)
+                Button("Previous Row  (↑ or K)") { state.moveCursor(.up) }.disabled(!rows)
+                Button("Next Column  (→ or L)") { state.moveCursor(.right) }.disabled(!rows)
+                Button("Previous Column  (← or H)") { state.moveCursor(.left) }.disabled(!rows)
+                Divider()
+                Button("Open Task  (Return)") { state.openCursor() }.disabled(!rows || state.keyboardCursor == nil)
+                Button("Peek in Panel  (Space)") { state.peekCursor() }.disabled(!rows || state.keyboardCursor == nil)
+                Button("Do Primary Action  (A)") { state.performCursorPrimary() }.disabled(!rows || !state.canPerformCursorPrimary)
+                Divider()
+                Button("Next Task") { state.stepTask(forward: true) }
+                    .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+                    .disabled(!state.canStepTask(forward: true))
+                Button("Previous Task") { state.stepTask(forward: false) }
+                    .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+                    .disabled(!state.canStepTask(forward: false))
             }
             CommandGroup(replacing: .help) {
                 // Beta testers' bugs and ideas, to Maple Factory's Sentry project (or an email, from a build that can't).
@@ -201,6 +222,8 @@ struct ContentView: View {
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
     @Environment(\.openSettings) private var openSettings
+    /// ↑↓←→, J/K, Return, Space and A for the task lists, board and Inbox (TaskKeyboardNav.swift).
+    @State private var keyMonitor = TaskKeyMonitor()
 
     var body: some View {
         if state.showOnboarding {
@@ -211,6 +234,7 @@ struct ContentView: View {
         } else {
             workspace
                 .transition(.opacity.combined(with: .scale(scale: 1.02)))
+                .onAppear { keyMonitor.install(state) }
                 .onChange(of: viewing, initial: true) { _, id in client.view(task: id) }
                 .onChange(of: screen, initial: true) { _, kind in ErrorReports.screen(kind) }
                 .onOpenURL { url in

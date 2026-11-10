@@ -85,9 +85,18 @@ final class AppState {
             // Any move to a page (sidebar, palette, a link) closes the goal editor; it would cover the page.
             goalSheet = nil
             goalPrefill = nil
+            keyboardCursor = nil
             rememberPage()
         }
     }
+    /// Keyboard navigation (TaskKeyboardNav.swift): the row the arrow keys are on, apart from what's open;
+    /// the rows on screen, as the list or board on screen registers them; and the list a task was opened
+    /// from, which the full view's Next/Previous Task walks.
+    var keyboardCursor: String? = nil
+    var navLayout = TaskKeyNav.Layout.empty
+    var navList: [String] = []
+    /// The page on screen has a primary action for its rows (the Inbox's Approve/Review/Answer, Needs a hand's Answer).
+    @ObservationIgnored var navPrimary: ((String) -> Void)? = nil
     /// This factory's last page has been reopened (or there was none), so a move now is the person's to remember.
     /// Until then the mock's starting goal, or the inbox a factory switch lands on, would overwrite it.
     var pageRestored = false
@@ -162,6 +171,7 @@ final class AppState {
     /// A card or row was clicked: show it in the task panel, or the full view when the panel is off.
     func openTask(_ id: String) {
         guard taskPanelEnabled else { return openFocus(id) }
+        rememberNavList(opening: id)
         withAnimation(.snappy(duration: 0.25)) {
             selectedTask = id
             showInspector = true
@@ -1318,6 +1328,7 @@ final class AppState {
 
     func openFocus(_ id: String) {
         goalSheet = nil
+        rememberNavList(opening: id)
         withAnimation(.snappy(duration: 0.3)) {
             selectedTask = id
             focusedTask = id
@@ -2840,6 +2851,12 @@ final class AppState {
             // the context menu it brings up, picked by its title (`menupick:Move to top`; `menupick:none` puts it away).
             case "rightclick": Headless.rightClick(at: CGPoint(x: Double(parts[1]) ?? 0, y: Double(parts.count > 2 ? parts[2] : "0") ?? 0))
             case "menupick": Headless.pickMenuItem(parts.dropFirst().joined(separator: ":"))
+            // A menu-bar menu drawn into the shots like a context menu, at the window's top left: `menubar:Go`.
+            case "menubar":
+                if let menu = NSApp.mainMenu?.items.first(where: { $0.title == parts[1] })?.submenu {
+                    menu.update()
+                    Headless.shownMenu = (menu, CGPoint(x: 340, y: 60))
+                }
             case "preview": NotificationCenter.default.post(name: MarkdownEditor.demoPreview, object: nil)
             case "hand": resolveHand(parts[1], option: task(parts[1]).hand?.options.first, note: "")
             // Yes or No on a task's permission prompt card, as if clicked: `prompt:MF-45:yes`.
