@@ -238,6 +238,8 @@
 .doc-decision-why-input { flex: 1; min-width: 120px; }
 .doc-decision-form { display: flex; flex-direction: column; gap: 6px; }
 .doc-decision-form label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+.doc-decision-stale { font-size: 12px; color: var(--muted, inherit); }
+.doc-decision-stale[hidden] { display: none; }
 .doc-btn { font: inherit; font-size: 13px; padding: 4px 10px; border: 1px solid var(--stroke); border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
 .doc-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .doc-btn.ghost { border-color: transparent; }
