@@ -153,13 +153,18 @@ struct TaskTimeline: View {
     }
 
     private func commentCard(_ comment: Comment) -> some View {
+        let github = comment.isFromGitHub
         // A review comment on lines of the diff: its file and lines, the code, then what was said.
-        let code = comment.anchor.flatMap(DiffReview.parseAnchor)
-        let split = code == nil ? nil : DiffReview.splitSnippet(comment.text)
+        let code = comment.anchor.flatMap(github ? GitHubComment.file : DiffReview.parseAnchor)
+        let split = code == nil || github ? nil : DiffReview.splitSnippet(comment.text)
+        let verb = github ? GitHubComment.verb(anchor: comment.anchor)
+            : comment.via.map { "replied in \($0)" } ?? (code != nil ? "commented on" : comment.author.isHuman ? "commented" : "replied")
+        // A GitHub review's "Review · approved" is said by the verb, not shown again as a chip.
+        let anchor = code != nil || (github && GitHubComment.isReview(comment.anchor)) ? nil : comment.anchor
+        let link = github ? comment.url.flatMap(URL.init(string:)) : nil
         return VStack(alignment: .leading, spacing: 0) {
             header(name: comment.author.id == FactoryData.me.id ? "You" : comment.author.firstName,
-                   verb: comment.via.map { "replied in \($0)" } ?? (code != nil ? "commented on" : comment.author.isHuman ? "commented" : "replied"),
-                   anchor: code == nil ? comment.anchor : nil, code: code, when: comment.when)
+                   github: github, verb: verb, anchor: anchor, code: code, when: comment.when)
             Hairline()
             if let split {
                 snippet(split.snippet)
@@ -170,13 +175,33 @@ struct TaskTimeline: View {
                 MarkdownPreview(source: comment.text, baseSize: 13)
                     .padding(12)
             }
-            if let id = comment.id { thread(id) }
+            if let id = comment.id {
+                thread(id, link: link)
+            } else if let link {
+                Hairline()
+                HStack { Spacer(); openOnGitHub(link) }
+            }
         }
         .background(card(Theme.stroke))
     }
 
+    /// A small link to where a comment was written on GitHub, styled like the card's Reply button.
+    private func openOnGitHub(_ url: URL) -> some View {
+        Link(destination: url) {
+            Label("Open on GitHub", systemImage: "arrow.up.right")
+                .labelStyle(.titleAndIcon)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(Theme.textMuted)
+                .padding(.horizontal, 12)
+                .frame(height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(url.absoluteString)
+    }
+
     /// A comment's replies nested under it, then its Reply button or the open Reply box.
-    @ViewBuilder private func thread(_ root: String) -> some View {
+    @ViewBuilder private func thread(_ root: String, link: URL? = nil) -> some View {
         let list = replies[root] ?? []
         if !list.isEmpty {
             Hairline()
@@ -191,20 +216,28 @@ struct TaskTimeline: View {
         if replyingTo == root {
             replyBox(root)
         } else {
-            Button {
-                replyDraft = ""
-                withAnimation(.snappy(duration: 0.2)) { replyingTo = root }
-            } label: {
-                Label(list.isEmpty ? "Reply" : "Reply · \(list.count)", systemImage: "arrowshape.turn.up.left")
-                    .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(Theme.textMuted)
-                    .padding(.horizontal, 12)
-                    .frame(height: 28)
-                    .contentShape(Rectangle())
+            HStack(spacing: 0) {
+                replyButton(root, count: list.count)
+                Spacer()
+                if let link { openOnGitHub(link) }
             }
-            .buttonStyle(.plain)
-            .help("Reply in this thread. An agent in it, or one you @mention, answers here.")
         }
+    }
+
+    private func replyButton(_ root: String, count: Int) -> some View {
+        Button {
+            replyDraft = ""
+            withAnimation(.snappy(duration: 0.2)) { replyingTo = root }
+        } label: {
+            Label(count == 0 ? "Reply" : "Reply · \(count)", systemImage: "arrowshape.turn.up.left")
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(Theme.textMuted)
+                .padding(.horizontal, 12)
+                .frame(height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Reply in this thread. An agent in it, or one you @mention, answers here.")
     }
 
     private func replyRow(_ reply: Comment) -> some View {
@@ -318,9 +351,14 @@ struct TaskTimeline: View {
         .frame(minHeight: 22)
     }
 
-    private func header(name: String, verb: String, anchor: String?, code: (path: String, lines: String)? = nil, when: String) -> some View {
+    private func header(name: String, github: Bool = false, verb: String, anchor: String?, code: (path: String, lines: String)? = nil, when: String) -> some View {
         HStack(spacing: 6) {
             Text(name).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.text)
+            if github {
+                GitHubIcon(mark: .logo, size: 12)
+                    .foregroundStyle(Theme.textMuted)
+                    .help("From the pull request on GitHub")
+            }
             Text(verb).font(.system(size: 12.5)).foregroundStyle(Theme.textMuted)
             if let code {
                 HStack(spacing: 4) {
@@ -333,7 +371,7 @@ struct TaskTimeline: View {
                 .padding(.horizontal, 7)
                 .frame(height: 19)
                 .background(Capsule().fill(Theme.fill))
-                .help("\(code.path), \(code.lines)")
+                .help(code.lines.isEmpty ? code.path : "\(code.path), \(code.lines)")
             }
             if let anchor {
                 Text(anchor)
@@ -370,5 +408,33 @@ struct TaskTimeline: View {
         if text.contains("step") { return "hammer" }
         if text.contains("moved") { return "arrow.right" }
         return "circle.fill"
+    }
+}
+
+/// How a comment from the task's pull request reads: the server sends a review as "Review · approved",
+/// a comment on a line as "path:42" (or just "path"), and a conversation comment with no anchor.
+enum GitHubComment {
+    static func isReview(_ anchor: String?) -> Bool { anchor?.hasPrefix("Review") == true }
+
+    static func verb(anchor: String?) -> String {
+        guard isReview(anchor), let anchor else { return "commented on GitHub" }
+        switch anchor {
+        case "Review · approved": return "approved on GitHub"
+        case "Review · requested changes": return "requested changes on GitHub"
+        default: return "reviewed on GitHub"
+        }
+    }
+
+    /// A line comment's file and lines ("L42", or "" for a comment on the whole file); nil for a review.
+    static func file(_ anchor: String) -> (path: String, lines: String)? {
+        guard !anchor.isEmpty, !isReview(anchor) else { return nil }
+        if let parsed = DiffReview.parseAnchor(anchor) { return parsed }
+        if let colon = anchor.lastIndex(of: ":") {
+            let lines = anchor[anchor.index(after: colon)...]
+            if !lines.isEmpty, lines.first?.isNumber == true, lines.allSatisfy({ $0.isNumber || $0 == "-" || $0 == "–" }) {
+                return (String(anchor[..<colon]), "L" + lines.replacingOccurrences(of: "-", with: "–"))
+            }
+        }
+        return (anchor, "")
     }
 }

@@ -42,6 +42,16 @@ import SwiftUI
         }
     }
 
+    /// Whether an update brought a GitHub comment on a line of the pull request that the task didn't
+    /// have before: then the review threads the Changes tab shows are out of date.
+    nonisolated static func bringsGitHubLineComment(was previous: Wire.Task?, now task: Wire.Task) -> Bool {
+        let known = Set(previous?.comments.map(\.id) ?? [])
+        return task.comments.contains { comment in
+            guard comment.source == "github", !known.contains(comment.id), let anchor = comment.anchor else { return false }
+            return !anchor.isEmpty && !anchor.hasPrefix("Review")
+        }
+    }
+
     /// "now", "4m", "2h", "3d": how the mockup labels times.
     static func ago(_ ms: UInt64) -> String {
         let seconds = max(0, Date().timeIntervalSince1970 - Double(ms) / 1000)
@@ -112,7 +122,7 @@ import SwiftUI
         task.approvalsNeeded = t.approvalsNeeded.int
         task.reviews = t.reviews.map(who)
         task.requested = t.requested.map(who)
-        task.comments = t.comments.map { Comment(author: who($0.author), text: $0.text, when: ago($0.at), anchor: $0.anchor, via: $0.via, id: $0.id, mentions: $0.mentions, replyTo: $0.replyTo) }
+        task.comments = t.comments.map { Comment(author: who($0.author), text: $0.text, when: ago($0.at), anchor: $0.anchor, via: $0.via, id: $0.id, mentions: $0.mentions, replyTo: $0.replyTo, source: $0.source, url: $0.url) }
         task.changeRequests = t.changes.map { change in
             var request = ChangeRequest(author: who(change.author), text: change.text, anchor: change.anchor,
                                         status: changeStatus(change.status), when: ago(change.at))

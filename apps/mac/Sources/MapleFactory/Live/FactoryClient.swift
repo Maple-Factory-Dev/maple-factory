@@ -562,6 +562,11 @@ import Foundation
         case .taskUpdated(let update):
             let previous = tasks.first { $0.id == update.task.id }
             defer { notify(was: previous, now: update.task) }
+            // A new comment on a line of the PR: fetch its threads again so an open Changes tab shows it.
+            if let held = threads[update.task.id], LiveAdapter.bringsGitHubLineComment(was: previous, now: update.task) {
+                let id = update.task.id
+                Task { await loadThreads(task: id, key: held.key, force: true) }
+            }
             if let index = tasks.firstIndex(where: { $0.id == update.task.id }) {
                 tasks[index] = update.task
                 factoryTasks[index] = adapt(update.task)

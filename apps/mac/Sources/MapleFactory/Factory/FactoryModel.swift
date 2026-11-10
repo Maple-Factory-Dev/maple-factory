@@ -112,6 +112,10 @@ struct Comment {
     var mentions: [String]? = nil
     /// The id of its thread's first comment, when it's a reply.
     var replyTo: String? = nil
+    /// Where it was written, when not in the factory: "github" for a pull request comment or review.
+    var source: String? = nil
+    /// A link to it where it was written, e.g. the comment on GitHub.
+    var url: String? = nil
 
     /// Whether it @mentions this login, by the server's list or, from an older server, its text.
     func mentions(_ login: String) -> Bool {
@@ -119,6 +123,9 @@ struct Comment {
         let pattern = "(?<![\\w.@])@\(NSRegularExpression.escapedPattern(for: login))(?![A-Za-z0-9-])"
         return text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
     }
+
+    /// Written on the task's pull request: a conversation comment, a review, or a comment on a line.
+    var isFromGitHub: Bool { source == "github" }
 }
 
 struct PlanStep {
