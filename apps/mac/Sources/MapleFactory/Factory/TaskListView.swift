@@ -92,8 +92,12 @@ struct TaskListView: View {
                 .lineLimit(1)
                 .layoutPriority(1)
 
-            if task.hand != nil { NeedsHandBadge() } else if task.needsYou { NeedsYouBadge() }
-            if task.scheduled, let at = task.startAt { ScheduleBadge(at: at) }
+            // The badges keep their size; the title is what truncates in a narrow window.
+            Group {
+                if task.hand != nil { NeedsHandBadge() } else if task.needsYou { NeedsYouBadge() }
+                if task.scheduled, let at = task.startAt { ScheduleBadge(at: at) }
+            }
+            .fixedSize()
             if let effort = task.effort {
                 // Capped, so it can't crowd the title, but it sizes before the title does:
                 // a long title truncates rather than squeezing the pill to "…".
