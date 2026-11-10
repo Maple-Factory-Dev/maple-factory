@@ -522,9 +522,12 @@ struct FactoryNameCard: View {
 /// This Mac's banners for tasks that need you.
 struct NotificationSettings: View {
     @Bindable private var notifier = Notifier.shared
+    @Environment(AppState.self) private var state
+    @Environment(FactoryClient.self) private var client
+    @AppStorage(DockBadge.settingKey) private var dockBadge = true
 
     var body: some View {
-        SettingsPane("Notifications", subtitle: "A banner when a task newly needs you (a raised hand, a question, a plan to approve or a PR to review) while Maple Factory is in the background. Snooze them from the bell in the sidebar.") {
+        SettingsPane("Notifications", subtitle: "A banner when a task newly needs you (a raised hand, a question, a plan to approve or a PR to review) while Maple Factory is in the background, and a count on the Dock icon. Snooze banners from the bell in the sidebar.") {
             SettingsSection("Banners") {
                 SettingsToggle("Notifications", isOn: $notifier.enabled)
                 if notifier.isSnoozed {
@@ -534,6 +537,11 @@ struct NotificationSettings: View {
                 }
             }
             QuietHoursSection()
+            SettingsSection("Dock") {
+                SettingsToggle("Show count on the Dock icon",
+                               detail: "What's waiting on you: the Inbox's For you count plus raised hands. Shows even while banners are snoozed or in quiet hours.",
+                               isOn: $dockBadge)
+            }
             if notifier.denied {
                 SettingsSection("macOS") {
                     SettingsButtonRow("macOS isn't letting Maple Factory show notifications.", button: "Open System Settings") { notifier.openSystemSettings() }
@@ -541,6 +549,7 @@ struct NotificationSettings: View {
             }
         }
         .task { await notifier.refreshPermission() }
+        .onChange(of: dockBadge) { _, on in DockBadge.apply(DockBadge.count(state: state, client: client, enabled: on)) }
     }
 }
 

@@ -4,6 +4,8 @@ import SwiftUI
 /// The Dock shows the current factory's icon, on this Mac's say-so (Settings › General): switching
 /// factories changes it, and signing out, a factory with no icon, or the setting off puts Maple's back.
 /// FactoryClient applies it whenever its icon changes, window or not; the Settings toggle re-applies it.
+/// It only sets `applicationIconImage` (never `dockTile.contentView` or `badgeLabel`), so DockBadge's count
+/// draws over whichever icon is shown.
 enum DockIcon {
     static let settingKey = "dockShowsFactoryIcon"
 

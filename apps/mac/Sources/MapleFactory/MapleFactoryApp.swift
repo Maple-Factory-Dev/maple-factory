@@ -35,6 +35,7 @@ struct MapleFactoryApp: App {
         _client = State(initialValue: client)
         _state = State(initialValue: state)
         AppDelegate.client = client
+        AppDelegate.state = state
         if Headless.isOn { AppDelegate.headless = (state, client) }
         #if PERF_REPRO
         PerfRepro.start(state)
@@ -159,12 +160,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor static var headless: (AppState, FactoryClient)?
     /// The app's client, whose factory icon the Dock starts on; set by the app before launch finishes.
     @MainActor static var client: FactoryClient?
+    /// The app's state, whose For you count the Dock badge shows; set by the app before launch finishes.
+    @MainActor static var state: AppState?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Headless: no Dock icon, no activation, no updates or banners; the user keeps the screen.
         if let (state, client) = Self.headless {
             // Only traced (`-dockTrace`), the way a real launch would show it.
             DockIcon.apply(client.icon)
+            DockBadge.follow(state: state, client: client)
             Headless.start(state: state, client: client)
             return
         }
@@ -172,6 +176,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         // The factory's cached icon (or Maple's): FactoryClient set it before there was a regular app to show it.
         DockIcon.apply(Self.client?.icon)
+        // What's waiting on you, over that icon, kept current window or not.
+        if let state = Self.state, let client = Self.client { DockBadge.follow(state: state, client: client) }
         Updater.shared.start()
         Notifier.shared.start()
         NSApp.activate(ignoringOtherApps: true)
