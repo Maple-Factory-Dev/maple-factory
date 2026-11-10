@@ -2805,6 +2805,12 @@ final class AppState {
             // the context menu it brings up, picked by its title (`menupick:Move to top`; `menupick:none` puts it away).
             case "rightclick": Headless.rightClick(at: CGPoint(x: Double(parts[1]) ?? 0, y: Double(parts.count > 2 ? parts[2] : "0") ?? 0))
             case "menupick": Headless.pickMenuItem(parts.dropFirst().joined(separator: ":"))
+            // A menu-bar menu drawn into the shots like a context menu, at the window's top left: `menubar:Go`.
+            case "menubar":
+                if let menu = NSApp.mainMenu?.items.first(where: { $0.title == parts[1] })?.submenu {
+                    menu.update()
+                    Headless.shownMenu = (menu, CGPoint(x: 340, y: 60))
+                }
             case "preview": NotificationCenter.default.post(name: MarkdownEditor.demoPreview, object: nil)
             case "hand": resolveHand(parts[1], option: task(parts[1]).hand?.options.first, note: "")
             // Yes or No on a task's permission prompt card, as if clicked: `prompt:MF-45:yes`.
