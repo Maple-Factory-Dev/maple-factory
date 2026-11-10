@@ -269,6 +269,8 @@ struct ContentView: View {
                 .onChange(of: client.hasSnapshot ? client.factoryGoals.map(\.name) : nil, initial: true) { _, names in
                     // The page this factory was last on, the first time its goals land; else, the mock's starting goal
                     // isn't one of the workspace's: open the focused task's goal, the first, or the inbox.
+                    // The composer's unsent brief is this factory's own (MF-404): launch, connect or a switch loads it.
+                    state.syncUnsentDraft()
                     guard client.isSignedIn, let names else {
                         // Loading a factory (switched to, or joined in onboarding): its own last page comes back once it lands.
                         if client.isSignedIn { state.pageRestored = false }
