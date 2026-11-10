@@ -14,6 +14,7 @@ import { extend, linesLabel, pick, pickable, picked, relocate, rowsOf, selected,
 import { bundleStale } from "./update.js";
 import { createSettings } from "./settings.js";
 import { createDocs, DOC_ROUTE } from "./docs.js";
+import { createDecisions } from "./decisions.js";
 import { inQuietHours } from "./quiet-hours.js";
 import { canManage, machineStatus, meters, pauseSettings, pauseUntil, resumeSettings, sortMachines, teammatesTasks, usageRows } from "./machines.js";
 import { fillIcons, icon } from "./icons.js";
@@ -462,7 +463,8 @@ function route() {
   const task = hash.match(/^\/t\/([A-Z][A-Z0-9]*-\d+)$/);
   const note = hash.match(/^\/notes\/([\w-]+)$/);
   const doc = hash.match(DOC_ROUTE);
-  if (doc) return { name: "doc", nav: "docs", id: doc[1] };
+  if (doc) return { name: "doc", nav: "docs", id: doc[1], decision: new URLSearchParams(query).get("decision") };
+  if (hash === "/decisions") return { name: "decisions", nav: "decisions", query };
   if (hash === "/docs") return { name: "docs", nav: "docs", query };
   const settings = hash.match(/^\/settings(?:\/([\w-]+))?$/);
   if (task) return { name: "task", nav: "tasks", id: task[1], artifact: new URLSearchParams(query).get("artifact") };
@@ -484,10 +486,13 @@ function render() {
   const waiting = [...state.tasks.values()].filter(needsYou).length + mentions().length;
   $("inbox-count").textContent = waiting || "";
   $("machines-count").textContent = online() || "";
+  const openDecisions = (state.decisions ?? []).filter((d) => d.status === "proposed").length;
+  $("decisions-count").textContent = openDecisions || "";
+  document.querySelector('[data-nav="decisions"]')?.setAttribute("aria-label", openDecisions ? `Decisions, ${openDecisions} open` : "Decisions");
   for (const [nav, label] of [["inbox", waiting ? `Inbox, ${waiting} waiting` : "Inbox"], ["machines", online() ? `Machines, ${online()} online` : "Machines"]])
     document.querySelector(`[data-nav="${nav}"]`)?.setAttribute("aria-label", label);
   document.title = `${waiting ? `(${waiting}) ` : ""}Maple Factory`;
-  const next = { task: () => taskView(r.id, r.artifact), tasks: tasksView, new: () => newTaskView(r), notes: notesView, docs: () => docs.listView(r), doc: () => docs.docView(r.id), machines: machinesView, note: () => noteView(r.id), settings: () => settings.view(r.section) }[r.name]?.() ?? inboxView();
+  const next = { task: () => taskView(r.id, r.artifact), tasks: tasksView, new: () => newTaskView(r), notes: notesView, docs: () => docs.listView(r), doc: () => docs.docView(r.id, r.decision), decisions: () => decisionsPage.view(r), machines: machinesView, note: () => noteView(r.id), settings: () => settings.view(r.section) }[r.name]?.() ?? inboxView();
   // The open doc's editor never leaves the page: redraw only around it, or ProseMirror loses focus and typing.
   if (r.name === "doc" && docs.patch($("main"), next)) return;
   // Keep what someone's typing: re-render only around the boxes being typed in.
@@ -496,6 +501,7 @@ function render() {
 const view = render;
 const settings = createSettings({ state, h, send, toast, render, ago });
 const docs = createDocs({ state, h, send, render, toast, icon, ago, allTasks });
+const decisionsPage = createDecisions({ state, h, send, icon, ago });
 
 // Sections of the Inbox and Tasks pages folded down to their heading, kept in this browser.
 const collapsed = loadCollapsed();

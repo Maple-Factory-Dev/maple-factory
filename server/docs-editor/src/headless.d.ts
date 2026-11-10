@@ -13,5 +13,6 @@ export interface ReadDoc {
 export function readDoc(ydoc: Yjs.Doc, threads?: Pick<DocThread, "id" | "anchor">[]): ReadDoc;
 export function anchorFor(ydoc: Yjs.Doc, at?: { block?: string | null; quote?: string | null }): DocAnchor;
 export function applySuggestion(ydoc: Yjs.Doc, anchor: DocAnchor, markdown: string, origin?: unknown): { before: string; after: unknown };
+export function insertDecision(ydoc: Yjs.Doc, id: string, at?: { block?: string | null; quote?: string | null }, origin?: unknown): { block: string | null };
 export function seedDoc(ydoc: Yjs.Doc, markdown: string): Yjs.Doc;
 export const Y: typeof Yjs;

@@ -192,6 +192,44 @@ enum class DocSuggestionStatus(val raw: String) {
     object Serializer : WireEnumSerializer<DocSuggestionStatus>("DocSuggestionStatus", entries, { it.raw }, Unknown)
 }
 
+/** Where a doc decision stands (MF-367). */
+@Serializable(with = DecisionStatus.Serializer::class)
+enum class DecisionStatus(val raw: String) {
+    /** Waiting for a person to accept or reject it. */
+    Proposed("proposed"),
+    /** Accepted: the chosen option stands. */
+    Accepted("accepted"),
+    /** Rejected. */
+    Rejected("rejected"),
+    /** Was accepted, then replaced by a newer accepted decision. Final. */
+    Superseded("superseded"),
+    /** A value this build doesn't know yet; newer servers may send them. */
+    Unknown("unknown"),
+    ;
+
+    object Serializer : WireEnumSerializer<DecisionStatus>("DecisionStatus", entries, { it.raw }, Unknown)
+}
+
+/** What one entry in a decision's append-only log did. */
+@Serializable(with = DecisionAction.Serializer::class)
+enum class DecisionAction(val raw: String) {
+    /** Proposed. */
+    Proposed("proposed"),
+    /** Edited while still proposed. */
+    Edited("edited"),
+    /** Accepted. */
+    Accepted("accepted"),
+    /** Rejected. */
+    Rejected("rejected"),
+    /** Replaced by a newer accepted decision. */
+    Superseded("superseded"),
+    /** A value this build doesn't know yet; newer servers may send them. */
+    Unknown("unknown"),
+    ;
+
+    object Serializer : WireEnumSerializer<DecisionAction>("DecisionAction", entries, { it.raw }, Unknown)
+}
+
 /** githubstatus.com's overall indicator. */
 @Serializable(with = GitHubIndicator.Serializer::class)
 enum class GitHubIndicator(val raw: String) {
@@ -2072,6 +2110,8 @@ data class Doc(
     val icon: String? = null,
     /** Comment threads on it not yet resolved. */
     val openThreads: Long? = null,
+    /** Decisions in it still proposed. */
+    val openDecisions: Long? = null,
 )
 
 /** Where a comment thread sits in a doc's text: two Yjs relative positions on its `prosemirror` fragment, so concurrent edits move it with the text. Opaque to the server. */
@@ -2144,6 +2184,57 @@ data class DocThread(
     val suggestion: DocSuggestion? = null,
     /** The newest agent asked in this thread (MF-366). */
     val agent: DocAgentRun? = null,
+)
+
+/** One option a decision considered. */
+@Serializable
+data class DecisionOption(
+    val id: String,
+    val label: String,
+    val note: String? = null,
+)
+
+/** A reviewable decision recorded in a doc (MF-367): the server owns it; the doc's text only holds an embed with its id. */
+@Serializable
+data class Decision(
+    val id: String,
+    val doc: String,
+    val goal: String? = null,
+    val question: String,
+    val options: List<DecisionOption> = emptyList(),
+    /** The id of the chosen option. */
+    val chosen: String? = null,
+    val rationale: String,
+    val status: DecisionStatus,
+    val proposedBy: String,
+    /** Set when an agent proposed it, e.g. "MF-367 builder". */
+    val agent: String? = null,
+    val proposedAt: Long,
+    /** Who accepted or rejected it. */
+    val decidedBy: String? = null,
+    val decidedAt: Long? = null,
+    /** The optional reason given when it was accepted or rejected. */
+    val why: String? = null,
+    /** The accepted decision this one replaces once accepted. */
+    val supersedes: String? = null,
+    /** The decision that replaced this one. */
+    val supersededBy: String? = null,
+)
+
+/** One entry in a decision's append-only log, kept server-side so history can't be silently edited. */
+@Serializable
+data class DecisionEvent(
+    /** Its place in the org's log. */
+    val seq: Long,
+    val decision: String,
+    val at: Long,
+    /** The member (or, for an agent proposal, the person it works for). */
+    val by: String,
+    val agent: String? = null,
+    val action: DecisionAction,
+    val why: String? = null,
+    val before: Decision? = null,
+    val after: Decision? = null,
 )
 
 /** Someone with the app open, and the task they're looking at. */
@@ -3473,6 +3564,44 @@ sealed class ClientMessage {
     data class DocThreads(
         val doc: String,
     ) : ClientMessage()
+    /** Propose a decision in a doc (MF-367). The client makes the id, so the editor can insert the embed first. */
+    @Serializable
+    data class DecisionPropose(
+        val id: String,
+        val doc: String,
+        val question: String,
+        val options: List<dev.maplefactory.wire.DecisionOption> = emptyList(),
+        val chosen: String? = null,
+        val rationale: String,
+        val supersedes: String? = null,
+    ) : ClientMessage()
+    /** Change a decision while it's still proposed. */
+    @Serializable
+    data class DecisionEdit(
+        val id: String,
+        val question: String,
+        val options: List<dev.maplefactory.wire.DecisionOption> = emptyList(),
+        val chosen: String? = null,
+        val rationale: String,
+    ) : ClientMessage()
+    /** Accept a proposed decision; records who and when. People only. */
+    @Serializable
+    data class DecisionAccept(
+        val id: String,
+        val chosen: String? = null,
+        val why: String? = null,
+    ) : ClientMessage()
+    /** Reject a proposed decision. People only. */
+    @Serializable
+    data class DecisionReject(
+        val id: String,
+        val why: String? = null,
+    ) : ClientMessage()
+    /** Ask for a decision's append-only log; answered with `decision.log` to this connection. */
+    @Serializable
+    data class DecisionLog(
+        val id: String,
+    ) : ClientMessage()
     /** The task this app is showing, if any, for teammates' presence. */
     @Serializable
     data class Presence(
@@ -4046,6 +4175,11 @@ sealed class ClientMessage {
             "doc.reopen" -> json.decodeFromJsonElement(DocReopen.serializer(), body)
             "doc.suggestion" -> json.decodeFromJsonElement(DocSuggestion.serializer(), body)
             "doc.threads" -> json.decodeFromJsonElement(DocThreads.serializer(), body)
+            "decision.propose" -> json.decodeFromJsonElement(DecisionPropose.serializer(), body)
+            "decision.edit" -> json.decodeFromJsonElement(DecisionEdit.serializer(), body)
+            "decision.accept" -> json.decodeFromJsonElement(DecisionAccept.serializer(), body)
+            "decision.reject" -> json.decodeFromJsonElement(DecisionReject.serializer(), body)
+            "decision.log" -> json.decodeFromJsonElement(DecisionLog.serializer(), body)
             "presence" -> json.decodeFromJsonElement(Presence.serializer(), body)
             "session.open" -> json.decodeFromJsonElement(SessionOpen.serializer(), body)
             "session.attach" -> json.decodeFromJsonElement(SessionAttach.serializer(), body)
@@ -4152,6 +4286,11 @@ sealed class ClientMessage {
             is DocReopen -> "doc.reopen" to json.encodeToJsonElement(DocReopen.serializer(), value)
             is DocSuggestion -> "doc.suggestion" to json.encodeToJsonElement(DocSuggestion.serializer(), value)
             is DocThreads -> "doc.threads" to json.encodeToJsonElement(DocThreads.serializer(), value)
+            is DecisionPropose -> "decision.propose" to json.encodeToJsonElement(DecisionPropose.serializer(), value)
+            is DecisionEdit -> "decision.edit" to json.encodeToJsonElement(DecisionEdit.serializer(), value)
+            is DecisionAccept -> "decision.accept" to json.encodeToJsonElement(DecisionAccept.serializer(), value)
+            is DecisionReject -> "decision.reject" to json.encodeToJsonElement(DecisionReject.serializer(), value)
+            is DecisionLog -> "decision.log" to json.encodeToJsonElement(DecisionLog.serializer(), value)
             is Presence -> "presence" to json.encodeToJsonElement(Presence.serializer(), value)
             is SessionOpen -> "session.open" to json.encodeToJsonElement(SessionOpen.serializer(), value)
             is SessionAttach -> "session.attach" to json.encodeToJsonElement(SessionAttach.serializer(), value)
@@ -4273,6 +4412,7 @@ sealed class ServerToClient {
         val notes: List<dev.maplefactory.wire.Note> = emptyList(),
         /** Every shared doc, archived ones too. None: an older server. */
         val docs: List<dev.maplefactory.wire.Doc>? = null,
+        val decisions: List<dev.maplefactory.wire.Decision>? = null,
         val follows: List<dev.maplefactory.wire.GoalFollow> = emptyList(),
         /** Your quiet hours. None: none set, or an older server. */
         val quietHours: dev.maplefactory.wire.QuietHours? = null,
@@ -4376,6 +4516,17 @@ sealed class ServerToClient {
     @Serializable
     data class DocThreadUpdated(
         val thread: dev.maplefactory.wire.DocThread,
+    ) : ServerToClient()
+    /** A decision was proposed or changed, to every member. */
+    @Serializable
+    data class DecisionUpdated(
+        val decision: dev.maplefactory.wire.Decision,
+    ) : ServerToClient()
+    /** A decision's log, oldest first, to the connection that asked. */
+    @Serializable
+    data class DecisionLog(
+        val id: String,
+        val events: List<dev.maplefactory.wire.DecisionEvent> = emptyList(),
     ) : ServerToClient()
     /** Your draft, to your apps only. */
     @Serializable
@@ -4562,6 +4713,8 @@ sealed class ServerToClient {
             "doc.removed" -> json.decodeFromJsonElement(DocRemoved.serializer(), body)
             "doc.threads" -> json.decodeFromJsonElement(DocThreads.serializer(), body)
             "doc.thread.updated" -> json.decodeFromJsonElement(DocThreadUpdated.serializer(), body)
+            "decision.updated" -> json.decodeFromJsonElement(DecisionUpdated.serializer(), body)
+            "decision.log" -> json.decodeFromJsonElement(DecisionLog.serializer(), body)
             "draft.updated" -> json.decodeFromJsonElement(DraftUpdated.serializer(), body)
             "scout.updated" -> json.decodeFromJsonElement(ScoutUpdated.serializer(), body)
             "recurring.updated" -> json.decodeFromJsonElement(RecurringUpdated.serializer(), body)
@@ -4609,6 +4762,8 @@ sealed class ServerToClient {
             is DocRemoved -> "doc.removed" to json.encodeToJsonElement(DocRemoved.serializer(), value)
             is DocThreads -> "doc.threads" to json.encodeToJsonElement(DocThreads.serializer(), value)
             is DocThreadUpdated -> "doc.thread.updated" to json.encodeToJsonElement(DocThreadUpdated.serializer(), value)
+            is DecisionUpdated -> "decision.updated" to json.encodeToJsonElement(DecisionUpdated.serializer(), value)
+            is DecisionLog -> "decision.log" to json.encodeToJsonElement(DecisionLog.serializer(), value)
             is DraftUpdated -> "draft.updated" to json.encodeToJsonElement(DraftUpdated.serializer(), value)
             is ScoutUpdated -> "scout.updated" to json.encodeToJsonElement(ScoutUpdated.serializer(), value)
             is RecurringUpdated -> "recurring.updated" to json.encodeToJsonElement(RecurringUpdated.serializer(), value)

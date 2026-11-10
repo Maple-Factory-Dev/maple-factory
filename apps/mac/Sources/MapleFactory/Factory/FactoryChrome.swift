@@ -28,6 +28,7 @@ struct FactoryTopBar: View {
                 case .intake: title("Requests", icon: "tray.and.arrow.down")
                 case .allGoals: title("All goals", icon: "scope")
                 case .docs, .doc: title("Docs", icon: "doc.richtext")
+                case .decisions: title("Decisions", icon: "checkmark.seal")
                 }
             }
 
@@ -173,6 +174,7 @@ struct FactoryTopBar: View {
         case .intake: "Requests"
         case .allGoals: "All goals"
         case .docs, .doc: "Docs"
+        case .decisions: "Decisions"
         }
     }
 

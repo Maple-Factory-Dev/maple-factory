@@ -515,14 +515,14 @@ struct InboxItem: Identifiable {
 }
 
 enum Destination: Hashable {
-    case inbox, myTasks, dayReport, activity, scratchpad, usage, statistics, needsHand, machines, intake, allGoals, docs
+    case inbox, myTasks, dayReport, activity, scratchpad, usage, statistics, needsHand, machines, intake, allGoals, docs, decisions
     case goal(String)
     /// One shared planning doc, by id.
     case doc(String)
 
     /// The pages that aren't goals, by the names `-destination` takes.
     private static let pages: [String: Destination] = [
-        "inbox": .inbox, "mytasks": .myTasks, "report": .dayReport, "activity": .activity, "scratchpad": .scratchpad, "usage": .usage, "statistics": .statistics,
+        "decisions": .decisions, "inbox": .inbox, "mytasks": .myTasks, "report": .dayReport, "activity": .activity, "scratchpad": .scratchpad, "usage": .usage, "statistics": .statistics,
         "hands": .needsHand, "machines": .machines, "requests": .intake, "goals": .allGoals, "docs": .docs,
     ]
 

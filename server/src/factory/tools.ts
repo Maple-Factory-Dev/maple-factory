@@ -72,6 +72,19 @@ const DOC_TOOLS: Omit<Tool, "roles">[] = [
     description: "Suggest replacing a quoted span or a block's text with new Markdown. It shows in the editor as a tracked change a person accepts or rejects; you can't edit a doc's text yourself, only suggest. An empty replacement suggests deleting it.",
     inputSchema: obj({ doc: docId, replacement: str("The Markdown to put in its place (empty: delete it); at most 10,000 characters."), block: blockId, quote, note: str("Why, shown with the suggestion.") }, ["doc", "replacement"]),
   },
+  {
+    name: "propose_decision",
+    description: "Propose a decision in a shared doc: the question, the options considered (2–10), the one you'd choose, and why. It's inserted as a decision card after the block or quote (or at the end) and stays proposed: only a person can accept or reject it. Use supersedes to propose replacing an accepted decision.",
+    inputSchema: obj({
+      doc: docId,
+      question: str("What's being decided; at most 500 characters."),
+      options: list(obj({ label: str("The option."), note: str("A short note on it.") }, ["label"]), "The options considered, 2–10."),
+      chosen: str("The label of the option you'd choose."),
+      rationale: str("Why (Markdown); at most 10,000 characters."),
+      supersedes: str("The id of an accepted decision (from read_doc) this would replace."),
+      block: blockId, quote,
+    }, ["doc", "question", "options", "rationale"]),
+  },
 ];
 export const DOC_TOOL_NAMES = DOC_TOOLS.map((t) => t.name);
 export const isDocTool = (name: string) => DOC_TOOL_NAMES.includes(name);

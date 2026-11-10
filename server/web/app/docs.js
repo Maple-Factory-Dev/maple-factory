@@ -6,7 +6,9 @@ export const DOC_ROUTE = /^\/docs\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 
 /** Keeps state.docs current from the feed. Returns true when it handled the message. */
 export function receiveDocs(state, m) {
-  if (m.type === "snapshot") state.docs = m.docs ?? [];
+  if (m.type === "snapshot") { state.docs = m.docs ?? []; state.decisions = m.decisions ?? []; }
+  else if (m.type === "decision.updated") state.decisions = [...(state.decisions ?? []).filter((d) => d.id !== m.decision.id), m.decision];
+  else if (m.type === "decision.log") (state.decisionLogs ??= {})[m.id] = m.events;
   else if (m.type === "doc.updated") state.docs = [...(state.docs ?? []).filter((d) => d.id !== m.doc.id), m.doc];
   else if (m.type === "doc.removed") state.docs = (state.docs ?? []).filter((d) => d.id !== m.id);
   else if (m.type === "doc.threads") (state.docThreads ??= {})[m.doc] = m.threads;
@@ -27,6 +29,7 @@ export function listDocs(docs, { goal = null, archived = false } = {}) {
 export function createDocs({ state, h, send, render, toast, icon, ago, allTasks }) {
   let pendingCreate = null; // the title of a doc.create we sent, to open it when its doc.updated lands
   let open = null; // { id, host, handle, status, peers, error }
+  let lastDecision = null; // the ?decision= last scrolled to, so a re-render doesn't scroll again
 
   const memberOf = (login) => state.members.find((m) => m.login === login);
   const goalName = (id) => state.goals.find((g) => g.id === id)?.name;
@@ -45,6 +48,7 @@ export function createDocs({ state, h, send, render, toast, icon, ago, allTasks 
       if (m.type === "snapshot" && open) send({ type: "doc.threads", doc: open.id });
       return false;
     }
+    if (m.type === "decision.updated" || m.type === "snapshot") open?.handle?.decisionsChanged?.();
     if (m.type === "doc.threads" || m.type === "doc.thread.updated") {
       if (open?.id === (m.doc ?? m.thread.doc)) open.handle?.threadsChanged();
       return "quiet"; // no full render: the editor redraws its own rail
@@ -106,18 +110,35 @@ export function createDocs({ state, h, send, render, toast, icon, ago, allTasks 
         // Comments (MF-364): threads from the feed; commands go straight to the socket.
         threads: () => state.docThreads?.[id] ?? [],
         sendThreadCommand: (cmd) => { if (!send(cmd)) toast("Not connected; try again in a moment."); },
+        // Decisions (MF-367): from the feed; propose / edit / accept / reject go straight to the socket.
+        decisions: () => (state.decisions ?? []).filter((d) => d.doc === id),
+        sendDecisionCommand: (cmd) => { if (!send(cmd)) toast("Not connected; try again in a moment."); },
         onEvent: (name, data) => {
           if (open?.id !== id) return;
           if (name === "status") open.status = data.status;
           if (name === "peers") open.peers = data;
           if (name === "error") open.error = data.message;
           if (name === "openTask") location.hash = `#/t/${data.id}`;
+          if (name === "synced") showDecisionSoon();
           if (name === "status" || name === "peers" || name === "error") drawChrome();
         },
       });
       window.__mapleDoc = open.handle; // for poking at it from devtools
       send({ type: "doc.threads", doc: id });
     }, (e) => { open.error = `Couldn't load the editor: ${e.message}`; drawChrome(); });
+  }
+
+  /** `#/docs/<id>?decision=<d>`: scroll to that decision's card and flash it, once the editor has it. */
+  let wantDecision = null;
+  function showDecisionSoon(tries = 20) {
+    if (!wantDecision || !open?.handle) return;
+    if (open.handle.showDecision(wantDecision)) { wantDecision = null; return; }
+    if (tries > 0) setTimeout(() => showDecisionSoon(tries - 1), 150);
+  }
+  function focusDecision(id) {
+    if (!id) return;
+    wantDecision = id;
+    setTimeout(() => showDecisionSoon(), 0);
   }
 
   /** Redraws only the header bits (presence, status) so typing isn't disturbed by a full render. */
@@ -140,7 +161,9 @@ export function createDocs({ state, h, send, render, toast, icon, ago, allTasks 
     open = null;
   }
 
-  function docView(id) {
+  function docView(id, decision = null) {
+    if (decision && decision !== lastDecision) focusDecision(decision);
+    lastDecision = decision;
     const doc = (state.docs ?? []).find((d) => d.id === id);
     if (!doc) { if (open?.id === id) close(); return h("div", {}, h("div", { class: "row muted" }, h("a", { href: "#/docs" }, "← Docs")), h("div", { class: "card empty" }, "No such doc.")); }
     if (doc.archived && open?.id === id) close();

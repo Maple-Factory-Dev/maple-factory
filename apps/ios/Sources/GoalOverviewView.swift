@@ -40,6 +40,12 @@ struct GoalView: View {
                         LabeledContent("All tasks", value: "\(allCount)")
                     }
                     .accessibilityIdentifier("goal-all-tasks")
+                    // Doc decisions still waiting for a person (MF-367); accepted or rejected in a doc.
+                    let openDecisions = store.feed.openDecisionCount(goal: id)
+                    if openDecisions > 0 {
+                        LabeledContent { Text("\(openDecisions)").monospacedDigit().foregroundStyle(.orange) } label: { Label("Open decisions", systemImage: "checkmark.seal") }
+                            .accessibilityIdentifier("goal-open-decisions")
+                    }
                 } footer: {
                     Text("Every task by stage, with Backlog and older finished work.")
                 }
