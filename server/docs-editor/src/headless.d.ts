@@ -14,5 +14,9 @@ export function readDoc(ydoc: Yjs.Doc, threads?: Pick<DocThread, "id" | "anchor"
 export function anchorFor(ydoc: Yjs.Doc, at?: { block?: string | null; quote?: string | null }): DocAnchor;
 export function applySuggestion(ydoc: Yjs.Doc, anchor: DocAnchor, markdown: string, origin?: unknown): { before: string; after: unknown };
 export function insertDecision(ydoc: Yjs.Doc, id: string, at?: { block?: string | null; quote?: string | null }, origin?: unknown): { block: string | null };
+export const MAX_EXCERPT: number;
+export interface DocSection { markdown: string; heading: string | null; quote: string | null; block: string | null }
+export function sectionAt(ydoc: Yjs.Doc, at?: { anchor?: DocAnchor | null; decision?: string | null }): DocSection;
+export function insertTaskEmbeds(ydoc: Yjs.Doc, ids: string[], at?: { block?: string | null }, origin?: unknown): { inserted: string[] };
 export function seedDoc(ydoc: Yjs.Doc, markdown: string): Yjs.Doc;
 export const Y: typeof Yjs;

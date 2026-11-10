@@ -162,6 +162,77 @@ export function findDecision(doc, id) {
   return found;
 }
 
+/** The most of a section `sectionAt` returns (and a task's `fromDoc.excerpt` keeps). */
+export const MAX_EXCERPT = 8000;
+
+const headingText = (node) => node.textContent.trim();
+
+/**
+ * The part of the doc a task is made from (MF-368): {markdown, heading, quote, block}. `decision`: that
+ * decision's card. `anchor` inside a heading: the heading's section, up to the next heading of the same or
+ * a higher level. `anchor` elsewhere: the selected blocks (or the selected text, inside one block), under the
+ * nearest heading above. Neither: the whole doc. `block` is the id of the source's last top-level block, the
+ * one task embeds go after.
+ */
+export function sectionAt(ydoc, { anchor = null, decision = null } = {}) {
+  const v = view(ydoc);
+  const cap = (md) => (md.length > MAX_EXCERPT ? md.slice(0, MAX_EXCERPT - 1) + "…" : md);
+  const headingAbove = (i) => {
+    for (let k = i; k >= 0; k--) if (v.blocks[k].node.type.name === "heading") return headingText(v.blocks[k].node);
+    return null;
+  };
+  const md = (list) => list.map((b) => blockMarkdown(b.node)).join("\n\n");
+  if (decision) {
+    const i = v.blocks.findIndex((b) => { let hit = false; b.node.descendants?.((n) => { if (n.type.name === "decision" && n.attrs.id === decision) hit = true; return !hit; }); return (b.node.type.name === "decision" && b.node.attrs.id === decision) || hit; });
+    if (i < 0) fail("That decision's card isn't in this doc any more.");
+    return { markdown: cap(md([v.blocks[i]])), heading: headingAbove(i), quote: null, block: v.blocks[i].id };
+  }
+  if (!anchor) {
+    if (!v.blocks.length) fail("This doc is empty.");
+    return { markdown: cap(md(v.blocks)), heading: null, quote: null, block: v.blocks.at(-1).id };
+  }
+  const r = resolveAnchor(ydoc, v.mapping, anchor);
+  if (r.orphan) fail("The selected text was deleted; select it again.");
+  const first = v.blocks.findIndex((b) => r.from >= b.from && r.from < b.to);
+  if (first < 0) fail("The selection isn't in the doc any more; select it again.");
+  const start = v.blocks[first];
+  if (start.node.type.name === "heading") {
+    const level = start.node.attrs.level ?? 1;
+    let end = first + 1;
+    while (end < v.blocks.length && !(v.blocks[end].node.type.name === "heading" && (v.blocks[end].node.attrs.level ?? 1) <= level)) end++;
+    const list = v.blocks.slice(first, end);
+    return { markdown: cap(md(list)), heading: headingText(start.node), quote: null, block: list.at(-1).id };
+  }
+  let last = first;
+  while (last + 1 < v.blocks.length && r.to > v.blocks[last].to) last++;
+  const quote = v.doc.textBetween(r.from, r.to, "\n", " ").trim();
+  const markdown = first === last ? quote : md(v.blocks.slice(first, last + 1));
+  return { markdown: cap(markdown), heading: headingAbove(first), quote: quote.slice(0, MAX_QUOTE) || null, block: v.blocks[last].id };
+}
+
+/** The task ids embedded in the doc. */
+export function taskEmbeds(doc) {
+  const ids = [];
+  doc.descendants((n) => { if (n.type.name === "taskEmbed" && n.attrs.id) ids.push(n.attrs.id); return true; });
+  return ids;
+}
+
+/**
+ * Inserts live task embeds for `ids` after top-level block `block` (or at the end of the doc), in order, skipping
+ * ids already embedded anywhere in the doc. One Yjs transaction. Returns {inserted: the ids it added}.
+ */
+export function insertTaskEmbeds(ydoc, ids, { block = null } = {}, origin = null) {
+  const v = view(ydoc);
+  const have = new Set(taskEmbeds(v.doc));
+  const add = [...new Set(ids)].filter((id) => !have.has(id));
+  if (!add.length) return { inserted: [] };
+  const after = block ? v.blocks.find((b) => b.id === block) ?? null : null;
+  const at = after ? after.to : v.doc.content.size;
+  const next = new Transform(v.doc).insert(at, add.map((id) => schema.nodes.taskEmbed.create({ id }))).doc;
+  ydoc.transact(() => updateYFragment(ydoc, v.fragment, next, v.meta), origin);
+  return { inserted: add };
+}
+
 /** Seeds an empty Y.Doc from Markdown (tests, and DocHub's /seed for local dev). */
 export function seedDoc(ydoc, markdown) {
   const fragment = ydoc.getXmlFragment(SHARED_TYPE);
