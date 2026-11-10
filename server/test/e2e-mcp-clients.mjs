@@ -3,7 +3,9 @@
 // Checks: a read-only personal token sees 2 tools and can't comment; a write token comments and suggests, shown as
 // the member with a "via MCP" badge; a revoked token gets 401; the OAuth flow (register, authorize, code + PKCE,
 // token, refresh) issues a working token; app tokens don't work at /mcp nor MCP tokens at /api; and revoking a
-// member (members.revoke) cuts off their OAuth tokens.
+// member (members.revoke) cuts off their OAuth tokens. Tasks (MF-416): a tasks:read token searches goals and tasks
+// and reads one but can't propose; a tasks:write token proposes drafts (owned by the member, never planning) and
+// comments with the "via MCP" badge; a bad proposal makes none; a docs-only token gets none of it.
 
 import { createHash, randomBytes } from "node:crypto";
 import * as Y from "yjs";
@@ -65,6 +67,16 @@ async function personal(label, scopes) {
 const { token: appToken } = await (await fetch(`${base}/dev/token`, { method: "POST" })).json();
 const ws = new WebSocket(`${base.replace(/^http/, "ws")}/client/connect`, { headers: { authorization: `Bearer ${appToken}` } });
 await new Promise((r) => ws.addEventListener("open", r));
+// The feed, kept: goals and tasks as the web app sees them.
+const goalsSeen = new Map();
+const tasksSeen = new Map();
+ws.addEventListener("message", (e) => {
+  const m = JSON.parse(e.data);
+  if (m.type === "snapshot") { for (const g of m.goals ?? []) goalsSeen.set(g.id, g); for (const t of m.tasks ?? []) tasksSeen.set(t.id, t); }
+  if (m.type === "goal.updated") goalsSeen.set(m.goal.id, m.goal);
+  if (m.type === "task.updated") tasksSeen.set(m.task.id, m.task);
+  if (m.type === "error") console.log("feed error:", m.message);
+});
 const title = `MCP e2e ${Date.now()}`;
 ws.send(JSON.stringify({ type: "doc.create", title }));
 await sleep(500);
@@ -168,6 +180,99 @@ await sleep(800);
 check((await mcp(refreshed.access_token, "ping")).status === 401, "revokeMember cuts off bob's OAuth tokens");
 const refreshAfter = await tokenAt({ grant_type: "refresh_token", refresh_token: refreshed.refresh_token, client_id: reg.client_id });
 check(refreshAfter.status === 400, "and their refresh token");
+
+// 7. Goals and tasks (MF-416).
+ws.send(JSON.stringify({ type: "subscribe" }));
+await sleep(600);
+const dataOf = (r) => JSON.parse(textOf(r).split("\n\n").slice(1).join("\n\n") || "null");
+const letters = (n) => [...String(n)].map((d) => "ABCDEFGHIJ"[Number(d)]).join("");
+const stamp = Date.now() % 1e6;
+const prefix = `MC${letters(stamp)}`;
+const other = `MX${letters(stamp)}`;
+const word = `zephyr${stamp}`; // only this run's tasks say it
+const repo = "acme/mcp-e2e";
+const goalName = `MCP tasks e2e ${stamp}`;
+ws.send(JSON.stringify({ type: "goal.save", goal: { id: "", name: goalName, prefix, color: "#2EA043", summary: "Outside clients on tasks.", lead: "", repos: [repo], folder: null, base: null } }));
+ws.send(JSON.stringify({ type: "goal.save", goal: { id: "", name: `Other e2e ${stamp}`, prefix: other, color: "#2EA043", summary: "Not the one searched for.", lead: "", repos: [], folder: "/tmp/mcp-e2e-other", base: null } }));
+await sleep(800);
+const goal = [...goalsSeen.values()].find((g) => g.prefix === prefix);
+const otherGoal = [...goalsSeen.values()].find((g) => g.prefix === other);
+check(Boolean(goal && otherGoal), `two goals to search (${prefix}, ${other})`);
+ws.send(JSON.stringify({ type: "task.create", goal: goal.id, title: `Rate-limit /mcp per token ${word}`, brief: "A token can call as fast as the Worker answers.", shareable: true, plan: false, tickets: [], agent: "claude" }));
+ws.send(JSON.stringify({ type: "task.create", goal: goal.id, title: "Tidy the consent page", brief: `Unrelated, but it says ${word} too.`, shareable: true, plan: false, tickets: [], agent: "claude" }));
+ws.send(JSON.stringify({ type: "task.create", goal: otherGoal.id, title: `Rate-limit elsewhere ${word}`, brief: "In the other goal.", shareable: true, plan: false, tickets: [], agent: "claude" }));
+await sleep(800);
+const mine = [...tasksSeen.values()].filter((t) => t.goal === goal.id);
+const rateTask = mine.find((t) => t.title.startsWith("Rate-limit"));
+check(mine.length === 2 && Boolean(rateTask), `tasks to search (${mine.map((t) => t.id).join(", ")})`);
+
+const docsOnly = await personal("Old docs token", ["docs:read", "docs:write"]);
+const docsTools = (await mcp(docsOnly.token, "tools/list")).body?.result?.tools?.map((t) => t.name) ?? [];
+check(docsTools.length === 7 && !docsTools.some((n) => /task|goal/.test(n)), "a docs-only token still lists 7 doc tools and no task tool");
+const docsRefused = await call(docsOnly.token, "list_tasks", { q: word });
+check(docsRefused.body?.result?.isError === true && /tasks:read/.test(textOf(docsRefused)), "a docs-only token is refused list_tasks");
+check((await call(docsOnly.token, "propose_tasks", { goal: prefix, tasks: [{ title: "x", brief: "y" }] })).body?.result?.isError === true, "and propose_tasks");
+
+const tr = await personal("Cursor (tasks, read-only)", ["tasks:read"]);
+const trTools = (await mcp(tr.token, "tools/list")).body?.result?.tools?.map((t) => t.name) ?? [];
+check(trTools.join(",") === "list_goals,list_tasks,get_task", `tasks:read lists 3 tools (${trTools.join(", ")})`);
+const gFound = dataOf(await call(tr.token, "list_goals", { q: `mcp tasks ${stamp}` }));
+check(gFound?.length === 1 && gFound[0].id === goal.id && gFound[0].openTasks === 2 && gFound[0].repos[0] === repo, `list_goals {q} returns only the matching goal (${gFound?.map((g) => g.name).join(", ")}, ${gFound?.[0]?.openTasks} open)`);
+const byPrefix = dataOf(await call(tr.token, "list_goals", { q: prefix.toLowerCase() }));
+check(byPrefix?.length === 1 && byPrefix[0].prefix === prefix, "list_goals {q} finds a goal by its prefix, whatever the case");
+const everywhere = dataOf(await call(tr.token, "list_tasks", { q: word }));
+check(everywhere?.length === 3, `list_tasks {q} finds the word in titles and briefs across goals (${everywhere?.map((t) => t.id).join(", ")})`);
+const tFound = dataOf(await call(tr.token, "list_tasks", { q: `RATE ${word} mcp`, goal: prefix, state: "open" }));
+check(tFound?.length === 1 && tFound[0].id === rateTask.id && tFound[0].goal.prefix === prefix && tFound[0].state === "drafting", `list_tasks {q, goal, state} returns only the matching task (${tFound?.map((t) => `${t.id} ${t.title}`).join("; ")})`);
+check(dataOf(await call(tr.token, "list_tasks", { q: word, goal: prefix, state: "merged" }))?.length === 0, "list_tasks {state: merged} leaves the drafts out");
+const byId = dataOf(await call(tr.token, "list_tasks", { q: rateTask.id.toLowerCase() }));
+check(byId?.[0]?.id === rateTask.id, "list_tasks {q} finds a task by its id");
+const capped = await call(tr.token, "list_tasks", { q: word, limit: 2 });
+check(dataOf(capped)?.length === 2 && /^2 of 3 tasks match/.test(textOf(capped)), `a capped list says so (${textOf(capped).split("\n")[0]})`);
+const got = dataOf(await call(tr.token, "get_task", { task: rateTask.id }));
+check(got?.id === rateTask.id && got.brief.includes("Worker answers") && Array.isArray(got.threads) && Array.isArray(got.events), "get_task reads the task: brief, threads and events");
+check(got && !("liveLog" in got) && !("worker" in got) && !("artifacts" in got) && !("stages" in got) && !("diff" in got), "get_task is a trimmed view: no logs, worker, artifacts, stages or diff");
+const roPropose = await call(tr.token, "propose_tasks", { goal: prefix, tasks: [{ title: "Should not exist", brief: "A read-only token asked." }] });
+check(roPropose.body?.result?.isError === true && /tasks:write/.test(textOf(roPropose)), "a tasks:read token is refused propose_tasks");
+check((await call(tr.token, "comment_on_task", { task: rateTask.id, text: "no" })).body?.result?.isError === true, "and comment_on_task");
+
+const tw = await personal("Claude Code", ["tasks:read", "tasks:write"]);
+check((await mcp(tw.token, "tools/list")).body?.result?.tools?.length === 5, "tasks:read + tasks:write lists 5 tools");
+const before = tasksSeen.size;
+const bad = await call(tw.token, "propose_tasks", { goal: prefix, tasks: [{ title: `Fine ${word}`, brief: "This one is fine." }, { title: `Bad repo ${word}`, brief: "Not in the goal.", repo: "acme/elsewhere" }] });
+await sleep(500);
+check(bad.body?.result?.isError === true && /isn't one of this goal's repos/.test(textOf(bad)) && tasksSeen.size === before, `a proposal with a repo outside the goal makes no drafts (${textOf(bad)})`);
+const forward = await call(tw.token, "propose_tasks", { goal: prefix, tasks: [{ title: "First", brief: "b", after: ["#2"] }, { title: "Second", brief: "b" }] });
+check(forward.body?.result?.isError === true && tasksSeen.size === before, "nor does one waiting on a later proposal");
+const proposal = await call(tw.token, "propose_tasks", { goal: goalName, tasks: [
+  { title: `Token budget table ${word}`, brief: "Count writes per token.", repo, priority: "p2", effort: "MCP limits" },
+  { title: `Refuse over-budget calls ${word}`, brief: "Answer 429 past the budget.", after: ["#1"], effort: "MCP limits" },
+] });
+await sleep(800);
+const made = dataOf(proposal)?.made ?? [];
+const [first, second] = made.map((id) => tasksSeen.get(id));
+check(!proposal.body?.result?.isError && made.length === 2, `a tasks:write token proposes two tasks (${textOf(proposal).split("\n").slice(0, 3).join(" | ")})`);
+check(first?.state === "drafting" && second?.state === "drafting" && !first.worker && !second.worker && first.plan.length === 0, "both are drafts: state drafting, no session, not planning");
+check(first?.owner === "dev" && second?.owner === "dev", `owned by the member (${first?.owner})`);
+check(second?.after?.length === 1 && second.after[0] === first?.id && first?.after?.length === 0, `the second waits on the first (${second?.id} after ${second?.after?.join(", ")})`);
+check(first?.repo === repo && first?.priority === "p2" && first?.effort === "MCP limits" && /Proposed by Claude Code via MCP\.$/.test(first.brief), "with its repo, priority, effort and 'Proposed by Claude Code via MCP.'");
+check(first?.events?.some((e) => e.who === "dev" && /proposed via Claude Code \(MCP\)/.test(e.text)), "its history says 'proposed via Claude Code (MCP)'");
+const refound = dataOf(await call(tw.token, "list_tasks", { q: `budget ${word}`, goal: prefix, state: "drafting", mine: true }));
+check(refound?.length === 2 && refound.every((t) => made.includes(t.id)), `list_tasks {q} then finds the drafts (${refound?.map((t) => t.id).join(", ")})`);
+await sleep(1500);
+check([first, second].every((t) => tasksSeen.get(t.id).state === "drafting"), "and they stay drafts: nothing sent them to planning");
+
+const said = await call(tw.token, "comment_on_task", { task: rateTask.id, text: "From an outside MCP client: is 60 writes a minute enough?" });
+await sleep(500);
+const landed = tasksSeen.get(rateTask.id)?.comments?.find((c) => c.id === dataOf(said)?.comment);
+check(!said.body?.result?.isError && landed?.author === "dev" && landed?.via === "Claude Code via MCP", `comment_on_task shows as the member with the badge (${landed?.author}, ${landed?.via})`);
+const answered = await call(tw.token, "comment_on_task", { task: rateTask.id, text: "And a reply in the same thread.", thread: landed?.id });
+await sleep(500);
+check(tasksSeen.get(rateTask.id)?.comments?.some((c) => c.replyTo === landed?.id && c.via === "Claude Code via MCP"), `a reply lands in the thread (${textOf(answered).split("\n")[0]})`);
+check((await call(tw.token, "comment_on_task", { task: "NOPE-1", text: "x" })).body?.result?.isError === true, "commenting on a task that isn't there is an error");
+const readBack = dataOf(await call(tw.token, "get_task", { task: rateTask.id }));
+check(readBack?.threads?.[0]?.comments?.length === 2 && readBack.threads[0].comments[0].via === "Claude Code via MCP", "get_task shows the thread with its badge");
+if (process.env.MCP_E2E_KEEP) console.log(`kept: ${JSON.stringify({ task: rateTask.id, goal: goal.id, prefix })}`);
 
 ws.close();
 console.log(failures ? `${failures} failed` : "all ok");

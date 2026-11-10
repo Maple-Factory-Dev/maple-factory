@@ -34,6 +34,18 @@ export const DecisionStatusValues: readonly DecisionStatus[] = ["proposed","acce
 export type DecisionAction = "proposed" | "edited" | "accepted" | "rejected" | "superseded";
 export const DecisionActionValues: readonly DecisionAction[] = ["proposed","edited","accepted","rejected","superseded"];
 
+/** How widely a shared memory applies (MF-391). */
+export type MemoryScopeKind = "org" | "repo" | "goal";
+export const MemoryScopeKindValues: readonly MemoryScopeKind[] = ["org","repo","goal"];
+
+/** What sort of thing a shared memory records. */
+export type MemoryKind = "fact" | "convention" | "gotcha" | "preference";
+export const MemoryKindValues: readonly MemoryKind[] = ["fact","convention","gotcha","preference"];
+
+/** Where a shared memory stands. */
+export type MemoryStatus = "active" | "proposed" | "archived";
+export const MemoryStatusValues: readonly MemoryStatus[] = ["active","proposed","archived"];
+
 /** githubstatus.com's overall indicator. */
 export type GitHubIndicator = "none" | "minor" | "major" | "critical" | "maintenance";
 export const GitHubIndicatorValues: readonly GitHubIndicator[] = ["none","minor","major","critical","maintenance"];
@@ -1448,6 +1460,51 @@ export interface DecisionEvent {
   why?: string | null;
   before?: Decision | null;
   after?: Decision | null;
+}
+
+/** Where a shared memory applies. */
+export interface MemoryScope {
+  kind: MemoryScopeKind;
+  /** The repo (`owner/name`) or the goal's id. None for the whole org. */
+  key?: string | null;
+}
+
+/** Where a shared memory came from. */
+export interface MemorySource {
+  /** The member who wrote it (or, for an agent, the person it works for). */
+  by: string;
+  /** The task it was learned on, e.g. "MF-391". */
+  task?: string | null;
+  /** The agent's role on that task. */
+  role?: string | null;
+  /** Set when an agent wrote it, e.g. "MF-391 builder". */
+  agent?: string | null;
+  /** The machine the agent ran on. */
+  machine?: string | null;
+  /** The accepted doc decision it records. */
+  decision?: string | null;
+}
+
+/** One thing the factory's agents remember between tasks (MF-391): a short note scoped to the org, a repo or a goal. The server owns it and keeps the previous text of every edit. */
+export interface Memory {
+  id: string;
+  scope: MemoryScope;
+  kind: MemoryKind;
+  /** At most 600 characters. */
+  text: string;
+  /** Lowercase, at most 8. */
+  tags: string[];
+  status: MemoryStatus;
+  source: MemorySource;
+  /** The older memory this one replaces: that one is archived when this becomes active. */
+  supersedes?: string | null;
+  createdAt: number;
+  /** Last change to its text, tags, kind, scope or status. */
+  updatedAt: number;
+  /** When it was last given to an agent. */
+  lastUsedAt?: number | null;
+  /** How many times it has been given to an agent. */
+  uses: number;
 }
 
 /** Someone with the app open, and the task they're looking at. */
@@ -3389,6 +3446,7 @@ export interface ServerToClient_Snapshot {
   /** Every shared doc, archived ones too. None: an older server. */
   docs?: Doc[] | null;
   decisions?: Decision[] | null;
+  memories?: Memory[] | null;
   follows: GoalFollow[];
   /** Your quiet hours. None: none set, or an older server. */
   quietHours?: QuietHours | null;
@@ -3519,6 +3577,18 @@ export interface ServerToClient_DecisionLog {
   type: "decision.log";
   id: string;
   events: DecisionEvent[];
+}
+
+/** A shared memory was added or changed (archiving included), to every member. */
+export interface ServerToClient_MemoryUpdated {
+  type: "memory.updated";
+  memory: Memory;
+}
+
+/** A shared memory was deleted for good. */
+export interface ServerToClient_MemoryRemoved {
+  type: "memory.removed";
+  id: string;
 }
 
 /** Your draft, to your apps only. */
@@ -3715,5 +3785,5 @@ export interface ServerToClient_Error {
 }
 
 /** Server → app. */
-export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_MachineAgentLogin | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_TasksPage | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DocUpdated | ServerToClient_DocRemoved | ServerToClient_DocThreads | ServerToClient_DocThreadUpdated | ServerToClient_DecisionUpdated | ServerToClient_DecisionLog | ServerToClient_DraftUpdated | ServerToClient_ScoutUpdated | ServerToClient_RecurringUpdated | ServerToClient_RecurringDeleted | ServerToClient_RepoSetupUpdated | ServerToClient_FollowsUpdated | ServerToClient_PushDevices | ServerToClient_QuietHoursUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_PromptsUpdated | ServerToClient_MembersUpdated | ServerToClient_IconUpdated | ServerToClient_NameUpdated | ServerToClient_ReposUpdated | ServerToClient_MergeHoldsUpdated | ServerToClient_SecretsUpdated | ServerToClient_RunnerReleased | ServerToClient_GithubStatus | ServerToClient_ConnectorsUpdated | ServerToClient_IntegrationsUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_SessionEvents | ServerToClient_Stats | ServerToClient_Report | ServerToClient_CheckLog | ServerToClient_Error;
-export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","machine.agent_login","task.updated","task.removed","tasks.page","goal.updated","note.updated","intake.updated","note.removed","doc.updated","doc.removed","doc.threads","doc.thread.updated","decision.updated","decision.log","draft.updated","scout.updated","recurring.updated","recurring.deleted","repo.setup.updated","follows.updated","push.devices","quietHours.updated","presence","policy.updated","prompts.updated","members.updated","icon.updated","name.updated","repos.updated","mergeHolds.updated","secrets.updated","runner.released","github.status","connectors.updated","integrations.updated","toast","session.ended","session.events","stats","report","checkLog","error"] as const;
+export type ServerToClient = ServerToClient_Snapshot | ServerToClient_MachineUpdated | ServerToClient_MachineRemoved | ServerToClient_MachineAgentLogin | ServerToClient_TaskUpdated | ServerToClient_TaskRemoved | ServerToClient_TasksPage | ServerToClient_GoalUpdated | ServerToClient_NoteUpdated | ServerToClient_IntakeUpdated | ServerToClient_NoteRemoved | ServerToClient_DocUpdated | ServerToClient_DocRemoved | ServerToClient_DocThreads | ServerToClient_DocThreadUpdated | ServerToClient_DecisionUpdated | ServerToClient_DecisionLog | ServerToClient_MemoryUpdated | ServerToClient_MemoryRemoved | ServerToClient_DraftUpdated | ServerToClient_ScoutUpdated | ServerToClient_RecurringUpdated | ServerToClient_RecurringDeleted | ServerToClient_RepoSetupUpdated | ServerToClient_FollowsUpdated | ServerToClient_PushDevices | ServerToClient_QuietHoursUpdated | ServerToClient_Presence | ServerToClient_PolicyUpdated | ServerToClient_PromptsUpdated | ServerToClient_MembersUpdated | ServerToClient_IconUpdated | ServerToClient_NameUpdated | ServerToClient_ReposUpdated | ServerToClient_MergeHoldsUpdated | ServerToClient_SecretsUpdated | ServerToClient_RunnerReleased | ServerToClient_GithubStatus | ServerToClient_ConnectorsUpdated | ServerToClient_IntegrationsUpdated | ServerToClient_Toast | ServerToClient_SessionEnded | ServerToClient_SessionEvents | ServerToClient_Stats | ServerToClient_Report | ServerToClient_CheckLog | ServerToClient_Error;
+export const ServerToClientTypes = ["snapshot","machine.updated","machine.removed","machine.agent_login","task.updated","task.removed","tasks.page","goal.updated","note.updated","intake.updated","note.removed","doc.updated","doc.removed","doc.threads","doc.thread.updated","decision.updated","decision.log","memory.updated","memory.removed","draft.updated","scout.updated","recurring.updated","recurring.deleted","repo.setup.updated","follows.updated","push.devices","quietHours.updated","presence","policy.updated","prompts.updated","members.updated","icon.updated","name.updated","repos.updated","mergeHolds.updated","secrets.updated","runner.released","github.status","connectors.updated","integrations.updated","toast","session.ended","session.events","stats","report","checkLog","error"] as const;
