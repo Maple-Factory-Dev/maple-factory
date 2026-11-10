@@ -27,7 +27,7 @@ import Foundation
     /// Every factory signed into on this Mac, the current one among them. Each token stays in the
     /// Keychain under its factory's URL, so switching back doesn't ask to sign in again.
     private(set) var savedFactories: [SavedFactory] = [] {
-        didSet { SavedFactories.store(savedFactories) }
+        didSet { SavedFactories.store(savedFactories, defaults) }
     }
     private(set) var me: Wire.Member?
     private(set) var machines: [Wire.Machine] = []
@@ -135,16 +135,16 @@ import Foundation
 
     /// Who this person keeps in their sidebar (Settings → People), per factory; nil until they pick.
     var sidebarPicks: [String]? {
-        get { _ = picksChanged; return AppDefaults.stringArray(forKey: picksKey) }
-        set { AppDefaults.set(newValue, forKey: picksKey); picksChanged += 1 }
+        get { _ = picksChanged; return defaults.stringArray(forKey: picksKey) }
+        set { defaults.set(newValue, forKey: picksKey); picksChanged += 1 }
     }
     private var picksChanged = 0
     private var picksKey: String { "sidebarPeople.\(serverKey)" }
 
     /// The order this person put their sidebar goals in, by goal id, per factory; nil until they move one.
     var goalOrder: [String]? {
-        get { _ = goalOrderChanged; return AppDefaults.stringArray(forKey: goalOrderKey) }
-        set { AppDefaults.set(newValue, forKey: goalOrderKey); goalOrderChanged += 1 }
+        get { _ = goalOrderChanged; return defaults.stringArray(forKey: goalOrderKey) }
+        set { defaults.set(newValue, forKey: goalOrderKey); goalOrderChanged += 1 }
     }
     private var goalOrderChanged = 0
     private var goalOrderKey: String { "sidebarGoalOrder.\(serverKey)" }
@@ -233,12 +233,23 @@ import Foundation
         org.isEmpty || org == "local" ? server?.host() ?? "Factory" : org
     }
 
-    init() {
-        let defaults = AppDefaults
-        savedFactories = SavedFactories.migrate(SavedFactories.load(), currentURL: defaults.string(forKey: "factoryURL"),
+    /// Where this client keeps the current factory, the saved list, its sidebar choices and (for
+    /// dev and headless factories) its tokens: the app's defaults, or a test's own suite.
+    private let defaults: UserDefaults
+    private let keychain: Keychain
+    /// Whether this client is the app's identity and publishes what it hears to FactoryData's live
+    /// goals, people, presence and `me`. Only the app's own client does; a test's never writes them,
+    /// not even nil, so suites running alongside keep reading the same global state.
+    let publishesLive: Bool
+
+    init(defaults: UserDefaults = AppDefaults, publishesLive: Bool = false) {
+        self.defaults = defaults
+        self.publishesLive = publishesLive
+        keychain = defaults === AppDefaults ? .app : Keychain(service: Keychain.app.service, defaults: defaults, allInDefaults: Keychain.app.allInDefaults)
+        savedFactories = SavedFactories.migrate(SavedFactories.load(defaults), currentURL: defaults.string(forKey: "factoryURL"),
                                                 currentOrg: defaults.string(forKey: "factoryOrg"))
         if let saved = defaults.string(forKey: "factoryURL"), let url = URL(string: saved),
-           let token = Keychain.app.read(account: saved) {
+           let token = keychain.read(account: saved) {
             server = url
             self.token = token
             org = defaults.string(forKey: "factoryOrg") ?? ""
@@ -276,9 +287,9 @@ import Foundation
         token = result.token
         me = result.member
         org = result.org
-        AppDefaults.set(result.server.absoluteString, forKey: "factoryURL")
-        AppDefaults.set(result.org, forKey: "factoryOrg")
-        Keychain.app.write(result.token, account: result.server.absoluteString)
+        defaults.set(result.server.absoluteString, forKey: "factoryURL")
+        defaults.set(result.org, forKey: "factoryOrg")
+        keychain.write(result.token, account: result.server.absoluteString)
         remember()
         connect()
     }
@@ -288,14 +299,14 @@ import Foundation
     @discardableResult
     func switchTo(_ factory: SavedFactory) -> Bool {
         guard SavedFactory.key(factory.server) != serverKey || !isSignedIn else { return true }
-        guard let token = Keychain.app.read(account: factory.server.absoluteString) else { return false }
+        guard let token = keychain.read(account: factory.server.absoluteString) else { return false }
         disconnect()
         resetFactoryState()
         server = factory.server
         self.token = token
         org = factory.org
-        AppDefaults.set(factory.server.absoluteString, forKey: "factoryURL")
-        AppDefaults.set(factory.org, forKey: "factoryOrg")
+        defaults.set(factory.server.absoluteString, forKey: "factoryURL")
+        defaults.set(factory.org, forKey: "factoryOrg")
         remember()
         showSavedIcon()
         connect()
@@ -305,13 +316,13 @@ import Foundation
     /// Signs out of this factory only; the most recent other one opens in its place, when there is one.
     func signOut() {
         if let server {
-            Keychain.app.delete(account: server.absoluteString)
+            keychain.delete(account: server.absoluteString)
             savedFactories = SavedFactories.remove(server, from: savedFactories)
             try? FileManager.default.removeItem(at: FactoryIcons.folder(for: server))
         }
         if let next = SavedFactories.fallback(savedFactories), switchTo(next) { return }
-        AppDefaults.removeObject(forKey: "factoryURL")
-        AppDefaults.removeObject(forKey: "factoryOrg")
+        defaults.removeObject(forKey: "factoryURL")
+        defaults.removeObject(forKey: "factoryOrg")
         disconnect()
         generation += 1
         server = nil
@@ -489,7 +500,7 @@ import Foundation
             fetching = []
             // Only a connected client is the app's identity, like livePeople and liveGoals: a test's
             // unconnected client applying a snapshot mustn't change who `me` is for suites running alongside.
-            if server != nil { FactoryData.me = LiveAdapter.person(snapshot.me.login, members: members) }
+            if publishesLive, server != nil { FactoryData.me = LiveAdapter.person(snapshot.me.login, members: members) }
             policy = snapshot.policy
             acceptances = snapshot.acceptances
             prompts = snapshot.prompts
@@ -831,14 +842,14 @@ import Foundation
 
     private func rebuildGoals() {
         // Live first: the timeline's start, and so each due day, is the mockup's until it is.
-        if server != nil, FactoryData.liveGoals == nil { FactoryData.liveGoals = [] }
+        if publishesLive, server != nil, FactoryData.liveGoals == nil { FactoryData.liveGoals = [] }
         factoryGoals = goals.map { LiveAdapter.goal($0, members: members, following: isFollowing($0)) }
-        FactoryData.liveGoals = server == nil ? nil : factoryGoals
+        if publishesLive { FactoryData.liveGoals = server == nil ? nil : factoryGoals }
     }
 
     private func rebuild() {
         rebuildGoals()
-        FactoryData.livePeople = server == nil ? nil : members.map { LiveAdapter.person($0.login, members: members) }
+        if publishesLive { FactoryData.livePeople = server == nil ? nil : members.map { LiveAdapter.person($0.login, members: members) } }
         let viewers = Self.viewers(online, me: me?.login, members: members)
         factoryTasks = tasks.map { adapt($0, viewers: viewers) }
         applyPresence()
@@ -1052,7 +1063,7 @@ import Foundation
     /// Puts who's online on the sidebar and who's looking at each task on it.
     private func applyPresence() {
         let people = online.map { (person: LiveAdapter.person($0.login, members: members), viewing: $0.viewing) }
-        FactoryData.livePresence = server == nil ? nil : people
+        if publishesLive { FactoryData.livePresence = server == nil ? nil : people }
         // Only the tasks someone came to or left change, in one write: a ping that moves no one redraws nothing.
         let changes = Self.viewerChanges(factoryTasks, viewers: Self.viewers(online, me: me?.login, members: members))
         guard !changes.isEmpty else { return }

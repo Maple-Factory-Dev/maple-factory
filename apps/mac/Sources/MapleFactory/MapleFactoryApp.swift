@@ -25,7 +25,7 @@ struct MapleFactoryApp: App {
     init() {
         ErrorReports.start()
         // Together from the first frame, so a signed-in app never flashes the mockup's data.
-        let client = FactoryClient()
+        let client = FactoryClient(publishesLive: true)
         let state = AppState()
         state.client = client
         // A fresh install is signed out: connect to a factory, never the mockup, unless this is a demo.
