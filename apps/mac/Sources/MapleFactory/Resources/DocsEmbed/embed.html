@@ -39,12 +39,17 @@
   let tasks = [];
   let threads = [];
   let decisions = [];
+  // Make tasks (MF-368): goals the dialog can pick when the doc has none, and the doc's own goal.
+  let goals = [];
+  let docGoal = null;
   window.mapleDocs = {
     /** Opens a doc. `token` is the app's `mft_…` token, sent as the socket's `maple-token` subprotocol (no cookie
-     *  needed); `me` {login, name, avatar}; `members` [{login, name, avatar}] and `tasks` [{id, title}] feed the
+     *  needed); `me` {login, name, avatar}; `members` [{login, name, avatar}] and `tasks` [{id, title, state, goal, fromDoc}] feed the
      *  @ and # menus and MF-12 links. `demo` {markdown}: a local-only doc with no socket (the Mac app's signed-out mockup). */
-    async load({ docId, token, me, members = [], tasks: list = [], threads: open = [], decisions: ds = [], demo = null }) {
+    async load({ docId, token, me, members = [], tasks: list = [], threads: open = [], decisions: ds = [], goals: gs = [], docGoal: dg = null, demo = null }) {
       tasks = list;
+      goals = gs ?? [];
+      docGoal = dg ?? null;
       threads = open ?? [];
       decisions = ds ?? [];
       handle?.destroy();
@@ -61,6 +66,8 @@
         // Decisions (MF-367): the app's feed draws the cards; propose / edit / accept / reject go out the same way.
         decisions: () => decisions,
         sendDecisionCommand: demo ? null : (command) => post("command", { command }),
+        goals: () => goals,
+        docGoal: () => docGoal,
         onEvent: (type, data) => post(type, Array.isArray(data) ? { peers: data } : data),
       });
       return true;
@@ -71,6 +78,8 @@
     focus: () => { handle?.focus(); return !!handle; },
     /** New task objects from the app's feed (MF-363): task embeds redraw in place. */
     updateTasks: (list) => { tasks = list ?? []; handle?.tasksChanged(); },
+    /** Goals and the doc's goal (MF-368), for the Make tasks dialog's goal picker. */
+    updateGoals: (list, goal) => { goals = list ?? []; docGoal = goal ?? null; },
     /** The doc's comment threads from the app's feed (MF-364): highlights and the rail redraw. */
     updateThreads: (list) => { threads = list ?? []; handle?.threadsChanged(); },
     /** The doc's decisions from the app's feed (MF-367): decision cards redraw. */

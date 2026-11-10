@@ -27,6 +27,13 @@ const uuid = () => crypto.randomUUID();
 export const findDecision = (host, id) => (id ? host?.decisions?.().find((d) => d.id === id) ?? null : null);
 
 /** A fresh proposal's content: a question to fill in and two options. */
+/** What a decision card draws from. The tasks made from it are in it, so a new task or a state change in the feed
+ * redraws the card (tasksChanged() runs the listeners without force). */
+export function cardKey(host, id, d = findDecision(host, id)) {
+  const made = d ? (host?.tasks?.() ?? []).filter((t) => t.fromDoc?.decision === d.id).map((t) => [t.id, t.state, t.title]) : [];
+  return JSON.stringify([id, d, host?.editing?.has(id) ?? false, made]);
+}
+
 export function draftDecision(from = null) {
   if (from) return { question: from.question, options: from.options.map((o) => ({ id: uuid().slice(0, 8), label: o.label, note: o.note ?? null })), chosen: null, rationale: "" };
   return { question: "What are we deciding?", options: [{ id: uuid().slice(0, 8), label: "Option 1", note: null }, { id: uuid().slice(0, 8), label: "Option 2", note: null }], chosen: null, rationale: "" };
@@ -141,7 +148,7 @@ export const DecisionEmbed = Node.create({
       };
       const draw = (force = false) => {
         const d = findDecision(host, current.attrs.id);
-        const key = JSON.stringify([current.attrs.id, d, host?.editing?.has(current.attrs.id)]);
+        const key = cardKey(host, current.attrs.id, d);
         if (key === last && !force) return;
         last = key;
         dom.id = `decision-${current.attrs.id ?? ""}`;

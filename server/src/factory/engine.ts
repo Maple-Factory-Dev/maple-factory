@@ -638,8 +638,14 @@ export class Engine {
           event: `made from doc ${label}${decision ? " (a decision)" : ""}`,
           audit: { fromDoc: doc!.id, ...(decision ? { decision: decision.id } : {}) },
         })));
-        await this.docs.insertTasks(doc!.id, made, section.block);
-        this.hooks.broadcast({ type: "toast", text: `Made ${made.length === 1 ? made[0] : made.join(msg.chain ? " → " : ", ")} from "${doc!.title}"; ${made.length === 1 ? "it's" : "they're"} in ${goal!.name}'s drafts.`, taskId: made[0] });
+        // The drafts are saved already; if the embeds can't go in (DocHub down, the update cap), say so rather
+        // than failing the command and leaving the person thinking nothing was made.
+        let embedded = true;
+        try { await this.docs.insertTasks(doc!.id, made, section.block); } catch (e) {
+          embedded = false;
+          console.warn(`doc.makeTasks: couldn't add task embeds to ${doc!.id}: ${(e as Error).message}`);
+        }
+        this.hooks.broadcast({ type: "toast", text: `Made ${made.length === 1 ? made[0] : made.join(msg.chain ? " → " : ", ")} from "${doc!.title}"; ${made.length === 1 ? "it's" : "they're"} in ${goal!.name}'s drafts.${embedded ? "" : " They couldn't be added to the doc; add them with /task."}`, taskId: made[0] });
         return;
       }
       case "task.create": {

@@ -233,3 +233,28 @@ test("the planner's prompt carries the doc section and the decision's chosen opt
   assert.match(b, /## From doc\nMade from "Search plan › Indexing" \(doc .*, decision .*\)\./);
   assert.doesNotMatch(b, /<doc-section>/);
 });
+
+test("a decision card redraws when tasks made from it appear or change state (R1.1)", async () => {
+  const { cardKey } = await import("../docs-editor/src/decisions.js");
+  let tasks: any[] = [{ id: "SR-9", state: "drafting", title: "Unrelated" }];
+  const host = { decisions: () => [{ id: DEC, status: "accepted" }], tasks: () => tasks, editing: new Set() };
+  const before = cardKey(host, DEC);
+  tasks = [...tasks, { id: "SR-1", state: "drafting", title: "Index", fromDoc: { doc: DOC, decision: DEC } }];
+  const made = cardKey(host, DEC);
+  assert.notEqual(made, before);
+  tasks = tasks.map((t) => (t.id === "SR-1" ? { ...t, state: "building" } : t));
+  assert.notEqual(cardKey(host, DEC), made);
+  // A task from somewhere else changing doesn't redraw it.
+  const now = cardKey(host, DEC);
+  tasks = tasks.map((t) => (t.id === "SR-9" ? { ...t, state: "building" } : t));
+  assert.equal(cardKey(host, DEC), now);
+});
+
+test("doc.makeTasks: if the embeds can't be added, the drafts stay and the toast says so (R1.3)", async () => {
+  const f = factory();
+  (f.engine as any).docs.insertTasks = async () => { throw new Error("update cap"); };
+  const warn = console.warn; console.warn = () => {};
+  try { await f.make({ doc: DOC, anchor: f.heading(DOC, "## Billing"), tasks: [{ title: "Bill", brief: "b" }] }); } finally { console.warn = warn; }
+  assert.deepEqual(f.drafts().map((t) => t.id), ["SR-1"]);
+  assert.match(f.broadcasts.find((m) => m.type === "toast").text, /Made SR-1 .*couldn't be added to the doc/);
+});
