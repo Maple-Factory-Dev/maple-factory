@@ -68,6 +68,12 @@ Guards, in the order `index.ts` applies them:
 | `/api/tasks/<id>/diff` | GET | member | → `OrgHub /diff` |
 | `/api/machines/enroll` | POST | member | `machines.ts` `createEnrollment` |
 | `/api/machines/<id>` | DELETE | machine owner or admin | `machines.ts` `removeMachine` |
+| `/mcp` | POST (GET, DELETE: 405) | MCP token (`mfp_`) + scope per tool; Origin must be ours if sent | `mcp.ts` `handleMcp` → `OrgHub /mcp/call` |
+| `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server` | GET | public (metadata) | `mcp-auth.ts` |
+| `/oauth/register` | POST | public, 8 KB, ≤5 redirect URIs (https or loopback http), ≤1000 clients | `mcp-auth.ts` |
+| `/oauth/authorize` | GET, POST | member (web session or app token); POST: same Origin + signed consent | `mcp-auth.ts` `authorize` |
+| `/oauth/token` | POST | public client + code (60 s, single use) + PKCE S256, or a rotating refresh token | `mcp-auth.ts` |
+| `/api/mcp-tokens`, `/api/mcp-tokens/<id>` | GET, POST, DELETE | member's web session only (no bearer), same Origin on writes; own tokens only | `mcp-auth.ts` `tokensApi` |
 | anything else | | member | 404 |
 
 Static files in `web/` (`/app/…`, `/fonts/…`, `/img/…`) are served by Workers Static Assets before the
@@ -134,6 +140,15 @@ Line numbers are after this task's changes.
 | F-19 | info | `src/secrets.ts:37`, `src/secrets.ts:86` | no change |
 | F-20 | info | `src/attachments.ts:17`, `src/attachments.ts:45` | no change |
 | F-21 | info | `src/trackers.ts:94`, `src/trackers.ts:144` | no change |
+| F-22 | high | `src/mcp-auth.ts` `mcpCaller`, `src/auth.ts` `currentMember` | fixed |
+| F-23 | high | `src/mcp-auth.ts` `authorize`, `/oauth/token` | fixed |
+| F-24 | medium | `src/mcp-auth.ts` `authorize` | fixed |
+| F-25 | medium | `src/mcp-auth.ts` `/oauth/register` | fixed (follow-up: per-IP rate limit) |
+| F-26 | medium | `src/mcp.ts` `handleMcp` | fixed |
+| F-27 | medium | `src/mcp.ts` `toolAllowed`, `src/mcp-tools.ts` | fixed |
+| F-28 | medium | `src/auth.ts` `revokeMember`, `src/mcp-auth.ts` | fixed |
+| F-29 | info | `src/org-hub.ts` `/mcp/call`, `src/factory/doc-tools.ts` | no change |
+| F-30 | low | `src/mcp.ts` | follow-up |
 
 ### F-01 · high · `/releases/` served attachments without sign-in, as live HTML — fixed
 
@@ -202,6 +217,9 @@ cookie). No route deletes from `app_tokens`.
 
 **Impact:** a leaked `mft_…` token (a copied config, a lost laptop) works for 30 days and nobody can
 stop it, short of editing D1 by hand. Web sessions are the same for 7 days (stateless HMAC cookies).
+
+**Update (MF-369):** MCP tokens (`mfp_`, below in §MCP) are revocable from the start: Settings › Connected apps
+lists each with its last use and revokes it, and revoking a member deletes them. App tokens are unchanged.
 
 **Follow-up:** `DELETE /api/tokens/current` for the apps' sign-out, a list of a member's tokens with
 "revoke" in the web app (`label` and `last_used` are already stored), and admin revocation of another
@@ -411,6 +429,79 @@ only for an image/text/PDF/video allowlist (anything else downloads). Filenames 
 `deliver` sends the Jira API token only when the reply's site equals `JIRA_SITE`'s origin, and the
 webhook refuses issues from other sites when `JIRA_SITE` is set. Linear replies go to the fixed Linear
 API. A malformed `issue.self` throws, and the request gets a 500, not a crash of anything shared.
+
+## MCP: outside clients at `/mcp` (MF-369)
+
+A member's Claude Desktop, claude.ai, Claude Code or Cursor works on the org's docs as them through a remote MCP
+server (`src/mcp.ts`), with tokens from OAuth 2.1 or Settings (`src/mcp-auth.ts`, `migrations/0009_mcp_tokens.sql`).
+It's a new public auth surface, so each piece was reviewed against this audit's findings. Tests:
+`test/mcp.test.ts` (units) and `test/e2e-mcp-clients.mjs` (against `wrangler dev`).
+
+### F-22 · high · Token separation — fixed
+
+MCP tokens (`mfp_…`, refresh `mfr_…`) are a different table from app tokens and kept as sha256 only. `currentMember`
+returns null for any `Bearer mfp_/mfr_` header before anything else, so not even local dev's `DEV_LOGIN` fallback
+signs one in, and an MCP token can never reach `/api/*`, `/client/connect` or a doc socket. `mcpCaller` only takes
+`mfp_`, so an app token (`mft_`) gets 401 at `/mcp`. A leaked MCP token is limited to its doc scopes.
+
+### F-23 · high · OAuth code flow: PKCE, redirects, open redirect — fixed
+
+PKCE S256 is required (no `plain`; a challenge must be 43 base64url characters; the verifier 43–128 unreserved
+characters). Codes live 60 s, are bound to client, redirect URI, member, scopes and challenge, and are deleted as
+they're redeemed (`DELETE … RETURNING`), so a replay or a wrong verifier burns them. `redirect_uri` must exactly
+match one the client registered; an unknown client or a mismatched URI is shown an error page and never redirected
+to (no open redirect). Redirect URIs are https, or http on `localhost`/`127.0.0.1`/`[::1]` (RFC 8252), with no
+fragment or credentials. Access tokens last 1 h; refresh tokens 30 days and rotate in place, so the old pair stops.
+
+### F-24 · medium · Consent CSRF and clickjacking — fixed
+
+`/oauth/authorize` needs a signed-in member and shows a consent page naming the client, the scopes and the member.
+Approving is a POST that must carry our own `Origin` (a missing one is refused too) and a consent token signed with
+`SESSION_SECRET`, bound to member, client, redirect URI, challenge and scopes, valid 10 minutes. The page sends
+`PAGE_HEADERS` (`frame-ancestors 'none'`, `X-Frame-Options: DENY`). `/oauth/authorize` is in `PAGES`, so it moves to
+`PUBLIC_URL` where the session cookie lives. A malicious client can still name itself anything ("Claude Desktop"):
+the consent page shows its redirect URI so a member can tell.
+
+### F-25 · medium · Dynamic client registration abuse — fixed (follow-up: rate limit)
+
+Registration is public, as the spec expects. A request is at most 8 KB with 1–5 redirect URIs; names are cut to 80
+characters and escaped on the consent page. At 1,000 clients, the oldest never-authorized ones are dropped; if none
+can be, registration answers 429. **Follow-up:** a per-IP rate limit (Cloudflare rate limiting rule on
+`/oauth/register`), like F-13.
+
+### F-26 · medium · Transport: Origin, size, methods — fixed
+
+`/mcp` refuses a request whose `Origin` isn't ours (DNS rebinding against a local `wrangler dev`, per the MCP
+spec); desktop clients send none. Bodies are capped at 256 KB (`readCapped`), batches are refused, notifications
+get 202, GET/DELETE get 405 (no SSE stream or sessions). A 401 sends `WWW-Authenticate: Bearer resource_metadata=…`.
+
+### F-27 · medium · Scope enforcement — fixed
+
+Each doc tool needs one scope: `docs:read` for `list_docs` and `read_doc`, `docs:write` for the five that write.
+`tools/list` shows only what the token allows, and `tools/call` checks again (`toolAllowed`, an own-property lookup),
+so a read-only token can't call a write tool it was never shown. Only the seven doc tools exist here: no repo setup,
+no tasks, no admin. Personal tokens are made with chosen scopes; OAuth grants take the scopes asked for and shown.
+
+### F-28 · medium · Revocation paths — fixed
+
+A member revokes any of their own tokens or OAuth grants from Settings › Connected apps (`DELETE
+/api/mcp-tokens/<id>`, scoped to their login). `revokeMember` (an admin's "Revoke access", or the membership
+re-check) deletes all their `mcp_tokens`, so access and refresh tokens die with it, and `mcpCaller` also refuses
+any token made before `members.revoked_at` and runs `stillMember` on every call. Every issue, approval, denial,
+registration and revoke is audited (`mcp.*`). The token API takes only a web session (any `Authorization` header
+is refused), so an app token can't list or mint MCP tokens.
+
+### F-29 · info · Doc lookups stay inside the org — no change
+
+`OrgHub /mcp/call` runs `DocTools.run` with `author` = the member's login and `agent` = "<client> via MCP"; the
+login comes from the token, never the request body the client controls. Docs are the single org's store, the
+same path a personal session's doc tools take (`engine.ts` `personalTool`). Agents can't edit text: suggestions
+and decisions wait for a person. Errors other than `DocToolFailure` are logged and answered generically.
+
+### F-30 · low · No per-token rate limit at `/mcp` — follow-up
+
+A token can call as fast as the Worker answers. Each call is one OrgHub round trip, and writes are capped by
+DocTools (sizes, threads). **Follow-up:** a per-token budget (e.g. 60 writes a minute) in the OrgHub.
 
 ## Verification
 

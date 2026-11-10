@@ -120,6 +120,7 @@ async function memberRow(env: Env, login: string) {
  *  their open sockets and terminals. A later sign-in, if GitHub still lets them, works as usual. */
 export async function revokeMember(env: Env, login: string, by: string, notify = true) {
   await env.DB.prepare("DELETE FROM app_tokens WHERE login = ?").bind(login).run();
+  await env.DB.prepare("DELETE FROM mcp_tokens WHERE login = ?").bind(login).run();
   await env.DB.prepare("DELETE FROM member_github_tokens WHERE login = ?").bind(login).run();
   await env.DB.prepare("DELETE FROM slack_links WHERE login = ?").bind(login).run();
   await env.DB.prepare("UPDATE members SET revoked_at = ?, admin_granted_by = NULL, admin_granted_at = NULL WHERE login = ?").bind(Date.now(), login).run();
@@ -183,6 +184,8 @@ function socketToken(request: Request): string | undefined {
 
 /** The signed-in member, from a session cookie, an app token, or local dev's DEV_LOGIN. */
 export async function currentMember(request: Request, env: Env): Promise<Member | null> {
+  // MCP tokens (mfp_, src/mcp-auth.ts) only work at /mcp: here they sign in nobody, not even local dev's DEV_LOGIN.
+  if (/^Bearer\s+mf[pr]_/.test(request.headers.get("authorization") ?? "")) return null;
   const bearer = /^Bearer (mft_[\w-]+)$/.exec(request.headers.get("authorization") ?? "")?.[1] ?? socketToken(request);
   if (bearer) {
     const row = await env.DB.prepare(

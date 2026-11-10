@@ -4,6 +4,8 @@ import * as Sentry from "@sentry/cloudflare";
 import type { Env } from "./env.ts";
 import { serve as serveAttachment, serveRunner as serveRunnerAttachment, upload as uploadAttachment, uploadArtifact, uploadProof } from "./attachments.ts";
 import { authConfigured, currentMember, devToken, handleAuth, sameOrigin } from "./auth.ts";
+import { handleMcpAuth } from "./mcp-auth.ts";
+import { handleMcp } from "./mcp.ts";
 import { authenticateRunner, createEnrollment, enroll, MACHINE_ID, machineRow, removeMachine, unenroll } from "./machines.ts";
 import { remove as removeIcon, serve as serveIcon, upload as uploadIcon } from "./icon.ts";
 import { remove as removeName, set as setName } from "./name.ts";
@@ -39,7 +41,7 @@ export const DocHub = Sentry.instrumentDurableObjectWithSentry((env: Env) => sen
 
 /** Pages people open in a browser. Once the factory has a PUBLIC_URL, these move there from its other
  *  addresses (its workers.dev one), since GitHub sign-in only comes back to that one. */
-const PAGES = /^\/(app(\/.*)?|setup(\/(?!id$).*)?|auth\/login|t\/.*|link\/slack)?$/;
+const PAGES = /^\/(app(\/.*)?|setup(\/(?!id$).*)?|auth\/login|t\/.*|link\/slack|oauth\/authorize)?$/;
 
 const isUpgrade = (request: Request) => request.headers.get("upgrade")?.toLowerCase() === "websocket";
 
@@ -93,6 +95,12 @@ export default Sentry.withSentry((env: Env) => sentryOptions(env), {
     if (path === "/integrations/github" && request.method === "POST") return githubWebhook(request, env);
     if (path === "/integrations/jira" && request.method === "POST") return jiraWebhook(request, env, url);
     if (path.startsWith("/api/intake") && intakeKey(request, env)) return (await intakeApi(request, env, path, null))!;
+
+    // Outside MCP clients (src/mcp.ts) and how they get a token (src/mcp-auth.ts): their own auth, ahead of the
+    // cookie-only routes. MCP tokens work only at /mcp; app tokens and cookies don't work there.
+    if (path === "/mcp") return handleMcp(request, env);
+    const mcpAuth = await handleMcpAuth(request, env);
+    if (mcpAuth) return mcpAuth;
 
     const setup = await handleSetup(request, env);
     if (setup) return setup;

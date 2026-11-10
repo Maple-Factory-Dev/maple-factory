@@ -12,6 +12,7 @@ import m0005 from "./migrations/0005_revocation.sql";
 import m0006 from "./migrations/0006_member_github_tokens.sql";
 import m0007 from "./migrations/0007_slack_links.sql";
 import m0008 from "./migrations/0008_machine_capabilities.sql";
+import m0009 from "./migrations/0009_mcp_tokens.sql";
 
 export { OrgHub, MachineHub, DocHub };
 
@@ -24,6 +25,7 @@ const FILES = {
   "0006_member_github_tokens.sql": m0006,
   "0007_slack_links.sql": m0007,
   "0008_machine_capabilities.sql": m0008,
+  "0009_mcp_tokens.sql": m0009,
 };
 
 let migrated: Promise<unknown> | null = null;

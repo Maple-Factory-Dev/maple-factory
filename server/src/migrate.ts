@@ -12,6 +12,7 @@ export const MIGRATIONS = [
   "0006_member_github_tokens.sql",
   "0007_slack_links.sql",
   "0008_machine_capabilities.sql",
+  "0009_mcp_tokens.sql",
 ] as const;
 
 export type MigrationName = (typeof MIGRATIONS)[number];

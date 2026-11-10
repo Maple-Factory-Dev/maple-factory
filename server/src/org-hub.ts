@@ -19,6 +19,7 @@ import { Push, deviceId } from "./push.ts";
 import { Integrations } from "./integrations/store.ts";
 import { LangfuseSink } from "./integrations/langfuse.ts";
 import { Engine, FactoryError } from "./factory/engine.ts";
+import { DocToolFailure } from "./factory/doc-tools.ts";
 import { redacted } from "./factory/connectors.ts";
 import { aggregatePresence, isMobileClient, type Connection } from "./presence.ts";
 import { Intake, type NewRequest } from "./factory/intake.ts";
@@ -327,6 +328,18 @@ export class OrgHub extends DurableObject<Env> {
         // push.ts turned the relay on or off: read the credential again now, not in 30 s.
         this.push.forget();
         return new Response(null, { status: 204 });
+      }
+      case "/mcp/call": {
+        // An outside MCP client's doc tool call (src/mcp.ts), already checked against its token's scopes: run as
+        // the member, badged with the client, like a personal session's (engine.ts personalTool).
+        const { login, client, name, args } = (await request.json()) as { login: string; client: string; name: string; args: Record<string, unknown> };
+        try {
+          return Response.json(await this.engine.docs.run({ author: login, agent: `${client} via MCP` }, name, args ?? {}));
+        } catch (e) {
+          if (e instanceof DocToolFailure) return Response.json({ error: e.message });
+          console.error("mcp call failed", e);
+          return Response.json({ error: "Something went wrong running that tool." });
+        }
       }
       case "/revoked": {
         // auth.ts revoked someone (they left the org): their apps and terminals close now.
