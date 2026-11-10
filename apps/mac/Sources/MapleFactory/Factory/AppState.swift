@@ -2647,11 +2647,17 @@ final class AppState {
             case "toast": showToast(parts.dropFirst().joined(separator: ":"), icon: "number")
             case "doc" where parts.count > 2:
                 // doc:create:<title> · doc:rename:<title>:<new title> · doc:archive:<title> · doc:open:<title>: what Docs' buttons send.
+                // doc:move:<title>:<goal name, or - for none>: the row menu's Move to goal (MF-378).
                 let named = client?.docs.first { $0.title == parts[2] && $0.archived != true }
                 switch parts[1] {
                 case "create": client?.createDoc(title: parts[2], goal: nil)
                 case "rename": if let named, parts.count > 3 { client?.renameDoc(id: named.id, title: parts[3]) }
                 case "archive": if let named { client?.archiveDoc(id: named.id) }
+                case "move":
+                    if let named, parts.count > 3 {
+                        let goal = parts[3] == "-" ? nil : client?.goals.first { $0.name == parts[3] }?.id
+                        if parts[3] == "-" || goal != nil { client?.moveDoc(id: named.id, goal: goal) }
+                    }
                 case "open": if let named { destination = .doc(named.id) }
                 default: break
                 }

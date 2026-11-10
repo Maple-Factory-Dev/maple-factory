@@ -139,7 +139,7 @@ struct DecisionBadge: View {
     }
 }
 
-/// One doc in a list: opens on click; a context menu renames it inline, archives it or copies its link.
+/// One doc in a list: opens on click; a context menu renames it inline, moves it to another goal, archives it or copies its link.
 struct DocRow: View {
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
@@ -178,6 +178,13 @@ struct DocRow: View {
             Button("Open") { state.destination = .doc(doc.id) }
             if client.isSignedIn {
                 Button("Rename") { title = doc.title; renaming = true }
+                Menu("Move to goal") {
+                    moveItem("No goal", goal: nil)
+                    Divider()
+                    ForEach(client.goals.filter { $0.archived != true }, id: \.id) { goal in
+                        moveItem(goal.name, goal: goal.id)
+                    }
+                }
                 Button("Archive") { client.archiveDoc(id: doc.id) }
             }
             Divider()
@@ -185,6 +192,15 @@ struct DocRow: View {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(DocsIndex.link(doc.id), forType: .string)
             }
+        }
+    }
+
+    /// One Move to goal choice: checked when the doc is already there; picking it sends doc.move.
+    @ViewBuilder private func moveItem(_ name: String, goal: String?) -> some View {
+        if doc.goal == goal {
+            Button { } label: { Label(name, systemImage: "checkmark") }
+        } else {
+            Button(name) { client.moveDoc(id: doc.id, goal: goal) }
         }
     }
 
