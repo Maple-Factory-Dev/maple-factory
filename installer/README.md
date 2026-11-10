@@ -26,3 +26,16 @@ maple install --dry-run --org acme   # verify and build the deploy without touch
 
 What it made (account, database, domain, version) is remembered in `~/.config/maple-factory/factories/`;
 the token never is. `CLOUDFLARE_API_TOKEN` skips the prompt.
+
+## Self-host with celld (experimental)
+
+`--target celld` deploys to a [celld](https://github.com/denoland/celld) 0.6.x fleet bucket (S3, R2, Tigris,
+GCS or MinIO) instead of Cloudflare. The release is verified the same way:
+
+```sh
+maple install --target celld --bucket s3://maple-fleet [--endpoint URL] --url https://maple.acme.dev --org acme
+maple install --target celld --dry-run --org acme --bucket s3://maple-fleet   # celld deploy --dry-run, nothing written to the bucket
+```
+
+Bucket credentials come from `AWS_*` and are never saved; `CELLD` sets celld's command line. The fleet's
+compose file, bucket requirements, keeping `:8081` private, and backups: [docs/self-hosting.md](../docs/self-hosting.md).

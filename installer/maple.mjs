@@ -8,6 +8,11 @@
 //
 // install --dry-run --org ORG checks the release and builds the deploy without touching Cloudflare.
 //
+// --target celld (experimental) deploys to a celld fleet bucket instead (github.com/denoland/celld, see
+// docs/self-hosting.md): install --target celld --bucket s3://NAME [--endpoint URL] --url https://… --org ORG.
+// It needs celld 0.6.x on PATH, or CELLD (a command line, e.g. `docker compose run --rm cli`). Bucket
+// credentials come from the AWS_* variables and are never saved.
+//
 // The server comes from maplefactory.dev's signed feed (scripts/release-server.mjs): the manifest must
 // be signed with RELEASE_PUBLIC_KEY and the bundle must match its sha256, so neither the feed's host
 // nor anything between can hand you a server of its own. Install creates the R2 bucket (waiting
@@ -29,6 +34,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
+import { buildConfig, checkBucket, checkTarget } from "./config.mjs";
 
 /** The release key's public half (scripts/feed.mjs checks it matches the one releases are signed with). */
 const RELEASE_PUBLIC_KEY = "-GzUbxnqGXRDK-1jtr3R8x1RIWORNkg_0CSC2BOG6zQ";
@@ -45,6 +51,10 @@ const { positionals, values: opts } = parseArgs({
     channel: { type: "string" },
     account: { type: "string" },
     feed: { type: "string" },
+    target: { type: "string" },
+    bucket: { type: "string" },
+    endpoint: { type: "string" },
+    url: { type: "string" },
     force: { type: "boolean", default: false },
     "dry-run": { type: "boolean", default: false },
     help: { type: "boolean", short: "h", default: false },
@@ -223,23 +233,10 @@ function allowList() {
   return logins;
 }
 
-/** The deployment's wrangler config: the release's shared parts plus this org's. */
+/** The deployment's wrangler config: the release's shared parts plus this org's (config.mjs). */
 function writeConfig(dir, shared, factory) {
-  const { version: _version, ...rest } = shared;
-  const config = {
-    ...rest,
-    name: factory.name,
-    account_id: factory.accountId,
-    no_bundle: true,
-    workers_dev: true,
-    d1_databases: [{ binding: "DB", database_name: factory.name, database_id: factory.databaseId, migrations_dir: "migrations" }],
-    r2_buckets: [{ binding: "RELEASES", bucket_name: factory.bucket }],
-    // MAPLE_DEPLOY tells the factory it updates with `maple update`, for its update notice.
-    vars: { GITHUB_ORG: factory.org, GITHUB_ALLOWED_LOGINS: (factory.allow ?? []).join(","), RELEASE_CHANNEL: factory.channel, MAPLE_DEPLOY: "installer" },
-    ...(factory.domain ? { routes: [{ pattern: factory.domain, custom_domain: true }] } : {}),
-  };
   const file = join(dir, "wrangler.json");
-  writeFileSync(file, JSON.stringify(config, null, 2) + "\n");
+  writeFileSync(file, JSON.stringify(buildConfig(shared, factory, factory.target ?? "cloudflare"), null, 2) + "\n");
   return file;
 }
 
@@ -266,6 +263,120 @@ function deploy(token, factory, dir, shared) {
   wrangler(token, factory.accountId, ["deploy", "-c", config], { quiet: true });
   step("Worker", `${factory.name} ${shared.version} ${ok("deployed")}`);
   return config;
+}
+
+// ---- celld (experimental: docs/self-hosting.md) ----
+
+const CELLD_LINE = "0.6."; // the line server/celld/install.sh pins
+
+/** celld's command line: CELLD (split on spaces, so `docker compose run --rm cli` works) or celld on PATH. */
+function celldCommand() {
+  const words = (process.env.CELLD ?? "celld").trim().split(/\s+/);
+  return { bin: words[0], pre: words.slice(1) };
+}
+
+function celld(argv, { quiet = true } = {}) {
+  const { bin, pre } = celldCommand();
+  // jemalloc's background thread doesn't start on macOS; this only quiets its warning.
+  const result = spawnSync(bin, [...pre, ...argv], { env: { MALLOC_CONF: "background_thread:false", ...process.env }, encoding: "utf8", stdio: ["ignore", quiet ? "pipe" : "inherit", quiet ? "pipe" : "inherit"] });
+  if (result.error?.code === "ENOENT") fail(`There's no ${bin} here. Install celld ${CELLD_LINE}x (server/celld/install.sh) or set CELLD; see docs/self-hosting.md.`);
+  const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.split("\n").filter((l) => !/jemalloc|celld::memory/.test(l)).join("\n");
+  return { ok: result.status === 0, output };
+}
+
+function checkCelld() {
+  const { ok: ran, output } = celld(["--version"]);
+  const version = output.match(/celld (\d+\.\d+\.\d+)/)?.[1];
+  if (!ran || !version) fail(`\`${process.env.CELLD ?? "celld"} --version\` didn't work:\n${output.trim()}`);
+  if (!version.startsWith(CELLD_LINE)) fail(`This is celld ${version}; the factory runs on celld ${CELLD_LINE}x (server/celld/install.sh installs it; see docs/self-hosting.md).`);
+  return version;
+}
+
+const bucketArgs = (factory) => ["--bucket", factory.bucket, ...(factory.endpoint ? ["--endpoint", factory.endpoint] : [])];
+
+function celldMigrate(factory, config, { wait = 0 } = {}) {
+  const deadline = Date.now() + wait * 1000;
+  for (let told = false; ; ) {
+    const run = celld(["d1", "migrations", "apply", factory.name, config, ...bucketArgs(factory)]);
+    if (run.ok) {
+      const applied = run.output.match(/^Applied .*/gm)?.length ?? 0;
+      return step("Migrations", ok(applied ? `${applied} applied` : "up to date"));
+    }
+    // celld d1 goes through a running node, and a node takes its lease once there's a deployment.
+    if (!/no node leases/.test(run.output) || Date.now() > deadline) {
+      process.stderr.write(run.output);
+      fail(/no node leases/.test(run.output) ? `No celld node is running on ${factory.bucket}. Start the fleet (docs/self-hosting.md), then \`maple update --name ${factory.name} --force\`.` : "celld d1 migrations apply didn't work (above).");
+    }
+    if (!told) { step("Migrations", `waiting for a celld node on ${factory.bucket}…`); told = true; }
+    spawnSync("sleep", ["3"]);
+  }
+}
+
+function celldDeployWorker(factory, config, version) {
+  const run = celld(["deploy", config, ...bucketArgs(factory)]);
+  if (!run.ok) { process.stderr.write(run.output); fail("celld deploy didn't work (above)."); }
+  step("Worker", `${factory.name} ${version} ${ok("deployed")} ${dim(run.output.match(/Version ID: (\w+)/)?.[1] ?? "")}`);
+}
+
+/** Migrations, then the Worker, as on Cloudflare. A first install deploys first (installCelld): celld d1
+ *  needs a running node, and nodes only take a lease once the bucket has a deployment. */
+function deployCelld(factory, dir, shared) {
+  const config = writeConfig(dir, shared, factory);
+  celldMigrate(factory, config);
+  celldDeployWorker(factory, config, shared.version);
+  return config;
+}
+
+function celldOptions() {
+  const bad = checkBucket(opts.bucket);
+  if (bad) fail(bad);
+  if (opts.endpoint && !/^https?:\/\/\S+$/.test(opts.endpoint)) fail(`${opts.endpoint} isn't a URL: --endpoint is the S3-compatible endpoint, e.g. http://localhost:9000.`);
+  if (opts.url && !/^https?:\/\/[^\s/]+$/.test(opts.url.replace(/\/+$/, ""))) fail(`${opts.url} isn't a URL: --url is the factory's public address, e.g. https://maple.acme.dev.`);
+  return { bucket: opts.bucket, endpoint: opts.endpoint ?? null, url: opts.url ? opts.url.replace(/\/+$/, "") : null };
+}
+
+async function installCelld(name) {
+  const where = celldOptions();
+  if (!where.url && !opts["dry-run"]) fail("--target celld needs --url, the factory's public address (it's where GitHub sends people back to).");
+  const version = checkCelld();
+  step("celld", `${version} ${ok("ok")}`);
+  const org = opts.org ?? (opts["dry-run"] ? fail("--dry-run needs --org.") : await ask("GitHub organization, or your username for a factory just for you (the acme in github.com/acme):"));
+  if (!/^[A-Za-z0-9-]{1,39}$/.test(org)) fail(`${org || "That"} isn't a GitHub login.`);
+  const allow = allowList() ?? [];
+  const channel = opts.channel ?? "stable";
+  if (!["stable", "beta"].includes(channel)) fail("--channel is stable or beta.");
+  const release = await latestServer(channel);
+  step("Release", `maple-server ${release.version} (${channel}) ${ok("verified")}`);
+  const factory = { name, target: "celld", ...where, org, allow, channel, version: release.version };
+
+  if (opts["dry-run"]) {
+    const dir = join(serverDir(name), "..", `${name}.dry-run`);
+    const shared = await unpack(release, dir);
+    const config = writeConfig(dir, shared, factory);
+    const run = celld(["deploy", config, "--dry-run", ...bucketArgs(factory)]);
+    if (!run.ok) { process.stderr.write(run.output); fail("celld deploy --dry-run didn't accept the config (above)."); }
+    step("celld check", `${run.output.match(/Version ID: \w+/)?.[0] ?? ""} ${ok("ok")}`);
+    console.log(`\n${ok("The deploy checks out")}; the config is ${config}`);
+    return;
+  }
+
+  step("Fleet bucket", `${factory.bucket}${factory.endpoint ? ` at ${factory.endpoint}` : ""}`);
+  const dir = serverDir(name);
+  const shared = await unpack(release, dir);
+  // Deploy, remember the factory, then migrate: if no node takes a lease in time, the failure's
+  // `maple update --name … --force` finds it. Nobody can sign in before /setup, so the moment the
+  // Worker runs on an empty schema doesn't matter.
+  const config = writeConfig(dir, shared, factory);
+  celldDeployWorker(factory, config, shared.version);
+  save({ ...factory, installedAt: new Date().toISOString() });
+  celldMigrate(factory, config, { wait: 120 });
+  const health = await healthy(factory.url, 30);
+  if (!health) {
+    console.log(`\nDeployed to ${factory.bucket}. ${factory.url} isn't answering yet: check the proxy in front of the nodes (docs/self-hosting.md), then open ${factory.url}/setup.`);
+    return;
+  }
+  console.log(`\n${ok(`Your factory is up → ${factory.url}`)} (maple-server ${health.version} on celld)`);
+  if (health.signIn !== "github") console.log(`\nLast step, in the browser: create its GitHub App (you need to be an owner of ${org}):\n  ${factory.url}/setup`);
 }
 
 async function healthy(url, seconds = 90) {
@@ -305,6 +416,10 @@ async function install() {
   if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(name)) fail("--name is lowercase letters, digits and dashes (it's the Worker's name).");
   if (existsSync(statePath(name)) && !opts.force) fail(`${name} is already set up from this machine; \`maple update\` updates it (or --force to install over it).`);
 
+  const target = opts.target ?? "cloudflare";
+  const badTarget = checkTarget(target);
+  if (badTarget) fail(badTarget);
+  if (target === "celld") return installCelld(name);
   if (opts["dry-run"]) return dryRun(name);
   const token = await cloudflareToken();
   const account = await chooseAccount(token, opts.account);
@@ -387,6 +502,16 @@ async function update() {
     console.log(`${factory.name} is on maple-server ${release.version}, the latest ${channel} release.`);
     return;
   }
+  if (factory.target === "celld") {
+    checkCelld();
+    step("Release", `maple-server ${factory.version} → ${release.version} (${channel}) ${ok("verified")}`);
+    const next = { ...factory, channel, allow, version: release.version };
+    if (!sameAllow) step("Also allowed", allow.length ? allow.join(", ") : "(nobody)");
+    deployCelld(next, serverDir(factory.name), await unpack(release, serverDir(factory.name)));
+    save({ ...next, updatedAt: new Date().toISOString() });
+    console.log(`\n${ok(`${factory.name} is on ${release.version}.`)}`);
+    return;
+  }
   const token = await cloudflareToken();
   step("Release", `maple-server ${factory.version} → ${release.version} (${channel}) ${ok("verified")}`);
   const dir = serverDir(factory.name);
@@ -403,7 +528,7 @@ async function update() {
 async function status() {
   const factory = load(opts.name);
   const release = await latestServer(factory.channel).catch(() => null);
-  step("Factory", `${factory.name} in ${factory.accountName ?? factory.accountId}`);
+  step("Factory", `${factory.name} in ${factory.target === "celld" ? `celld (bucket ${factory.bucket}${factory.endpoint ? ` at ${factory.endpoint}` : ""})` : factory.accountName ?? factory.accountId}`);
   step("URL", factory.url ?? "(none yet)");
   step("Org", factory.org);
   if (factory.allow?.length) step("Also allowed", factory.allow.join(", "));
@@ -418,6 +543,9 @@ const usage = `maple: set up and update a Maple Factory in your Cloudflare accou
   maple update [--name maple-factory] [--allow LOGIN,...] [--channel stable|beta] [--force]
   maple status [--name maple-factory]
   maple token        a link that makes the Cloudflare API token install needs
+
+  Self-host on celld (experimental, docs/self-hosting.md):
+  maple install --target celld --bucket s3://NAME [--endpoint URL] --url https://HOST [--org ORG] [--allow LOGIN,...] [--name maple-factory] [--channel stable|beta]
 `;
 
 const commands = { install, update, status, token: async () => console.log(tokenLink()) };
