@@ -5,6 +5,14 @@ struct SidebarRail: View {
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
 
+    /// The same readout as the status bar: the busiest plan account's session and week use. No detail on a
+    /// live factory whose machines report no readings; the mock numbers only in the signed-out demo.
+    private var usageDetail: String? {
+        guard state.isLive else { return UsageSummary.demoText(compact: false) }
+        return UsageSummary.busiest(LiveAdapter.usageAccounts(machines: client.machines, members: client.members), me: client.me?.login)
+            .flatMap { UsageSummary.text($0, compact: false) }
+    }
+
     var body: some View {
         VStack(spacing: 4) {
             // The factory rail beside it already shows the factory.
@@ -40,7 +48,7 @@ struct SidebarRail: View {
             nav("Activity", icon: "waveform.path.ecg", destination: .activity)
             nav("Scratchpad", icon: "note.text", destination: .scratchpad, detail: "\(state.notes.count) notes")
             nav("Docs", icon: "doc.richtext", destination: .docs, detail: "\(DocsIndex.docs(client).count) docs")
-            nav("Usage", icon: "gauge.with.dots.needle.33percent", destination: .usage, detail: "34% session · 41% week")
+            nav("Usage", icon: "gauge.with.dots.needle.33percent", destination: .usage, detail: usageDetail)
             if client.canSeeStats {
                 nav("Statistics", icon: "chart.bar.xaxis", destination: .statistics)
             }

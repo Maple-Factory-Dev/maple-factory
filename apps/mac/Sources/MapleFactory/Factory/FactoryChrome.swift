@@ -256,12 +256,21 @@ struct FactoryStatusBar: View {
 
     /// Your plan account closest to its 5-hour limit (anyone's, if your machines report none).
     private var busiestAccount: UsageAccount? {
-        let accounts = LiveAdapter.usageAccounts(machines: client.machines, members: client.members).filter { $0.sessionWindow != nil }
-        let mine = accounts.filter { $0.owner?.github == client.me?.login }
-        return (mine.isEmpty ? accounts : mine).max { ($0.sessionWindow?.used ?? 0) < ($1.sessionWindow?.used ?? 0) }
+        UsageSummary.busiest(LiveAdapter.usageAccounts(machines: client.machines, members: client.members), me: client.me?.login)
     }
 
-    private func percent(_ used: Double) -> String { "\(Int((used * 100).rounded()))%" }
+    /// The server dot's tooltip: what the connection is doing, in words (the dot alone is only a colour).
+    static func connectionHelp(status: FactoryClient.Status, host: String?) -> String {
+        let host = host.flatMap { $0.isEmpty ? nil : $0 } ?? "the factory"
+        switch status {
+        case .live: return "Connected to \(host). Click for machines."
+        case .connecting: return "Connecting to \(host)…"
+        case .reconnecting(let attempt, let reason):
+            return "Reconnecting to \(host): \(reason) (attempt \(attempt)). Actions aren't sent while offline."
+        case .tooNew: return "This factory is newer than the app. Update Maple Factory to keep working."
+        case .signedOut: return "Not signed in."
+        }
+    }
 
     var body: some View {
         HStack(spacing: 16) {
@@ -272,18 +281,17 @@ struct FactoryStatusBar: View {
                 }
                 .contentShape(Rectangle())
                 .onTapGesture { state.closeFocus(); state.destination = .machines }
-                .help("Machines")
+                .help(Self.connectionHelp(status: client.status, host: client.server?.host()))
             } else {
                 Circle().fill(Theme.State.merged).frame(width: 6, height: 6)
             }
             Spacer()
             if state.isLive {
-                if let account = busiestAccount, let session = account.sessionWindow {
+                if let account = busiestAccount, let session = account.sessionWindow,
+                   let text = UsageSummary.text(account, compact: state.isCompact) {
                     HStack(spacing: 5) {
                         ProductMark(product: account.product).scaleEffect(0.55).frame(width: 13, height: 13)
-                        Text(state.isCompact
-                             ? "\(percent(session.used))\(account.weekWindow.map { " · \(percent($0.used))" } ?? "")"
-                             : "\(percent(session.used)) session\(account.weekWindow.map { " · \(percent($0.used)) week" } ?? "")")
+                        Text(text)
                     }
                     .foregroundStyle(session.used >= 0.9 ? Theme.State.cancelled : session.runsOutEarly ? Theme.State.awaitingApproval : Theme.textMuted)
                     .contentShape(Rectangle())
@@ -294,7 +302,7 @@ struct FactoryStatusBar: View {
             } else {
                 HStack(spacing: 5) {
                     ProductMark(product: .claudeCode).scaleEffect(0.55).frame(width: 13, height: 13)
-                    Text(state.isCompact ? "34% · 41%" : "34% session · 41% week")
+                    Text(UsageSummary.demoText(compact: state.isCompact))
                 }
                 .contentShape(Rectangle())
                 .onTapGesture { state.destination = .usage; state.focusedTask = nil }
