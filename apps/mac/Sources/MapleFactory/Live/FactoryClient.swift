@@ -52,7 +52,7 @@ import Foundation
     /// Where each goal's next page of older tasks starts: the last task of its last page.
     private var olderCursor: [String: OlderCursor] = [:]
     /// Tasks asked for by ID (`task.get`) that haven't come yet.
-    private var fetching: Set<String> = []
+    private(set) var fetching: Set<String> = []
     private(set) var factoryGoals: [Goal] = []
     private(set) var online: [Wire.Presence] = []
     private(set) var intakeRequests: [Wire.IntakeRequest] = []
@@ -184,7 +184,18 @@ import Foundation
     private(set) var toast: (text: String, taskID: String?, at: Date)?
     /// Settings › Runner's Check for Update, per machine id: waiting on the factory, or its answer.
     private(set) var runnerChecks: [String: RunnerCheck] = [:]
-    private(set) var status: Status = .signedOut
+    private(set) var status: Status = .signedOut {
+        didSet {
+            if case .reconnecting = status { if reconnectingSince == nil { reconnectingSince = Date() } } else if status != .connecting { reconnectingSince = nil }
+        }
+    }
+    /// When the feed first dropped into `.reconnecting`; cleared once it's live again or signed out, so the
+    /// offline pill waits a few seconds before showing (MF-401).
+    private(set) var reconnectingSince: Date?
+    /// A message a person asked for that `send` refused because it couldn't go out (MF-401).
+    var onRefused: ((Wire.ClientMessage) -> Void)?
+    /// A message `send` let through but the socket then failed to write (MF-401).
+    var onSendFailed: ((Wire.ClientMessage) -> Void)?
     /// Whether this factory's first snapshot has landed. A reconnect keeps it, so the old content stays up.
     private(set) var hasSnapshot = false
     /// The last thing the server refused, shown as a toast-like line.
@@ -387,7 +398,7 @@ import Foundation
         self.socket = socket
         lastHeard = Date()
         socket.resume()
-        send(.subscribe)
+        write(.subscribe)
         Task { await receive(socket, gen: gen) }
         Task { await keepAlive(socket, gen: gen) }
     }
@@ -1079,19 +1090,55 @@ import Foundation
         guard hasOlder(goal: goal), !loadingOlder.contains(goal) else { return }
         loadingOlder.insert(goal)
         let cursor = olderCursor[goal]
-        send(.tasksOlder(.init(goal: goal, before: cursor?.before, beforeId: cursor?.id, limit: 50)))
+        // Offline: nothing went out, so don't leave the "Loading…" row stuck (MF-401).
+        if !send(.tasksOlder(.init(goal: goal, before: cursor?.before, beforeId: cursor?.id, limit: 50))) { loadingOlder.remove(goal) }
     }
 
     /// A task opened by ID (a link, a reference, `after`, follow-up or split) that isn't loaded: ask for it.
     func fetchTask(id: String) {
         guard hasSnapshot, !fetching.contains(id), !tasks.contains(where: { $0.id == id }) else { return }
         fetching.insert(id)
-        send(.taskGet(.init(id: id)))
+        if !send(.taskGet(.init(id: id))) { fetching.remove(id) }
     }
 
-    func send(_ message: Wire.ClientMessage) {
-        guard let socket, let data = try? JSONEncoder().encode(message), let text = String(data: data, encoding: .utf8) else { return }
-        socket.send(.string(text)) { _ in }
+    /// Whether a message sent now would leave the Mac: the feed is live and the socket is up (MF-401).
+    var canSend: Bool { status == .live && socket != nil }
+
+    /// Sends a message if it can go out now, and says whether it did (MF-401). Nothing is queued for a reconnect:
+    /// replaying a merge or a task.create later could do it twice, so a caller refuses it out loud instead.
+    /// A write that fails after this returns reaches `onSendFailed`.
+    @discardableResult func send(_ message: Wire.ClientMessage) -> Bool {
+        guard canSend, write(message) else {
+            if !Self.isBackground(message) { onRefused?(message) }
+            return false
+        }
+        return true
+    }
+
+    /// Reads and subscriptions the app sends on its own: refusing one says nothing, since a person didn't ask
+    /// for it and the reconnect sends it again (MF-401).
+    nonisolated static func isBackground(_ message: Wire.ClientMessage) -> Bool {
+        switch message {
+        case .subscribe, .presence, .tasksOlder, .taskGet, .docThreads, .statsGet, .reportGet, .taskCheckLog,
+             .sessionSubscribeEvents, .sessionUnsubscribeEvents:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Writes to the socket whatever the status: the feed's own `subscribe` goes out while still connecting.
+    @discardableResult private func write(_ message: Wire.ClientMessage) -> Bool {
+        guard let socket, let data = try? JSONEncoder().encode(message), let text = String(data: data, encoding: .utf8) else { return false }
+        let gen = generation
+        socket.send(.string(text)) { error in
+            guard error != nil else { return }
+            Task { @MainActor in
+                guard gen == self.generation else { return }
+                self.onSendFailed?(message)
+            }
+        }
+        return true
     }
 
     // MARK: Commands
@@ -1167,6 +1214,15 @@ import Foundation
         }
         send(.sessionSendInput(.init(machine: machine, id: id, input: input)))
     }
+
+    #if DEBUG
+    /// For tests: drives the status without a socket (MF-401).
+    func _setStatusForTesting(_ status: Status) { self.status = status }
+    /// For tests: a task.get that went out, so its task.updated joins quietly (no socket here to send it).
+    func _markFetchingForTesting(_ id: String) { fetching.insert(id) }
+    /// For tests: signed in without the Keychain or a socket, so `send` has nowhere to go.
+    func _signInForTesting(server: URL = URL(string: "https://factory.test")!) { self.server = server; token = "test" }
+    #endif
 
     /// For tests and headless shots: a store filled without a socket.
     func seedNativeEvents(_ id: String, machine: String, events: [Wire.SessionEvent], epoch: String = "fixture") {

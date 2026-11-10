@@ -61,7 +61,7 @@ import Testing
 
     @Test func aTaskAskedForByIdJoinsQuietly() throws {
         let client = try client()
-        client.fetchTask(id: "MF-7")
+        client._markFetchingForTesting("MF-7")  // fetchTask with no socket sends nothing, so it isn't left fetching (MF-401).
         client.apply(try decode(#"{"type":"task.updated","task":\#(task("MF-7", "merged"))}"#))
         #expect(client.tasks.last?.id == "MF-7")
         #expect(client.older["g"] == OlderTasks(merged: 3, finished: 5))
