@@ -264,6 +264,67 @@ public enum Wire {
         public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     }
 
+    /// Where an agent asked from a doc thread stands (MF-366).
+    public enum DocAgentStatus: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
+        /// Its session is opening.
+        case starting
+        /// Reading and thinking.
+        case thinking
+        /// Running tools: reading code, the web, writing its answer.
+        case working
+        /// Waiting on a prompt in its session.
+        case waiting
+        /// Its session ended after answering.
+        case done
+        /// A person stopped it, or it ran past its budget.
+        case stopped
+        /// It couldn't start, or ended early.
+        case failed
+        /// A value this build doesn't know yet; newer servers may send them.
+        case other(String)
+
+        /// The values this build knows; never `.other`.
+        public static let allCases: [DocAgentStatus] = [.starting, .thinking, .working, .waiting, .done, .stopped, .failed]
+
+        public init(rawValue: String) {
+            switch rawValue {
+            case "starting": self = .starting
+            case "thinking": self = .thinking
+            case "working": self = .working
+            case "waiting": self = .waiting
+            case "done": self = .done
+            case "stopped": self = .stopped
+            case "failed": self = .failed
+            default: self = .other(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .starting: "starting"
+            case .thinking: "thinking"
+            case .working: "working"
+            case .waiting: "waiting"
+            case .done: "done"
+            case .stopped: "stopped"
+            case .failed: "failed"
+            case .other(let value): value
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            try c.encode(rawValue)
+        }
+
+        public static func == (a: DocAgentStatus, b: DocAgentStatus) -> Bool { a.rawValue == b.rawValue }
+        public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
+    }
+
     /// Where a suggested doc edit stands.
     public enum DocSuggestionStatus: Codable, Hashable, Sendable, CaseIterable, RawRepresentable {
         /// Waiting for a person.
@@ -4572,6 +4633,34 @@ public enum Wire {
         }
     }
 
+    /// An agent asked from a doc thread (MF-366): a side conversation that answers in the thread.
+    public struct DocAgentRun: Codable, Hashable, Sendable {
+        /// Its session on the machine.
+        public var session: String
+        /// planner or researcher.
+        public var role: String
+        /// The machine it runs on.
+        public var machine: String
+        /// Who asked.
+        public var by: String
+        public var status: DocAgentStatus
+        /// What it's doing now, or why it stopped.
+        public var message: String?
+        public var startedAt: UInt64
+        public var endedAt: UInt64?
+
+        public init(session: String, role: String, machine: String, by: String, status: DocAgentStatus, message: String? = nil, startedAt: UInt64, endedAt: UInt64? = nil) {
+            self.session = session
+            self.role = role
+            self.machine = machine
+            self.by = by
+            self.status = status
+            self.message = message
+            self.startedAt = startedAt
+            self.endedAt = endedAt
+        }
+    }
+
     /// A comment thread anchored to text in a shared doc.
     public struct DocThread: Codable, Hashable, Sendable {
         public var id: String
@@ -4586,8 +4675,10 @@ public enum Wire {
         public var createdAt: UInt64
         /// Set when the thread is a suggested edit (a tracked change) rather than a plain comment.
         public var suggestion: DocSuggestion?
+        /// The newest agent asked in this thread (MF-366).
+        public var agent: DocAgentRun?
 
-        public init(id: String, doc: String, anchor: DocAnchor? = nil, comments: [DocComment] = [], resolved: Bool? = nil, resolvedBy: String? = nil, resolvedAt: UInt64? = nil, createdBy: String, createdAt: UInt64, suggestion: DocSuggestion? = nil) {
+        public init(id: String, doc: String, anchor: DocAnchor? = nil, comments: [DocComment] = [], resolved: Bool? = nil, resolvedBy: String? = nil, resolvedAt: UInt64? = nil, createdBy: String, createdAt: UInt64, suggestion: DocSuggestion? = nil, agent: DocAgentRun? = nil) {
             self.id = id
             self.doc = doc
             self.anchor = anchor
@@ -4598,6 +4689,7 @@ public enum Wire {
             self.createdBy = createdBy
             self.createdAt = createdAt
             self.suggestion = suggestion
+            self.agent = agent
         }
 
         public init(from decoder: Decoder) throws {
@@ -4612,6 +4704,7 @@ public enum Wire {
             createdBy = try c.decode(String.self, forKey: .createdBy)
             createdAt = try c.decode(UInt64.self, forKey: .createdAt)
             suggestion = try c.decodeIfPresent(DocSuggestion.self, forKey: .suggestion)
+            agent = try c.decodeIfPresent(DocAgentRun.self, forKey: .agent)
         }
     }
 
@@ -7124,6 +7217,36 @@ public enum Wire {
         }
     }
 
+    /// Ask an agent about a doc selection (MF-366): starts a thread on `anchor`, or continues `thread`, and opens a session on one of the asker's machines that answers in the thread.
+    public struct ClientMessageDocAsk: Codable, Hashable, Sendable {
+        public var doc: String
+        /// None: start a new thread (then `anchor` is required).
+        public var thread: String?
+        public var anchor: DocAnchor?
+        public var text: String
+        /// planner (default) or researcher.
+        public var role: String?
+
+        public init(doc: String, thread: String? = nil, anchor: DocAnchor? = nil, text: String, role: String? = nil) {
+            self.doc = doc
+            self.thread = thread
+            self.anchor = anchor
+            self.text = text
+            self.role = role
+        }
+    }
+
+    /// Stop the agent running in a doc thread: the asker, the machine's owner or an admin.
+    public struct ClientMessageDocAgentStop: Codable, Hashable, Sendable {
+        public var doc: String
+        public var thread: String
+
+        public init(doc: String, thread: String) {
+            self.doc = doc
+            self.thread = thread
+        }
+    }
+
     public struct ClientMessageDocResolve: Codable, Hashable, Sendable {
         public var doc: String
         public var thread: String
@@ -8230,6 +8353,8 @@ public enum Wire {
         case docRename(ClientMessageDocRename)
         case docArchive(ClientMessageDocArchive)
         case docComment(ClientMessageDocComment)
+        case docAsk(ClientMessageDocAsk)
+        case docAgentStop(ClientMessageDocAgentStop)
         case docResolve(ClientMessageDocResolve)
         case docReopen(ClientMessageDocReopen)
         case docSuggestion(ClientMessageDocSuggestion)
@@ -8338,6 +8463,8 @@ public enum Wire {
             case "doc.rename": self = .docRename(try ClientMessageDocRename(from: decoder))
             case "doc.archive": self = .docArchive(try ClientMessageDocArchive(from: decoder))
             case "doc.comment": self = .docComment(try ClientMessageDocComment(from: decoder))
+            case "doc.ask": self = .docAsk(try ClientMessageDocAsk(from: decoder))
+            case "doc.agentStop": self = .docAgentStop(try ClientMessageDocAgentStop(from: decoder))
             case "doc.resolve": self = .docResolve(try ClientMessageDocResolve(from: decoder))
             case "doc.reopen": self = .docReopen(try ClientMessageDocReopen(from: decoder))
             case "doc.suggestion": self = .docSuggestion(try ClientMessageDocSuggestion(from: decoder))
@@ -8463,6 +8590,12 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .docComment(let body):
                 try c.encode("doc.comment", forKey: .type)
+                try body.encode(to: encoder)
+            case .docAsk(let body):
+                try c.encode("doc.ask", forKey: .type)
+                try body.encode(to: encoder)
+            case .docAgentStop(let body):
+                try c.encode("doc.agentStop", forKey: .type)
                 try body.encode(to: encoder)
             case .docResolve(let body):
                 try c.encode("doc.resolve", forKey: .type)
