@@ -2831,6 +2831,8 @@ final class AppState {
             case "send": submitDraft(sendToPlanning: true)
             case "steer": steer(parts[1], text: parts.dropFirst(2).joined(separator: ":"), interruptNow: false)
             case "idea": draft.title = parts.dropFirst().joined(separator: ":")
+            // The composer's brief typed in (`brief:Some text`), for the unsent-draft demo (MF-404).
+            case "brief": draft.body = parts.dropFirst().joined(separator: ":")
             // The update toast's buttons and its What's new link (with MAPLE_UPDATE_DEMO=1), and a passing toast to show beneath it.
             case "update":
                 switch parts[1] {
@@ -2895,6 +2897,7 @@ final class AppState {
                 switch parts[1] {
                 case "compose": startCompose()
                 case "cancel": cancelCompose()
+                case "discard": discardDraft()
                 case "draft": draftWithAI()
                 case "watch": watchingAIDraft = true
                 case "goal": goalSheet = .new
