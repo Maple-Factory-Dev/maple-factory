@@ -4212,7 +4212,7 @@ export class Engine {
     let markdown: string | null = null;
     try {
       const read = await this.docs.run({ author: by, agent: role }, "read_doc", { doc: doc.id });
-      markdown = typeof read.data === "object" && read.data && "markdown" in read.data ? String((read.data as { markdown: unknown }).markdown) : null;
+      markdown = typeof read.data === "string" ? read.data : null;
     } catch { /* the agent reads it itself */ }
     const id = crypto.randomUUID();
     const short = id.slice(0, 8);
