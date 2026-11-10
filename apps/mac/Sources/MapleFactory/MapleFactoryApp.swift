@@ -568,6 +568,11 @@ extension ContentView {
         } else {
             destinationContent
                 .transition(.opacity)
+                // A brand-new factory (no goals) opens on All goals and its New Goal… state, not an empty goal page.
+                .onChange(of: state.hasNoGoals, initial: true) { _, none in
+                    let landing = AppState.landing(state.destination, noGoals: none)
+                    if landing != state.destination { state.destination = landing }
+                }
         }
     }
 
