@@ -169,6 +169,8 @@ final class AppState {
     /// The task whose owner chip shows its people picker, when a demo script opened it (`assignask:<id>`),
     /// and what's typed into its filter (`assigntype:<text>`).
     var assigningTask: String? = nil
+    /// The task whose ⋯ menu shows its Rename alert, when ⌘K's "Rename…" asked for it.
+    var renamingTask: String? = nil
     var assignQuery = ""
     /// The task whose Builds on row shows its task picker, when a demo script opened it (`linkask:<id>`),
     /// and what's typed into its filter (`linktype:<text>`).
@@ -1373,6 +1375,10 @@ final class AppState {
     }
     /// The highlighted row, an index into `paletteItems`.
     var paletteSelection = 0
+    /// ⌘K's "Move to goal…" on this task: the palette lists the goals it can move to instead.
+    var paletteMovingTask: String? = nil {
+        didSet { if paletteMovingTask != oldValue { paletteQuery = ""; paletteSelection = 0 } }
+    }
     /// ⌘K's "New doc": the Docs page opens its New doc sheet.
     var creatingDoc = false
     /// Opens the Settings window; set by the view that can (AppState has no `openSettings`).
@@ -1430,6 +1436,45 @@ final class AppState {
         case .action(.restartTheLine): confirmsRestartLine = true
         case .action(let action):
             if let appearance = action.appearance { setAppearance(appearance) }
+        }
+    }
+
+    /// What `TaskActions.available` needs to know about a task beyond the task itself.
+    func taskActionContext(for task: FactoryTask, canSchedule: Bool = true, canAssign: Bool = true) -> TaskActionContext {
+        let gate = mergeGate(for: task)
+        return TaskActionContext(isMine: task.owner.github == FactoryData.me.github, canTakeOver: FactoryData.me.github != nil,
+                                 canReassign: canReassign(task.id), hasBranch: branch(of: task.id) != nil,
+                                 hasMoveTargets: !moveTargets(task.id).isEmpty,
+                                 iApproved: task.approvals.contains { $0.id == FactoryData.me.id },
+                                 canMerge: gate.canMerge, isMerging: isMerging(task),
+                                 canSchedule: canSchedule, canAssign: canAssign)
+    }
+
+    /// Runs one of a task's actions, for its ⋯ menu and ⌘K alike. The ones that ask first (Schedule…, Assign…,
+    /// Cancel task…, Rename…) raise the hook the open task's views show their popover or dialog from.
+    func perform(_ action: TaskAction, on id: String) {
+        switch action {
+        case .moveToTop: task(id).queued ? moveToTop(id) : moveDraftToTop(id)
+        case .moveToBottom: task(id).queued ? moveToBottom(id) : moveDraftToBottom(id)
+        case .schedule: schedulingTask = id
+        case .startNow: startNow(id)
+        case .runNow: forceStart(id)
+        case .queue: queue(id, before: nil)
+        case .approvePlan, .approveAndBuild: approvePlan(id)
+        case .merge: merge(id)
+        case .sendToPlanning, .planAgain: plan(id)
+        case .sendToBacklog: sendToBacklog(id)
+        case .retry: retry(id)
+        case .cancel: confirmingCancel = id
+        case .takeOver: if let me = FactoryData.me.github { assign(id, to: me) }
+        case .assign: assigningTask = id
+        case .moveToGoal: paletteMovingTask = id
+        case .rename: renamingTask = id
+        case .toggleShareable: setShareable(id, !task(id).shareable)
+        case .openPullRequest: openPullRequest(id)
+        case .copyBranch: copyBranch(id)
+        case .copyID: copyID(id)
+        case .copyLink: copyLink(id)
         }
     }
 
