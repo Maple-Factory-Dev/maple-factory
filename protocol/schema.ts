@@ -1832,6 +1832,8 @@ export const unions: Record<string, Union> = {
       "decision.edit": { doc: "Change a decision while it's still proposed.", fields: { id: "uuid", question: "string", options: "DecisionOption[]", chosen: "string?", rationale: "string" } },
       "decision.accept": { doc: "Accept a proposed decision; records who and when. People only.", fields: { id: "uuid", chosen: "string?", why: "string?" } },
       "decision.reject": { doc: "Reject a proposed decision. People only.", fields: { id: "uuid", why: "string?" } },
+      "memory.edit": { doc: "Change a shared memory's text, kind, tags or scope; what's left out stays. People only (MF-394).", fields: { id: "uuid", text: "string?", kind: "MemoryKind?", tags: "string[]?", scope: "MemoryScope?" } },
+      "memory.status": { doc: "Accept a proposed memory (active), archive one, or bring one back. People only (MF-394).", fields: { id: "uuid", status: "MemoryStatus" } },
       "decision.log": { doc: "Ask for a decision's append-only log; answered with `decision.log` to this connection.", fields: { id: "uuid" } },
       "doc.makeTasks": {
         doc: "Make draft tasks from a doc section, a selection or an accepted decision (MF-368), in the doc's goal (or `goal` when the doc has none). Each gets `fromDoc` and a link back in its brief, and live embeds go into the doc after the source. Nothing is made if anything is refused.",
@@ -2148,6 +2150,7 @@ export const unions: Record<string, Union> = {
           olderTasks: "How many finished tasks the snapshot left out. None: an older server.",
           prompts: "The org's prompt additions. None: an older server.",
           docs: "Every shared doc, archived ones too. None: an older server.",
+          memories: "Every shared memory, proposed and archived ones too (MF-394). None: an older server.",
           quietHours: "Your quiet hours. None: none set, or an older server.",
           secrets: "Every repo's secrets, names and who changed them only.",
           scripts: "The repos that have worktree scripts. None: an older server.",

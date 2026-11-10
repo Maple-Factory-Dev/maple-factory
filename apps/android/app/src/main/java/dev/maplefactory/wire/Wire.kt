@@ -3775,6 +3775,21 @@ sealed class ClientMessage {
         val id: String,
         val why: String? = null,
     ) : ClientMessage()
+    /** Change a shared memory's text, kind, tags or scope; what's left out stays. People only (MF-394). */
+    @Serializable
+    data class MemoryEdit(
+        val id: String,
+        val text: String? = null,
+        val kind: dev.maplefactory.wire.MemoryKind? = null,
+        val tags: List<String>? = null,
+        val scope: dev.maplefactory.wire.MemoryScope? = null,
+    ) : ClientMessage()
+    /** Accept a proposed memory (active), archive one, or bring one back. People only (MF-394). */
+    @Serializable
+    data class MemoryStatus(
+        val id: String,
+        val status: dev.maplefactory.wire.MemoryStatus,
+    ) : ClientMessage()
     /** Ask for a decision's append-only log; answered with `decision.log` to this connection. */
     @Serializable
     data class DecisionLog(
@@ -4380,6 +4395,8 @@ sealed class ClientMessage {
             "decision.edit" -> json.decodeFromJsonElement(DecisionEdit.serializer(), body)
             "decision.accept" -> json.decodeFromJsonElement(DecisionAccept.serializer(), body)
             "decision.reject" -> json.decodeFromJsonElement(DecisionReject.serializer(), body)
+            "memory.edit" -> json.decodeFromJsonElement(MemoryEdit.serializer(), body)
+            "memory.status" -> json.decodeFromJsonElement(MemoryStatus.serializer(), body)
             "decision.log" -> json.decodeFromJsonElement(DecisionLog.serializer(), body)
             "doc.makeTasks" -> json.decodeFromJsonElement(DocMakeTasks.serializer(), body)
             "presence" -> json.decodeFromJsonElement(Presence.serializer(), body)
@@ -4494,6 +4511,8 @@ sealed class ClientMessage {
             is DecisionEdit -> "decision.edit" to json.encodeToJsonElement(DecisionEdit.serializer(), value)
             is DecisionAccept -> "decision.accept" to json.encodeToJsonElement(DecisionAccept.serializer(), value)
             is DecisionReject -> "decision.reject" to json.encodeToJsonElement(DecisionReject.serializer(), value)
+            is MemoryEdit -> "memory.edit" to json.encodeToJsonElement(MemoryEdit.serializer(), value)
+            is MemoryStatus -> "memory.status" to json.encodeToJsonElement(MemoryStatus.serializer(), value)
             is DecisionLog -> "decision.log" to json.encodeToJsonElement(DecisionLog.serializer(), value)
             is DocMakeTasks -> "doc.makeTasks" to json.encodeToJsonElement(DocMakeTasks.serializer(), value)
             is Presence -> "presence" to json.encodeToJsonElement(Presence.serializer(), value)
@@ -4619,6 +4638,7 @@ sealed class ServerToClient {
         /** Every shared doc, archived ones too. None: an older server. */
         val docs: List<dev.maplefactory.wire.Doc>? = null,
         val decisions: List<dev.maplefactory.wire.Decision>? = null,
+        /** Every shared memory, proposed and archived ones too (MF-394). None: an older server. */
         val memories: List<dev.maplefactory.wire.Memory>? = null,
         val follows: List<dev.maplefactory.wire.GoalFollow> = emptyList(),
         /** Your quiet hours. None: none set, or an older server. */
