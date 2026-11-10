@@ -169,8 +169,8 @@ through `mapleDocs.updateTasks(tasks)`). Export snapshots each embed's current s
 Images load only from `/attachments/`: an image in pasted or imported Markdown that points anywhere else
 (or sits inside other text) stays a plain link, so a doc never makes a viewer's browser fetch an outside URL.
 
-A `/research` block (ask an agent from inside a doc, answer embedded) was pulled out of MF-363 and left to
-MF-366; until then a `> [!RESEARCH]` quote imports as an ordinary quote.
+Asking an agent from a doc is a side conversation in a thread (MF-366, below), not an embedded `/research`
+block; a `> [!RESEARCH]` quote still imports as an ordinary quote.
 
 ## Doc tools for agents (MF-365)
 
@@ -204,3 +204,34 @@ comes back to the person as an error and the suggestion stays open.
 In the web editor a suggestion's text is struck through in red, and its rail card ("Suggested edit by …")
 shows the original and the rendered replacement with Accept / Reject; decided ones sit under Resolved as Accepted or
 Rejected.
+
+## Side conversations (MF-366)
+
+Select text, choose **Ask an agent** in the bubble menu (or on a thread card), pick Planner or Researcher and
+type the question. The editor sends `doc.ask {doc, thread?, anchor?, text, role?}`; OrgHub starts the thread
+(or adds to it) and `Engine.ask` (`server/src/factory/engine.ts`, pure parts in `factory/doc-asks.ts`) opens an
+interactive session:
+
+- **Where:** the asker's own online, unpaused machines that have the agent and are under their usage caps,
+  least busy first, then a machine a teammate lends. When none qualifies the asker gets the reason (paused,
+  over cap, offline, no agent) and nothing is saved or opened. At most three live asks per member.
+- **What it sees:** the doc as `read_doc` shows it, the selected quote and the thread so far; when the doc's
+  goal has a repo, the session runs in an `ask-<8>` worktree of it (the runner's task checkout path, with
+  `taskId` null), otherwise in the runner's home.
+- **What it can do:** only the doc tools, as `<role> for @<asker>`: it answers with `reply_to_doc_thread` and
+  proposes wording (or a mermaid diagram) with `suggest_doc_edit`, which a person accepts or rejects. Other
+  factory tools are refused. It can read code and the web; the prompt tells it never to edit files.
+- **Status:** `DocThread.agent` (`DocAgentRun`) follows the session: Starting → Thinking/Working (from
+  `session.activity`) → Done when its turn ends (runner state `done`) after it replied or suggested an edit that
+  turn, or Waiting ("its turn ended without a reply") when it didn't; Stopped, or Failed. A `done` within 10 s of
+  a typed follow-up, before any work, is taken as the previous turn's and ignored. An answered ask stops counting
+  toward the live limit and the budget, but its open session still counts toward the machine's load; it stays
+  open for follow-ups for 15 minutes of quiet (`IDLE_GRACE_MS`), then the sweep closes it (a Waiting card turns Done). The card shows it as a chip that pulses while
+  it runs, with Stop (`doc.agentStop`: the asker, the machine's owner or an admin).
+- **Follow-ups:** a reply in a thread whose agent session is open (working, or answered and within its grace
+  period) is typed into it (MachineHub `/input`) as "<who> in doc thread <id>: …", turning the chip back to
+  Thinking. Otherwise only a comment that mentions `@planner` / `@researcher` (`docAgentsIn`, doc threads
+  only) or the Ask action starts a fresh run with the transcript; a plain reply between people doesn't.
+- **Budget:** each ask is held to the policy's per-task minutes and cost (`taskMinutes`, `taskCostUsd`); the
+  alarm's sweep (`checkAskBudgets`) kills one past it and says so in the thread. Asks are kept in the OrgHub kv
+  (`docask:<session>`).

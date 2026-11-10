@@ -44,6 +44,9 @@ export function resolveAnchor(ydoc, mapping, anchor) {
 
 export const commentsKey = new PluginKey("docComments");
 
+/** How a thread's agent run reads on its card (MF-366). */
+export const AGENT_STATUS = { starting: "Starting…", thinking: "Thinking…", working: "Working…", waiting: "Waiting", done: "Done", stopped: "Stopped", failed: "Failed" };
+
 /** Highlights open threads' ranges; the active one is emphasised. `get()` → {threads, active, ydoc}. */
 export function commentHighlights(get) {
   return new Plugin({
@@ -82,7 +85,7 @@ const ago = (at) => {
 };
 
 /** A textarea that offers `@login` completions from members(). */
-function composer(members, placeholder, onSubmit, onCancel) {
+function composer(members, placeholder, onSubmit, onCancel, label = "Comment") {
   const box = el("div", "doc-composer");
   const ta = el("textarea");
   ta.rows = 2;
@@ -90,7 +93,7 @@ function composer(members, placeholder, onSubmit, onCancel) {
   const list = el("div", "doc-composer-mentions");
   list.hidden = true;
   const row = el("div", "doc-composer-actions");
-  const send = el("button", "doc-btn primary", "Comment");
+  const send = el("button", "doc-btn primary", label);
   send.type = "button";
   row.append(send);
   if (onCancel) {
@@ -144,7 +147,25 @@ export function createCommentRail({ editor, ydoc, docId, threads, members, send,
   const rail = el("aside", "doc-rail");
   const head = el("div", "doc-rail-head");
   const tabs = { open: el("button", "doc-rail-tab on"), resolved: el("button", "doc-rail-tab") };
-  let filter = "open", active = null, draft = null;
+  let filter = "open", active = null, draft = null, asking = null;
+
+  /** Ask an agent's composer: the question and a planner / researcher toggle (MF-366). */
+  function askComposer(onSubmit, onCancel) {
+    let role = "planner";
+    const wrap = el("div", "doc-ask");
+    const toggle = el("div", "doc-ask-roles");
+    const pick = (r) => { role = r; for (const b of toggle.children) b.classList.toggle("on", b.dataset.role === r); };
+    for (const [r, label] of [["planner", "Planner"], ["researcher", "Researcher"]]) {
+      const b = el("button", "doc-ask-role" + (r === role ? " on" : ""), label);
+      b.type = "button";
+      b.dataset.role = r;
+      b.addEventListener("click", (e) => { e.stopPropagation(); pick(r); });
+      toggle.append(b);
+    }
+    const comp = composer(members, "Ask an agent about this…", (text) => onSubmit(text, role), onCancel, "Ask");
+    wrap.append(toggle, comp.box);
+    return wrap;
+  }
   for (const [k, b] of Object.entries(tabs)) {
     b.type = "button";
     b.dataset.filter = k;
@@ -157,11 +178,11 @@ export function createCommentRail({ editor, ydoc, docId, threads, members, send,
   const view = () => editor.view;
   const where = (t) => resolveAnchor(ydoc, mappingOf(editor.state), t.anchor);
 
-  /** Starts a thread on the current selection (a text range or a selected block). */
-  function startThread() {
+  /** Starts a thread on the current selection (a text range or a selected block); `ask` asks an agent (MF-366). */
+  function startThread(ask = false) {
     const { from, to } = editor.state.selection;
     if (from === to) return;
-    draft = { anchor: anchorFromRange(ydoc, mappingOf(editor.state), editor.state.doc, from, to), from };
+    draft = { anchor: anchorFromRange(ydoc, mappingOf(editor.state), editor.state.doc, from, to), from, ask };
     filter = "open";
     draw();
     rail.querySelector(".doc-composer textarea")?.focus();
@@ -203,6 +224,22 @@ export function createCommentRail({ editor, ydoc, docId, threads, members, send,
       row.append(meta, text);
       c.append(row);
     }
+    const run = t.agent;
+    const running = run && !["done", "stopped", "failed"].includes(run.status);
+    if (run) {
+      // The agent asked in this thread (MF-366): its status, pulsing while it runs, and Stop.
+      const chip = el("div", `doc-agent-status ${run.status}${running ? " live" : ""}`);
+      chip.dataset.status = run.status;
+      chip.append(el("span", "doc-agent-dot"), el("span", null, `${run.role === "researcher" ? "Researcher" : "Planner"}: ${AGENT_STATUS[run.status] ?? run.status}`));
+      if (run.message && run.status !== "done") chip.append(el("span", "doc-agent-msg", ` · ${run.message}`));
+      if (running) {
+        const stop = el("button", "doc-btn doc-agent-stop", "Stop");
+        stop.type = "button";
+        stop.addEventListener("click", (e) => { e.stopPropagation(); send({ type: "doc.agentStop", doc: docId, thread: t.id }); });
+        chip.append(stop);
+      }
+      c.append(chip);
+    }
     const actions = el("div", "doc-thread-actions");
     if (sug?.status === "open") {
       for (const [label, accept] of [["Accept", true], ["Reject", false]]) {
@@ -218,11 +255,21 @@ export function createCommentRail({ editor, ydoc, docId, threads, members, send,
       toggle.type = "button";
       toggle.addEventListener("click", (e) => { e.stopPropagation(); send({ type: t.resolved ? "doc.reopen" : "doc.resolve", doc: docId, thread: t.id }); });
       actions.append(toggle);
+      if (!t.resolved && !running) {
+        const ask = el("button", "doc-btn doc-thread-ask", "Ask an agent");
+        ask.type = "button";
+        ask.addEventListener("click", (e) => { e.stopPropagation(); asking = t.id; active = t.id; draw(); rail.querySelector(`.doc-thread[data-thread="${t.id}"] .doc-composer textarea`)?.focus(); });
+        actions.append(ask);
+      }
       if (t.resolved) actions.append(el("span", "doc-thread-by", `Resolved by ${t.resolvedBy}`));
     }
     c.append(actions);
-    if (t.id === active && !t.resolved) {
-      const reply = composer(members, "Reply…", (text) => send({ type: "doc.comment", doc: docId, thread: t.id, text }));
+    if (asking === t.id && !running) {
+      const box = askComposer((text, role) => { asking = null; send({ type: "doc.ask", doc: docId, thread: t.id, text, role }); }, () => { asking = null; draw(); });
+      box.addEventListener("click", (e) => e.stopPropagation());
+      c.append(box);
+    } else if (t.id === active && !t.resolved) {
+      const reply = composer(members, running ? "Reply to the agent…" : "Reply…", (text) => send({ type: "doc.comment", doc: docId, thread: t.id, text }));
       reply.box.addEventListener("click", (e) => e.stopPropagation());
       c.append(reply.box);
     }
@@ -256,12 +303,20 @@ export function createCommentRail({ editor, ydoc, docId, threads, members, send,
       const c = el("div", "doc-thread draft");
       c.dataset.pos = draft.from;
       c.append(el("div", "doc-thread-quote", draft.anchor.quote));
-      const comp = composer(members, "Comment, @mention someone…", (text) => {
-        send({ type: "doc.comment", doc: docId, text, anchor: draft.anchor });
-        draft = null;
-        draw();
-      }, () => { draft = null; draw(); });
-      c.append(comp.box);
+      if (draft.ask) {
+        c.append(askComposer((text, role) => {
+          send({ type: "doc.ask", doc: docId, text, anchor: draft.anchor, role });
+          draft = null;
+          draw();
+        }, () => { draft = null; draw(); }));
+      } else {
+        const comp = composer(members, "Comment, @mention someone…", (text) => {
+          send({ type: "doc.comment", doc: docId, text, anchor: draft.anchor });
+          draft = null;
+          draw();
+        }, () => { draft = null; draw(); });
+        c.append(comp.box);
+      }
       nodes.push(c);
     }
     for (const { t, pos } of placed) {
