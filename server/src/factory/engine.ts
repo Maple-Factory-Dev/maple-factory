@@ -7,10 +7,12 @@
 
 import type { Env } from "../env.ts";
 import { Memories } from "./memories.ts";
+import { MemoryTools, repoFromCwd } from "./memory-tools.ts";
+import type { MemoryCaller } from "./memory-tools.ts";
 import { ArtifactKindValues, PriorityValues, RoleValues, TaskStateValues } from "../wire.ts";
 import type {
   Artifact, ArtifactKind, ChangeRequest, CheckRun, ClientMessage, Comment, DiffCommit, Evidence, Finding, Goal, Hand, OrgRepo, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
-  AgentState, Classification, DocAgentRun, DocThread, McpConnector, NotRunCheck, Priority, PromptAdditions, RiskLevel, ServerToRunner, SessionEnd, Task, WorktreeScripts,
+  AgentState, Classification, DocAgentRun, DocThread, McpConnector, NotRunCheck, Priority, PromptAdditions, RiskLevel, ServerToRunner, SessionEnd, SessionInfo, Task, WorktreeScripts,
   TaskDocSource,
 } from "../wire.ts";
 import { audit, machineHub } from "../util.ts";
@@ -20,7 +22,7 @@ import { byRank, needsSession, Store, type TaskSession } from "./store.ts";
 import { builderPrompt, cleanPrompts, MERGE_ANCHOR, type Moving, plannerPrompt, resumePrompt, reviewerPrompt } from "./prompts.ts";
 import { goalRepos, OWNER, REPO, taskRepo } from "./repos.ts";
 import { affectedBy, emptyForecast, inFlight, refreshOverlaps, type Lane } from "./forecast.ts";
-import { allowed, isDocTool, isPersonalTool, personalTools, toolsFor } from "./tools.ts";
+import { allowed, isDocTool, isMemoryTool, isPersonalTool, personalTools, toolsFor } from "./tools.ts";
 import { filterGoals, filterTasks, findGoal, isOpen } from "./mcp-search.ts";
 import { DocTools } from "./doc-tools.ts";
 import * as asks from "./doc-asks.ts";
@@ -207,9 +209,12 @@ export class Engine {
 
   /** Shared agent memory (MF-391). */
   readonly memories: Memories;
+  /** Agents' recall, remember and forget (MF-392). */
+  private memoryTools: MemoryTools;
 
   constructor(private env: Env, private store: Store, private hooks: Hooks, private intake: Intake, private secrets: Secrets) {
     this.memories = new Memories(store, { broadcast: (m) => hooks.broadcast(m) });
+    this.memoryTools = new MemoryTools(store, this.memories);
     this.docs = new DocTools(env, store, { broadcast: (m) => hooks.broadcast(m), members: () => hooks.members(), notify: (t) => hooks.docMentions?.(t) });
     // Maple's own one-off runs (Draft with AI, Scout, Set up with AI, @Maple in Slack) only stop for an
     // "Everything" pause; Pause New Work holds back tasks, not these.
@@ -3035,7 +3040,7 @@ export class Engine {
       if (name === "tools/list") return { result: { summary: "", data: { tools: personal ? personalTools() : [] } } };
       if (!personal || !isPersonalTool(name)) return { error: "This session isn't working on a factory task." };
       try {
-        return { result: await this.personalTool(known!, name, args) };
+        return { result: await this.personalTool(known!, name, args, live?.session ?? null, sessionId) };
       } catch (e) {
         return { error: e instanceof Error ? e.message : String(e) };
       }
@@ -3055,6 +3060,15 @@ export class Engine {
     if (isDocTool(name)) {
       try {
         return { result: await this.docs.run({ author: task.id, agent: `${task.id} ${s.role}` }, name, args) };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
+    }
+    if (isMemoryTool(name)) {
+      try {
+        const goal = this.store.goal(task.goal) ?? null;
+        const machineName = (await this.hooks.machines()).find((m) => m.id === s.machine)?.name ?? s.machine;
+        return { result: this.memoryTool({ session: sessionId, by: task.owner, task: task.id, role: s.role, agent: `${task.id} ${s.role}`, machine: machineName, repo: taskRepo(task, goal), goal: task.goal }, name, args, task) };
       } catch (e) {
         return { error: e instanceof Error ? e.message : String(e) };
       }
@@ -3079,6 +3093,30 @@ export class Engine {
     }
   }
 
+  /** recall, remember and forget (MF-392). On a task, a remember keeps the session's one "remembered N things"
+   *  timeline event up to date and a forget adds its own; the reason a memory was archived goes to the audit
+   *  log, since the memory's own log has no column for it. */
+  private memoryTool(ctx: MemoryCaller, name: string, args: Record<string, unknown>, task: Task | null): { summary: string; data?: unknown } {
+    const before = this.store.memoryWrites(ctx.session).remembered;
+    const out = this.memoryTools.run(ctx, name, args, now());
+    if (out.wrote === "archived") {
+      this.hooks.waitUntil(audit(this.env, ctx.by, "memory.archived", out.memory!.id, { reason: out.reason, task: ctx.task ?? null, agent: ctx.agent }));
+    }
+    if (task && out.wrote) {
+      const who = ctx.role ?? "agent";
+      const things = (n: number) => `remembered ${n} ${n === 1 ? "thing" : "things"}`;
+      if (out.wrote === "remembered") {
+        const mine = before > 0 ? task.events.findLast((e) => e.who === who && e.text === things(before)) : undefined;
+        if (mine) {
+          mine.text = things(before + 1);
+          mine.at = now();
+        } else this.event(task, who, things(before + 1));
+      } else this.event(task, who, `archived a memory: ${out.reason}`);
+      this.save(task);
+    }
+    return { summary: out.summary, data: out.data };
+  }
+
   /** A repo's setup as get_repo_setup shows it. */
   private repoSetupView(repo: string) {
     const row = this.store.repoSetup(repo);
@@ -3093,8 +3131,15 @@ export class Engine {
   }
 
   /** get_repo_setup and save_repo_setup, from a session on `machine` that isn't a factory task's. */
-  private async personalTool(machine: Machine, name: string, a: Record<string, unknown>): Promise<{ summary: string; data?: unknown }> {
+  private async personalTool(machine: Machine, name: string, a: Record<string, unknown>, session: SessionInfo | null = null, sessionId = ""): Promise<{ summary: string; data?: unknown }> {
     if (isDocTool(name)) return this.docs.run({ author: machine.owner, agent: `agent on ${machine.name}` }, name, a);
+    if (isMemoryTool(name)) {
+      // The repo is the org repo this session's folder is a checkout of; a personal session has no goal.
+      return this.memoryTool({
+        session: sessionId, by: machine.owner, task: null, role: null, agent: `${session?.agent ?? "agent"} on ${machine.name}`, machine: machine.name,
+        repo: repoFromCwd(session?.cwd, this.store.repos()), goal: null,
+      }, name, a, null);
+    }
     const asked = str(a.repo, "repo");
     const repo = this.store.repos().find((r) => r.name.toLowerCase() === asked.trim().toLowerCase())?.name
       ?? fail(`${asked} isn't one of the org's repos.`);

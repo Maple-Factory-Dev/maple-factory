@@ -130,8 +130,42 @@ export const MCP_TASK_TOOL_NAMES = MCP_TASK_TOOLS.map((t) => t.name);
 
 export const isDocTool = (name: string) => DOC_TOOL_NAMES.includes(name);
 
+// Shared agent memory (MF-392; the store is MF-391's): what agents keep between tasks. The engine fills in the
+// scope's key (the session's repo or goal), so a tool only says how widely a memory applies.
+const memoryScope = (description: string) => oneOf(["org", "repo", "goal"], description);
+export const MEMORY_TOOLS: Omit<Tool, "roles">[] = [
+  {
+    name: "recall",
+    description: "Search what the factory's agents have remembered for this org, this repo and this goal: conventions, gotchas, facts and preferences learned on earlier tasks. Call it before you start on something unfamiliar. Returns each memory's id, kind, scope, text and tags, best match first.",
+    inputSchema: obj({
+      q: str("Words to look for. Left out: the most recent memories."),
+      scope: memoryScope("Only memories of this scope. Left out: the org's, this repo's and this goal's together."),
+      limit: int("At most this many (default 10, at most 50)."),
+    }),
+  },
+  {
+    name: "remember",
+    description: "Save one thing a later agent would otherwise have to rediscover: durable and non-obvious, like a convention the code doesn't show, a gotcha that cost you time, or a preference a person stated. Not task status, not what the code or git history already records. One idea per memory, at most 600 characters. A session can write about 10, so keep only what matters; something already remembered isn't saved twice.",
+    inputSchema: obj({
+      text: str("The memory, at most 600 characters, written so it makes sense on its own."),
+      kind: oneOf(["fact", "convention", "gotcha", "preference"], "What sort of thing it is."),
+      scope: memoryScope("How widely it applies: 'repo' for this repo (the usual choice), 'goal' for this goal's work, 'org' for everything the org does."),
+      tags: list(str(""), "Up to 8 short tags to find it by."),
+      supersedes: str("The id of a memory (from recall) this one replaces; that one is archived."),
+    }, ["text", "kind", "scope"]),
+  },
+  {
+    name: "forget",
+    description: "Archive a memory that is wrong or out of date. It's archived, never deleted: a person can still see it and bring it back. To correct one, use remember with supersedes instead.",
+    inputSchema: obj({ id: str("The memory's id, from recall."), reason: str("Why it no longer holds.") }, ["id", "reason"]),
+  },
+];
+export const MEMORY_TOOL_NAMES = MEMORY_TOOLS.map((t) => t.name);
+export const isMemoryTool = (name: string) => MEMORY_TOOL_NAMES.includes(name);
+
 const TOOLS: Tool[] = [
   ...DOC_TOOLS.map((t) => ({ ...t, roles: ["planner", "builder", "reviewer"] as Role[] })),
+  ...MEMORY_TOOLS.map((t) => ({ ...t, roles: ["planner", "builder", "reviewer"] as Role[] })),
   {
     name: "get_task",
     description: "The task you're working on: brief, plan, Done when items and their evidence, comments, change requests and review findings.",
@@ -380,6 +414,7 @@ const promptsSchema = obj({
 /** The tools of a session that isn't working on a factory task: your own Claude Code or Codex on a member's machine. */
 const PERSONAL_TOOLS: Omit<Tool, "roles">[] = [
   ...DOC_TOOLS,
+  ...MEMORY_TOOLS,
   {
     name: "get_repo_setup",
     description: "One of the factory's repos' setup: its worktree scripts (run by the runner with /bin/sh -c in the repo's main checkout), its prompt additions per role (added after the org's and before a goal's), the MAPLE_* variables the scripts get, and who changed them last.",

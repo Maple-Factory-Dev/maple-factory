@@ -121,6 +121,8 @@ export function ftsQuery(text: string, any = false): string | null {
   return words.slice(0, 16).map((w) => `"${w}"*`).join(any ? " OR " : " ");
 }
 
+const MEMORY_WRITES_KEPT_MS = 30 * 24 * 3_600_000;
+
 export const DEFAULT_SETTINGS: MachineSettings = { capacity: null, teamSlots: 0, lendIdle: false, loadCap: 0.85, paused: false, pausedUntil: null };
 
 /** How far back the snapshot sends finished tasks. */
@@ -196,6 +198,7 @@ export class Store {
       CREATE INDEX IF NOT EXISTS memory_log_memory ON memory_log (memory, seq);
       CREATE TRIGGER IF NOT EXISTS memory_log_no_update BEFORE UPDATE ON memory_log BEGIN SELECT RAISE(ABORT, 'memory_log is append-only'); END;
       CREATE TRIGGER IF NOT EXISTS memory_log_no_delete BEFORE DELETE ON memory_log BEGIN SELECT RAISE(ABORT, 'memory_log is append-only'); END;
+      CREATE TABLE IF NOT EXISTS memory_writes (session TEXT PRIMARY KEY, n INTEGER NOT NULL DEFAULT 0, at INTEGER NOT NULL, remembered INTEGER NOT NULL DEFAULT 0);
     `);
     // A repo's prompt additions came later: added once, to a table made before them.
     if (!this.sql.exec<{ name: string }>("PRAGMA table_info(repo_scripts)").toArray().some((c) => c.name === "prompts")) {
@@ -744,6 +747,25 @@ export class Store {
         )
       : this.sql.exec<{ json: string }>(`SELECT m.json FROM memories m WHERE ${where.join(" AND ")} ORDER BY m.updated_at DESC, m.rowid DESC LIMIT ?`, ...args, limit);
     return rows.toArray().map((r) => JSON.parse(r.json));
+  }
+
+  // How many memory writes (remember and forget) each agent session has made (MF-392), kept here so the
+  // per-session cap survives the Durable Object sleeping. `remembered` counts the remembers alone, for the
+  // task timeline's "remembered N things".
+  memoryWrites(session: string): { n: number; remembered: number } {
+    const row = this.sql.exec<{ n: number; remembered: number }>("SELECT n, remembered FROM memory_writes WHERE session = ?", session).toArray()[0];
+    return { n: Number(row?.n ?? 0), remembered: Number(row?.remembered ?? 0) };
+  }
+
+  /** Count one more write for `session` (and one more remember, when it was one); forgets rows older than 30 days. */
+  bumpMemoryWrites(session: string, at: number, remembered = false): { n: number; remembered: number } {
+    this.sql.exec("DELETE FROM memory_writes WHERE at < ?", at - MEMORY_WRITES_KEPT_MS);
+    this.sql.exec(
+      `INSERT INTO memory_writes (session, n, at, remembered) VALUES (?, 1, ?, ?)
+       ON CONFLICT(session) DO UPDATE SET n = n + 1, at = excluded.at, remembered = remembered + excluded.remembered`,
+      session, at, remembered ? 1 : 0,
+    );
+    return this.memoryWrites(session);
   }
 
   // Recurring tasks: a goal's saved prompts that start a new task every interval.
