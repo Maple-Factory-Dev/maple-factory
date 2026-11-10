@@ -68,7 +68,11 @@
             <li>It can comment on a doc, reply to a thread, resolve a thread, suggest an edit and propose a decision.</li>
             <li>It never edits a doc’s text. A suggested edit waits for a person to accept it, and a proposed decision waits for a person to decide it.</li>
             <li>Everything it writes shows as you, with a <em>&lt;client&gt; via MCP</em> badge (like <em>Claude via MCP</em>), so everyone can tell it came from an agent.</li>
-            <li>It sees only docs: not tasks, code, secrets or settings.</li>
+            <li>With the tasks scopes, it can search your factory’s goals and tasks and read one: its brief, plan, done-when items and comments.</li>
+            <li>It can propose tasks in a goal. Each is a draft owned by you that a person sends to planning or deletes; nothing plans or builds until they do.</li>
+            <li>It can comment on a task as you. It can’t approve a plan, ask for changes, merge or cancel.</li>
+            <li>It sees only docs, goals and tasks: not code, session logs, costs, secrets or settings.</li>
+            <li>Try: <em>“Find the task about rate limits in Maple Factory and tell me where it’s at”</em>, or <em>“Propose a task in Maple Factory to rate-limit /mcp per token.”</em></li>
           </ul>
         </section>
 
@@ -77,8 +81,10 @@
           <ul>
             <li><code>docs:read</code>: <code>list_docs</code> and <code>read_doc</code>.</li>
             <li><code>docs:write</code>: <code>comment_on_doc</code>, <code>reply_to_doc_thread</code>, <code>resolve_doc_thread</code>, <code>suggest_doc_edit</code> and <code>propose_decision</code>.</li>
+            <li><code>tasks:read</code>: <code>list_goals</code>, <code>list_tasks</code> and <code>get_task</code>. Both lists search with <code>q</code>; <code>list_tasks</code> also filters by goal, state, owner, priority and effort.</li>
+            <li><code>tasks:write</code>: <code>propose_tasks</code> (drafts only) and <code>comment_on_task</code>.</li>
           </ul>
-          <p>A client gets only the tools its scopes allow. Give it <code>docs:write</code> only if you want it writing as you.</p>
+          <p>A client gets only the tools its scopes allow. Give it <code>docs:write</code> or <code>tasks:write</code> only if you want it writing as you. A token made before the tasks scopes existed keeps only its docs scopes.</p>
         </section>
 
         <section class="sec-part" id="claude" aria-labelledby="claude-title">

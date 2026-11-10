@@ -2,7 +2,7 @@
 // a token: OAuth 2.1 (authorization code + PKCE S256, dynamic client registration, RFC 9728 protected-resource
 // metadata) per the MCP authorization spec, or a personal token a member makes in Settings › Connected apps.
 // Tokens are `mfp_…` (with `mfr_…` refresh tokens), kept as sha256 only, accepted only at /mcp (currentMember never
-// takes them) and carry docs:read and/or docs:write. App tokens (`mft_…`) are never accepted here. A member's
+// takes them) and carry some of docs:read, docs:write, tasks:read and tasks:write. App tokens (`mft_…`) are never accepted here. A member's
 // tokens go with revokeMember (auth.ts) and are refused once their access was revoked. See SECURITY-AUDIT.md §MCP.
 
 import type { Env } from "./env.ts";
@@ -10,8 +10,15 @@ import { currentMember, revoked, stillMember, toMember, type MemberRow } from ".
 import type { Member } from "./wire.ts";
 import { audit, b64url, html, isLocal, publicOrigin as configuredOrigin, randomToken, readCapped, sha256, sign, text, verify } from "./util.ts";
 
-export const SCOPES = ["docs:read", "docs:write"] as const;
+export const SCOPES = ["docs:read", "docs:write", "tasks:read", "tasks:write"] as const;
 export type Scope = (typeof SCOPES)[number];
+/** What each scope lets a client do, as the consent page says it. */
+export const SCOPE_ALLOWS: Record<Scope, string> = {
+  "docs:read": "List and read the org's shared docs",
+  "docs:write": "Comment on docs, reply to and resolve threads, suggest edits and propose decisions (never edit text directly)",
+  "tasks:read": "List, search and read goals and tasks: brief, plan and comments",
+  "tasks:write": "Propose draft tasks a person sends to planning, and comment on tasks as you",
+};
 const ACCESS_TTL = 3600 * 1000;
 const REFRESH_TTL = 30 * 24 * 3600 * 1000;
 const CODE_TTL = 60 * 1000;
@@ -168,7 +175,7 @@ export async function handleMcpAuth(request: Request, env: Env): Promise<Respons
   if (ours && request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
 
   if (path === "/.well-known/oauth-protected-resource" || path === "/.well-known/oauth-protected-resource/mcp") {
-    return json({ resource: `${origin}/mcp`, authorization_servers: [origin], scopes_supported: SCOPES, bearer_methods_supported: ["header"], resource_name: "Maple Factory docs" });
+    return json({ resource: `${origin}/mcp`, authorization_servers: [origin], scopes_supported: SCOPES, bearer_methods_supported: ["header"], resource_name: "Maple Factory" });
   }
   if (path === "/.well-known/oauth-authorization-server" || path === "/.well-known/oauth-authorization-server/mcp") {
     return json({
@@ -313,7 +320,7 @@ async function authorize(request: Request, env: Env, url: URL, origin: string): 
   const hidden = (k: string, v: string) => `<input type="hidden" name="${k}" value="${esc(v)}">`;
   const fields = ["client_id", "redirect_uri", "response_type", "code_challenge", "code_challenge_method", "state", "scope", "resource"]
     .filter((k) => params.get(k) !== null).map((k) => hidden(k, params.get(k)!)).join("");
-  const can = scopes.map((s) => `<li>${s === "docs:read" ? "List and read the org's shared docs" : "Comment on docs, reply to and resolve threads, suggest edits and propose decisions (never edit text directly)"}</li>`).join("");
+  const can = scopes.map((s) => `<li>${SCOPE_ALLOWS[s]}</li>`).join("");
   return html(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Connect ${esc(c.name)}</title>
 <style>body{font:15px/1.5 system-ui,sans-serif;max-width:32rem;margin:10vh auto;padding:0 16px;color:#222;background:#fafafa}@media(prefers-color-scheme:dark){body{background:#161616;color:#eee}}
 .card{border:1px solid #8884;border-radius:12px;padding:20px 24px}button{font:inherit;padding:8px 16px;border-radius:8px;border:1px solid #8886;margin-right:8px;cursor:pointer}
