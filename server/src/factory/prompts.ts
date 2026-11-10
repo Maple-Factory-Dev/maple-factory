@@ -1,7 +1,7 @@
 // What each factory session is told. Agents report back only through the `maple` MCP tools
 // (tools.ts); the prompts say which, and when to stop.
 
-import type { Goal, PromptAdditions, RiskClassifier, Role, SensitiveArea, Task } from "../wire.ts";
+import type { Decision, Goal, PromptAdditions, RiskClassifier, Role, SensitiveArea, Task } from "../wire.ts";
 import { goalRepos, taskRepo } from "./repos.ts";
 import type { BudgetUse } from "./policy.ts";
 
@@ -10,7 +10,30 @@ export const MERGE_ANCHOR = "Didn't merge into";
 
 const plain = (task: Task) => `${task.id} · ${task.title}`;
 
-function brief(task: Task, goal: Goal | null) {
+/** "## From doc" (MF-368): where a task made from a doc came from. The planner gets the section, and for a
+ *  decision its question, chosen option and rationale (`decision`, read live from the store); the builder and
+ *  reviewer get the title and link line only. */
+export function fromDocSection(task: Task, full: boolean, decision: Decision | null = null): string | null {
+  const src = task.fromDoc;
+  if (!src) return null;
+  const where = [src.docTitle, src.heading].filter(Boolean).join(" › ");
+  const link = `"${where}" (doc ${src.doc}${src.decision ? `, decision ${src.decision}` : ""})`;
+  if (!full) return `\n## From doc\nMade from ${link}.`;
+  const lines = [`\n## From doc\nThis task was made from ${link}. The section it came from, as it read then:`, "", "<doc-section>", src.excerpt, "</doc-section>"];
+  if (src.quote) lines.push("", `The selected text: "${src.quote}"`);
+  if (decision) {
+    const chosen = decision.options.find((o) => o.id === decision.chosen);
+    lines.push("", `Decision (${decision.status}): ${decision.question}`);
+    if (chosen) lines.push(`Chosen: ${chosen.label}${chosen.note ? ` — ${chosen.note}` : ""}`);
+    if (decision.rationale.trim()) lines.push(`Rationale: ${decision.rationale.trim()}`);
+    if (decision.why?.trim()) lines.push(`Why it was accepted: ${decision.why.trim()}`);
+    if (decision.status !== "accepted") lines.push("It's no longer the accepted decision; check the doc before planning on it.");
+  }
+  lines.push("", `\`read_doc {doc: "${src.doc}"}\` shows the doc as it is now.`);
+  return lines.join("\n");
+}
+
+function brief(task: Task, goal: Goal | null, from: string | null = fromDocSection(task, false)) {
   return [
     `Task ${plain(task)}`,
     goal ? `Goal: ${goal.name}${goal.summary ? ` — ${goal.summary}` : ""}` : null,
@@ -22,6 +45,7 @@ function brief(task: Task, goal: Goal | null) {
     task.tickets.filter((t) => t.asContext).length
       ? "\n## Linked tickets\n" + task.tickets.filter((t) => t.asContext).map((t) => `- ${t.key}: ${t.title} (${t.status})`).join("\n")
       : null,
+    from,
   ].filter((l) => l !== null).join("\n");
 }
 
@@ -96,11 +120,11 @@ function riskChecks(checks: SensitiveArea[]) {
   return `\n\n## Risk checks\nThe org's checks; each one that applies raises the change to at least its level. Path checks are also matched against the diff's files once there's code.\n${on.map(line).join("\n")}`;
 }
 
-export function plannerPrompt(task: Task, goal: Goal | null, org: PromptAdditions | null = null, inFlight: Moving[] = [], repo: PromptAdditions | null = null, checks: SensitiveArea[] = [], routing: Routing | null = null): string {
+export function plannerPrompt(task: Task, goal: Goal | null, org: PromptAdditions | null = null, inFlight: Moving[] = [], repo: PromptAdditions | null = null, checks: SensitiveArea[] = [], routing: Routing | null = null, decision: Decision | null = null): string {
   const others = goal ? goalRepos(goal).filter((r) => r.toLowerCase() !== taskRepo(task, goal)?.toLowerCase()) : [];
   return `You are the planner for a software factory task. You write the plan; you do NOT change code.
 
-${brief(task, goal)}${extra("planner", org, goal, repo)}${riskChecks(checks)}${moving(inFlight)}${comments(task)}${changes(task)}${
+${brief(task, goal, fromDocSection(task, true, decision))}${extra("planner", org, goal, repo)}${riskChecks(checks)}${moving(inFlight)}${comments(task)}${changes(task)}${
     others.length
       ? `\n\n## The goal's other repos\n${others.map((r) => `- ${r}`).join("\n")}\nThis task changes ${taskRepo(task, goal)} only. If the work also needs changes in one of these, plan just this repo's part and list each other repo's part in \`otherRepos\` (repo, title, brief): it becomes its own task, planned and built there once this one merges.`
       : ""

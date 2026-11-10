@@ -117,7 +117,6 @@ opens one. One editor, one sync path, no native CRDT.
 ## Deferred
 
 - Hosting the embed in the iOS app.
-- Decisions recorded from a doc, and turning parts of it into tasks.
 - An MCP server so agents can read and edit docs.
 - Search, history/versions browsing, and permissions finer than "org members".
 
@@ -215,6 +214,15 @@ The server owns decisions, not the doc text. OrgHub keeps each decision's curren
 - Agents get `propose_decision` with the other doc tools. It records a proposed decision with `agent` set and inserts the card after the given block or quote, or at the end (DocHub `POST /insert-decision`). No agent tool accepts or rejects; only people decide. `read_doc` lists a doc's decisions.
 - Web: `#/decisions` lists every decision with Open / Accepted / Rejected / Superseded / All chips and Person and Goal filters. A row links to `#/docs/<doc>?decision=<id>`, which scrolls to and flashes the card, and History shows the log. The nav entry is badged with the open count.
 - Apps: `FeedState.decisions`, `openDecisionTotal` and `openDecisionCount(goal:)`. The Mac sidebar has a Decisions row badged with open decisions and a native list, and a goal's Docs section shows its open-decision badge. The iPhone goal overview shows the count.
+
+## Tasks from docs (MF-368)
+
+A doc's plan can turn into factory work without copying it out. **Make tasks** opens from three places: the bubble menu over a selection, a hover button on any heading (that heading's section, up to the next heading of the same or a higher level), and an accepted decision's card. The dialog is prefilled from the editor's own Markdown serializer and split by `docs-editor/src/split.js`, the same code the server uses: one task, one per sub-heading, or one per list item. Titles and briefs can be edited, "Each waits on the one before" chains them with `after`, they can share an effort name (the heading by default), and a goal picker shows when the doc has no goal.
+
+- Client message `doc.makeTasks {doc, anchor? | decision?, goal?, tasks: [{title, brief}] (1–20), chain, effort?}`. Web sends it on its socket; the Mac embed relays it as a `command`, like decisions.
+- The engine checks everything before making anything (`checkSource` in `server/src/factory/doc-tasks.ts`). It refuses archived docs, a doc with no goal when none was picked, a goal that isn't the doc's, a decision that isn't accepted or belongs to another doc, an empty list or more than 20 tasks, and titles or briefs over the limit. It then reads the source in DocHub (`POST /section` → `sectionAt`) and makes drafts through `makeDrafts`, the same path `propose_tasks` and `submit_findings` use. Each draft gets `Task.fromDoc` (doc, title, heading, quote, decision, and the section's Markdown capped at 8k) and a closing line in its brief: `From doc [<title> › <heading>](#/docs/<id>?decision=<id>)`. Live task embeds go in right after the source (`POST /insert-tasks` → `insertTaskEmbeds`), skipping ids already in the doc.
+- The planner's prompt gets a "## From doc" block: the excerpt, the selected text, and for a decision its question, chosen option, rationale and why, read live from the store. It also says `read_doc` shows the doc as it is now. Builder and reviewer get only the title and link line.
+- The task page shows "From doc <title> › <heading>" (and "Decision: <question>") next to "Follow-up of". An accepted decision's card in the doc and its row on `#/decisions` list the tasks made from it, live from the feed, each with its state.
 
 ## Side conversations (MF-366)
 

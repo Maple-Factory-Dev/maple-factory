@@ -1053,10 +1053,22 @@ function ownerControl(t) {
 function priorityLine(t) {
   const open = t.state !== "merged" && t.state !== "cancelled" && t.state !== "closed";
   const from = t.followUpOf && h("span", {}, " · Follow-up of ", h("a", { href: `#/t/${t.followUpOf.split("#")[0]}` }, t.followUpOf));
-  if (!open) return (t.priority || from) && h("div", { class: "muted", style: "font-size:13px;margin-top:4px" }, "Priority: ", t.priority ? t.priority.toUpperCase() : "none", from);
+  const doc = fromDocLink(t);
+  if (!open) return (t.priority || from || doc) && h("div", { class: "muted", style: "font-size:13px;margin-top:4px" }, "Priority: ", t.priority ? t.priority.toUpperCase() : "none", from, doc);
   return h("div", { class: "muted row prio-line", style: "font-size:13px;margin-top:4px;gap:6px" }, "Priority",
     prioritySelect(t.priority, (p) => send(p ? { type: "task.edit", id: t.id, priority: p } : { type: "task.edit", id: t.id, clearPriority: true }), { title: "How soon it should be done; a P0 goes to the front of the queue" }),
-    from);
+    from, doc);
+}
+
+/** MF-368: "From doc <title> › <heading>" (and "Decision: <question>"), linked back to the doc or its decision card. */
+function fromDocLink(t) {
+  const src = t.fromDoc;
+  if (!src) return null;
+  const title = (state.docs ?? []).find((d) => d.id === src.doc)?.title || src.docTitle;
+  const decision = src.decision ? (state.decisions ?? []).find((d) => d.id === src.decision) : null;
+  return h("span", { "data-from-doc": src.doc }, " · From doc ",
+    h("a", { href: `#/docs/${src.doc}${src.decision ? `?decision=${src.decision}` : ""}` }, [title, src.heading].filter(Boolean).join(" › ")),
+    decision ? h("span", {}, " · Decision: ", h("a", { href: `#/docs/${src.doc}?decision=${src.decision}` }, decision.question)) : null);
 }
 
 function effortLine(t) {

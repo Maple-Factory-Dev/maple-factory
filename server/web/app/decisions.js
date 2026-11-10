@@ -48,6 +48,13 @@ export function createDecisions({ state, h, send, icon, ago }) {
         : h("div", { class: "card empty" }, icon("scale", { size: 28 }), status === "open" ? "No open decisions." : "No decisions match."));
   }
 
+  /** MF-368: the tasks made from an accepted decision, live from the feed, with each one's state. */
+  function madeFrom(d) {
+    const made = [...(state.tasks?.values?.() ?? [])].filter((t) => t.fromDoc?.decision === d.id);
+    return made.length ? h("div", { class: "sub decision-tasks", "data-decision-tasks": d.id }, "Tasks: ",
+      made.map((t, i) => h("span", {}, i ? ", " : "", h("a", { href: `#/t/${t.id}` }, t.id), " ", h("span", { class: `pill state-${t.state}` }, t.state)))) : null;
+  }
+
   function rowView(d, docTitle, goalName) {
     const chosen = d.options.find((o) => o.id === d.chosen)?.label;
     const who = d.status === "proposed"
@@ -69,6 +76,7 @@ export function createDecisions({ state, h, send, icon, ago }) {
           h("a", { href: `#/docs/${replacement?.doc ?? d.doc}?decision=${d.supersededBy}`, "data-superseded-by": d.supersededBy }, replacement ? `“${replacement.question}”` : "a newer decision"),
           replacement?.decidedAt ? ` ${ago(replacement.decidedAt)}` : "")
         : null,
+      madeFrom(d),
       h("button", { class: "btn ghost decision-history-toggle", type: "button", "aria-expanded": String(showing), onclick: () => {
         if (showing) opened.delete(d.id); else { opened.add(d.id); send({ type: "decision.log", id: d.id }); }
         location.hash = location.hash; // nudge a render

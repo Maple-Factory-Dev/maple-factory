@@ -35,7 +35,7 @@ export function createDocs({ state, h, send, render, toast, icon, ago, allTasks 
   const goalName = (id) => state.goals.find((g) => g.id === id)?.name;
 
   /** The editor's view of a task: what task embeds draw (MF-363). */
-  const taskView = (t) => ({ id: t.id, title: t.title, state: t.state, pr: t.pr ? { number: t.pr.number, url: t.pr.url ?? null, state: t.pr.state } : null, assignee: t.owner ?? null, goal: t.goal });
+  const taskView = (t) => ({ id: t.id, title: t.title, state: t.state, pr: t.pr ? { number: t.pr.number, url: t.pr.url ?? null, state: t.pr.state } : null, assignee: t.owner ?? null, goal: t.goal, fromDoc: t.fromDoc ?? null });
 
   /** Called (by app.js) after a task.updated or snapshot is applied: open task embeds redraw. */
   function tasksChanged() {
@@ -113,6 +113,9 @@ export function createDocs({ state, h, send, render, toast, icon, ago, allTasks 
         // Decisions (MF-367): from the feed; propose / edit / accept / reject go straight to the socket.
         decisions: () => (state.decisions ?? []).filter((d) => d.doc === id),
         sendDecisionCommand: (cmd) => { if (!send(cmd)) toast("Not connected; try again in a moment."); },
+        // Make tasks (MF-368): the goal picker when the doc has none.
+        goals: () => state.goals.filter((g) => !g.archived).map((g) => ({ id: g.id, name: g.name })),
+        docGoal: () => (state.docs ?? []).find((d) => d.id === id)?.goal ?? null,
         onEvent: (name, data) => {
           if (open?.id !== id) return;
           if (name === "status") open.status = data.status;

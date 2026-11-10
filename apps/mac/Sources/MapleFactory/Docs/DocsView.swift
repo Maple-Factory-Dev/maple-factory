@@ -285,8 +285,10 @@ struct DocPage: View {
                 .font(.system(size: 12)).padding(.horizontal, 16).padding(.vertical, 8).background(Theme.raised)
             }
             if let source {
-                DocEditorView(docId: id, source: source, me: me, members: members, tasks: tasks,
-                              threadsJSON: threadsJSON, decisionsJSON: decisionsJSON, dark: scheme == .dark,
+                DocEditorView(docId: id, source: source, me: me, members: members, tasksJSON: tasksJSON,
+                              threadsJSON: threadsJSON, decisionsJSON: decisionsJSON,
+                              goals: client.goals.filter { $0.archived != true }.map { ["id": $0.id, "name": $0.name] },
+                              docGoal: doc?.goal, dark: scheme == .dark,
                               status: status, reloadToken: reload,
                               focusOnSync: state.focusDoc == id,
                               onFocused: { if state.focusDoc == id { state.focusDoc = nil } },
@@ -334,8 +336,19 @@ struct DocPage: View {
         client.members.map { ["login": $0.login, "name": $0.name ?? $0.login, "avatar": $0.avatarUrl as Any] }
     }
 
-    private var tasks: [[String: Any]] {
-        client.isSignedIn ? client.tasks.prefix(500).map { ["id": $0.id, "title": $0.title] } : state.tasks.prefix(200).map { ["id": $0.id, "title": $0.title] }
+    /// Tasks for the # menu, task embeds and decision cards (MF-368: state, goal and fromDoc too), JSON-encoded and
+    /// pushed with `mapleDocs.updateTasks` when they change.
+    private var tasksJSON: String {
+        let embed = client.isSignedIn
+            ? client.tasks.prefix(500).map { EmbedTask(id: $0.id, title: $0.title, state: $0.state.rawValue, goal: $0.goal, fromDoc: $0.fromDoc) }
+            : state.tasks.prefix(200).map { EmbedTask(id: $0.id, title: $0.title, state: nil, goal: nil, fromDoc: nil) }
+        guard let data = try? JSONEncoder().encode(embed) else { return "[]" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private struct EmbedTask: Encodable {
+        let id: String, title: String, state: String?, goal: String?
+        let fromDoc: Wire.TaskDocSource?
     }
 
     private func titleBar(_ doc: Wire.Doc?) -> some View {

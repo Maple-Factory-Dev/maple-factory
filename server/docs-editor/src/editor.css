@@ -258,3 +258,20 @@
 .doc-agent-msg { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; flex: 1 1 0; min-width: 0; }
 .doc-agent-stop { margin-left: auto; padding: 1px 8px; font-size: 11px; }
 @keyframes doc-agent-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.8); } }
+
+/* Make tasks (MF-368) */
+.doc-heading-maketasks { margin-left: 10px; font: 500 12px/1.6 var(--font, system-ui); padding: 1px 8px; border-radius: 6px; border: 1px solid var(--border, #ddd); background: var(--bg, #fff); color: var(--muted, #666); vertical-align: middle; cursor: pointer; opacity: 0; transition: opacity .12s; }
+.doc-prose h1:hover .doc-heading-maketasks, .doc-prose h2:hover .doc-heading-maketasks, .doc-prose h3:hover .doc-heading-maketasks,
+.doc-prose h4:hover .doc-heading-maketasks, .doc-prose h5:hover .doc-heading-maketasks, .doc-prose h6:hover .doc-heading-maketasks, .doc-heading-maketasks:focus { opacity: 1; }
+.doc-maketasks { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; background: rgba(0,0,0,.35); padding: 16px; }
+.doc-maketasks-card { width: min(640px, 100%); max-height: 85vh; overflow: auto; display: grid; gap: 10px; padding: 16px; border-radius: 12px; background: var(--bg, #fff); color: var(--fg, #111); box-shadow: 0 12px 40px rgba(0,0,0,.25); }
+.doc-maketasks-modes { display: flex; flex-wrap: wrap; gap: 12px; font-size: 13px; }
+.doc-maketasks-rows { display: grid; gap: 8px; }
+.doc-maketasks-row { display: grid; grid-template-columns: 1fr auto; gap: 4px 6px; }
+.doc-maketasks-row .doc-maketasks-brief { grid-column: 1; }
+.doc-maketasks-title, .doc-maketasks-brief, .doc-maketasks-effort, .doc-maketasks-goal { font: inherit; padding: 6px 8px; border: 1px solid var(--border, #ddd); border-radius: 6px; background: var(--bg, #fff); color: inherit; }
+.doc-maketasks-title { font-weight: 600; }
+.doc-maketasks-opt { font-size: 13px; }
+.doc-maketasks-error { color: var(--danger, #c33); font-size: 13px; min-height: 1em; }
+.doc-maketasks-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.doc-decision-tasks { margin: 6px 0 0; padding-left: 18px; font-size: 13px; }

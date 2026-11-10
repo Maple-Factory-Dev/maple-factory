@@ -15,6 +15,7 @@ import { markdownPasteSlice, toMarkdown, fromMarkdown, taskResolver } from "./ma
 import { SlashMenu, mentionSuggestions, bubbleMenuElement } from "./menus.js";
 import { nodeForUpload } from "./nodes.js";
 import { proposeDecision, flash as flashDecision } from "./decisions.js";
+import { openMakeTasks, selectionSource, HeadingMakeTasks } from "./make-tasks.js";
 import { ensureStarterBlock, STARTER_ORIGIN } from "./starter.js";
 import { commentHighlights, createCommentRail, anchorFromRange, resolveAnchor, mappingOf } from "./comments.js";
 
@@ -79,8 +80,10 @@ function localProvider(ydoc) {
  * onEvent also gets threads {open} for badges.
  * Decisions (MF-367): decisions() → Decision[]; sendDecisionCommand(msg) relays decision.propose / edit /
  * accept / reject (no /decision without it); call handle.decisionsChanged() when decisions() changes.
+ * Make tasks (MF-368): doc.makeTasks goes out through sendDecisionCommand too; goals() → [{id, name}] and docGoal()
+ * (the doc's goal id) let the dialog ask for a goal when the doc has none.
  */
-export function createDocEditor({ el, docId, me, members = () => [], tasks = () => [], threads = () => [], sendThreadCommand = null, decisions = () => [], sendDecisionCommand = null, upload = null, mermaidPage = "/app/mermaid/diagram.html", theme, token, origin = location.origin, onEvent = () => {}, demo = null }) {
+export function createDocEditor({ el, docId, me, members = () => [], tasks = () => [], threads = () => [], sendThreadCommand = null, decisions = () => [], sendDecisionCommand = null, goals = () => [], docGoal = () => null, upload = null, mermaidPage = "/app/mermaid/diagram.html", theme, token, origin = location.origin, onEvent = () => {}, demo = null }) {
   const ydoc = new Y.Doc();
   let provider;
   if (demo) {
@@ -118,7 +121,8 @@ export function createDocEditor({ el, docId, me, members = () => [], tasks = () 
   });
   // The node views' callbacks (nodes.js).
   const host = {
-    tasks, members, docId, mermaidPage, origin, listeners: new Set(), decisions, me: me.login,
+    tasks, members, docId, mermaidPage, origin, listeners: new Set(), decisions, me: me.login, goals, docGoal,
+    sendCommand: sendDecisionCommand, makeTasks: (source) => openMakeTasks(host, source),
     onEvent: (name, data) => (name === "decision" ? sendDecisionCommand?.(data) : onEvent(name, data)),
   };
   /** Uploads files and inserts each as an image or file chip at `pos` (the selection when absent). */
@@ -152,6 +156,7 @@ export function createDocEditor({ el, docId, me, members = () => [], tasks = () 
       // The empty doc's hint (MF-382): marks the first empty paragraph `is-editor-empty`; editor.css draws the text.
       Placeholder.configure({ placeholder: PLACEHOLDER }),
       SlashMenu,
+      HeadingMakeTasks(host, ydoc, () => editor),
       TaskRefTyping(resolver),
       Extension.create({ name: "docComments", addProseMirrorPlugins: () => [commentHighlights(() => ({ threads: sendThreadCommand ? threads() : [], active: rail?.active(), ydoc }))] }),
       BubbleMenu.configure({ element: bubble, shouldShow: ({ editor, from, to }) => (from !== to || editor.isActive("table")) && !editor.isActive("codeBlock") }),
@@ -195,7 +200,7 @@ export function createDocEditor({ el, docId, me, members = () => [], tasks = () 
     rail = createCommentRail({ editor, ydoc, docId, threads, members, send: sendThreadCommand, onCount: (open) => onEvent("threads", { open }) });
     shell.append(rail.rail);
   }
-  bubble.append(bubbleMenuElement(editor, rail ? () => rail.startThread() : null, rail ? () => rail.startThread(true) : null));
+  bubble.append(bubbleMenuElement(editor, rail ? () => rail.startThread() : null, rail ? () => rail.startThread(true) : null, sendDecisionCommand ? () => openMakeTasks(host, selectionSource(editor, ydoc)) : null));
 
   const peers = () => {
     const out = new Map();

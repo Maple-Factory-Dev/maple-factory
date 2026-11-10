@@ -1567,6 +1567,29 @@ data class ServerUpdate(
     val how: String,
 )
 
+/** The doc section or accepted decision a task was made from (MF-368): `doc.makeTasks` sets it, and the task page, the decision card and the planner's prompt read it. */
+@Serializable
+data class TaskDocSource(
+    val doc: String,
+    /** The doc's title when the task was made. */
+    val docTitle: String,
+    /** The heading whose section it came from. */
+    val heading: String? = null,
+    /** The selected text it came from, when it came from a selection. */
+    val quote: String? = null,
+    /** The accepted decision it came from. */
+    val decision: String? = null,
+    /** The section as Markdown, taken on the server when the task was made (at most 8,000 characters). */
+    val excerpt: String,
+)
+
+/** One task for doc.makeTasks to make. */
+@Serializable
+data class MakeTaskItem(
+    val title: String,
+    val brief: String,
+)
+
 /** One draft for task.followUp to make. */
 @Serializable
 data class FollowUpItem(
@@ -1751,6 +1774,8 @@ data class Task(
     val priority: Priority? = null,
     /** What it follows up: one of a task's review findings (MF-98#f3), or the task itself (MF-98) for a note. None: not a follow-up (or an older server). */
     val followUpOf: String? = null,
+    /** The doc section or decision it was made from (MF-368). None: not made from a doc (or an older server). */
+    val fromDoc: TaskDocSource? = null,
     /** The factory auto-merges at this time (ms) unless someone holds it; null when nothing is counting down. */
     val mergeAt: Long? = null,
     /** Overlaps with other in-flight tasks and conflicts with its base, kept current as tasks merge. */
@@ -3602,6 +3627,23 @@ sealed class ClientMessage {
     data class DecisionLog(
         val id: String,
     ) : ClientMessage()
+    /** Make draft tasks from a doc section, a selection or an accepted decision (MF-368), in the doc's goal (or `goal` when the doc has none). Each gets `fromDoc` and a link back in its brief, and live embeds go into the doc after the source. Nothing is made if anything is refused. */
+    @Serializable
+    data class DocMakeTasks(
+        val doc: String,
+        /** The selection or heading it came from; none with no decision: the whole doc. */
+        val anchor: dev.maplefactory.wire.DocAnchor? = null,
+        /** An accepted decision in this doc. */
+        val decision: String? = null,
+        /** Only when the doc has no goal. */
+        val goal: String? = null,
+        /** 1 to 20. */
+        val tasks: List<dev.maplefactory.wire.MakeTaskItem> = emptyList(),
+        /** Each waits on the one before (`after`). */
+        val chain: Boolean,
+        /** Group them under this effort name. */
+        val effort: String? = null,
+    ) : ClientMessage()
     /** The task this app is showing, if any, for teammates' presence. */
     @Serializable
     data class Presence(
@@ -4180,6 +4222,7 @@ sealed class ClientMessage {
             "decision.accept" -> json.decodeFromJsonElement(DecisionAccept.serializer(), body)
             "decision.reject" -> json.decodeFromJsonElement(DecisionReject.serializer(), body)
             "decision.log" -> json.decodeFromJsonElement(DecisionLog.serializer(), body)
+            "doc.makeTasks" -> json.decodeFromJsonElement(DocMakeTasks.serializer(), body)
             "presence" -> json.decodeFromJsonElement(Presence.serializer(), body)
             "session.open" -> json.decodeFromJsonElement(SessionOpen.serializer(), body)
             "session.attach" -> json.decodeFromJsonElement(SessionAttach.serializer(), body)
@@ -4291,6 +4334,7 @@ sealed class ClientMessage {
             is DecisionAccept -> "decision.accept" to json.encodeToJsonElement(DecisionAccept.serializer(), value)
             is DecisionReject -> "decision.reject" to json.encodeToJsonElement(DecisionReject.serializer(), value)
             is DecisionLog -> "decision.log" to json.encodeToJsonElement(DecisionLog.serializer(), value)
+            is DocMakeTasks -> "doc.makeTasks" to json.encodeToJsonElement(DocMakeTasks.serializer(), value)
             is Presence -> "presence" to json.encodeToJsonElement(Presence.serializer(), value)
             is SessionOpen -> "session.open" to json.encodeToJsonElement(SessionOpen.serializer(), value)
             is SessionAttach -> "session.attach" to json.encodeToJsonElement(SessionAttach.serializer(), value)

@@ -40,11 +40,15 @@ struct DocEditorView: NSViewRepresentable {
     let source: Source
     let me: [String: Any]
     let members: [[String: Any]]
-    let tasks: [[String: Any]]
+    /// Tasks, JSON-encoded (MF-368: with state and fromDoc): pushed with `mapleDocs.updateTasks` when they change.
+    var tasksJSON: String = "[]"
     /// The doc's comment threads, JSON-encoded (MF-364): pushed with `mapleDocs.updateThreads` when they change.
     var threadsJSON: String = "[]"
     /// The doc's decisions, JSON-encoded (MF-367): pushed with `mapleDocs.updateDecisions` when they change.
     var decisionsJSON: String = "[]"
+    /// Goals the Make tasks dialog can pick (MF-368) when the doc has none, and the doc's own goal.
+    var goals: [[String: String]] = []
+    var docGoal: String? = nil
     let dark: Bool
     let status: DocEditorStatus
     /// Bumped by Retry to reload the page.
@@ -82,10 +86,14 @@ struct DocEditorView: NSViewRepresentable {
         let themeChanged = coordinator.view?.dark != dark
         let threadsChanged = coordinator.view?.threadsJSON != threadsJSON
         let decisionsChanged = coordinator.view?.decisionsJSON != decisionsJSON
+        let tasksChanged = coordinator.view?.tasksJSON != tasksJSON
+        let goalsChanged = coordinator.view?.goals != goals || coordinator.view?.docGoal != docGoal
         coordinator.update(self)
         if reload { coordinator.loadPage() } else if themeChanged { coordinator.setTheme() }
         if !reload && threadsChanged { coordinator.pushThreads() }
         if !reload && decisionsChanged { coordinator.pushDecisions() }
+        if !reload && tasksChanged { coordinator.pushTasks() }
+        if !reload && goalsChanged { coordinator.pushGoals() }
     }
 
     static func dismantleNSView(_ web: WKWebView, coordinator: Coordinator) {
@@ -179,9 +187,22 @@ struct DocEditorView: NSViewRepresentable {
                                      in: nil, in: .page) { _ in }
         }
 
+        func pushTasks() {
+            guard let view else { return }
+            web?.callAsyncJavaScript("window.mapleDocs?.updateTasks(JSON.parse(json))", arguments: ["json": view.tasksJSON],
+                                     in: nil, in: .page) { _ in }
+        }
+
+        func pushGoals() {
+            guard let view else { return }
+            web?.callAsyncJavaScript("window.mapleDocs?.updateGoals(goals, docGoal)", arguments: ["goals": view.goals, "docGoal": view.docGoal ?? NSNull()],
+                                     in: nil, in: .page) { _ in }
+        }
+
         private func load() {
             guard let view, let web else { return }
-            var args: [String: Any] = ["docId": view.docId, "me": view.me, "members": view.members, "tasks": view.tasks]
+            var args: [String: Any] = ["docId": view.docId, "me": view.me, "members": view.members, "goals": view.goals, "docGoal": view.docGoal ?? NSNull()]
+            if let tasks = try? JSONSerialization.jsonObject(with: Data(view.tasksJSON.utf8)) { args["tasks"] = tasks }
             if let threads = try? JSONSerialization.jsonObject(with: Data(view.threadsJSON.utf8)) { args["threads"] = threads }
             if let decisions = try? JSONSerialization.jsonObject(with: Data(view.decisionsJSON.utf8)) { args["decisions"] = decisions }
             switch view.source {

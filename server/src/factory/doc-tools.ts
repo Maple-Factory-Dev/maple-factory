@@ -6,6 +6,7 @@
 import type { Env } from "../env.ts";
 import type { Decision, DecisionOption, Doc, DocAnchor, DocThread, Member, ServerToClient } from "../wire.ts";
 import type { Store } from "./store.ts";
+import type { DocSection } from "../../docs-editor/src/headless.js";
 import { docHub } from "../doc-routes.ts";
 import * as threads from "./doc-threads.ts";
 import * as decisions from "./decisions.ts";
@@ -152,6 +153,19 @@ export class DocTools {
       return { summary: `Resolved ${t.id}.`, data: { thread: t.id } };
     }
     return fail(`${name} isn't a doc tool.`);
+  }
+
+  // Tasks from docs (MF-368): the engine's doc.makeTasks reads the source and inserts the embeds through these.
+
+  /** The section, selection or decision card tasks are made from, read in DocHub. */
+  section(doc: string, at: { anchor: DocAnchor | null; decision: string | null }) {
+    return this.hub<DocSection>(doc, "/section", at);
+  }
+
+  /** Live task embeds after `block` (the section's last block), or at the end; ids already there are skipped. */
+  async insertTasks(doc: string, ids: string[], block: string | null) {
+    if (!ids.length) return { inserted: [] as string[] };
+    return this.hub<{ inserted: string[] }>(doc, "/insert-tasks", { ids, block });
   }
 
   // Decisions (MF-367). Every change goes through record(), which writes the row and appends one log event.
