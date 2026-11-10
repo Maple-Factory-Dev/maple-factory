@@ -126,9 +126,31 @@ struct CheckSummary: Equatable {
     /// "4 of 5 passed".
     var detail: String { "\(passed) of \(total) passed" }
 
+    /// Every check passed, and there's at least one: CI no longer holds the merge.
+    var ready: Bool { tone == .passed }
+
     /// The bar's segments in order, with their share of it.
     var segments: [(status: CICheck.Status, count: Int)] {
         [(.passed, passed), (.failed, failed), (.running, running), (.queued, queued)].filter { $0.1 > 0 }
+    }
+}
+
+/// A task row's GitHub-style CI status: the summary icon and a "3/5" passed count, the headline as its tooltip.
+struct ChecksBadge: View {
+    let checks: [CICheck]
+
+    var body: some View {
+        let summary = CheckSummary(checks)
+        HStack(spacing: 3) {
+            PullRequestCard.summaryIcon(summary.tone)
+            if summary.total > 0 {
+                Text("\(summary.passed)/\(summary.total)").font(.system(size: 11, design: .monospaced))
+            }
+        }
+        .fixedSize()
+        .help(summary.headline)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Checks: \(summary.headline), \(summary.detail)")
     }
 }
 
