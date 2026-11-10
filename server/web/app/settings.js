@@ -236,7 +236,7 @@ export function createSettings({ state, h, send, toast, render, ago }) {
   let mcp; // GET /api/mcp-tokens: { url, tokens }, once loaded; undefined until asked for
   let mcpBusy = false;
   let minted = null; // the personal token just made, shown once: { token, label, url }
-  const mint = { label: "", read: true, write: false };
+  const mint = { label: "", read: true, write: false, tasksRead: false, tasksWrite: false };
   const testing = new Set(); // integrations with a test on its way: kinds
 
   /** The form's draft, synced to the server's value for it. */
@@ -759,7 +759,7 @@ export function createSettings({ state, h, send, toast, render, ago }) {
       await load();
     };
     const create = async () => {
-      const scopes = [mint.read && "docs:read", mint.write && "docs:write"].filter(Boolean);
+      const scopes = [mint.read && "docs:read", mint.write && "docs:write", mint.tasksRead && "tasks:read", mint.tasksWrite && "tasks:write"].filter(Boolean);
       mcpBusy = true;
       render();
       try {
@@ -781,7 +781,7 @@ export function createSettings({ state, h, send, toast, render, ago }) {
       h("span", { class: "set-label" }, h("span", {}, title), copyBtn(text, title)),
       h("pre", { class: "out", style: "white-space:pre-wrap;word-break:break-all" }, text));
     const url = mcp.url ?? `${location.origin}/mcp`;
-    const ready = mint.label.trim() && (mint.read || mint.write);
+    const ready = mint.label.trim() && (mint.read || mint.write || mint.tasksRead || mint.tasksWrite);
     const tokens = mcp.tokens ?? [];
     let shown = null;
     if (minted) {
@@ -799,7 +799,7 @@ export function createSettings({ state, h, send, toast, render, ago }) {
           h("button", { type: "button", class: "btn primary", onclick: () => { minted = null; render(); } }, "Done")));
     }
     return [
-      h("p", { class: "muted" }, "Let Claude, Cursor and other MCP clients read your factory's docs and, with docs:write, comment, suggest edits and propose decisions as you. They never change a doc's text: a person accepts every suggestion and decides every decision."),
+      h("p", { class: "muted" }, "Let Claude, Cursor and other MCP clients read your factory's docs and, with docs:write, comment, suggest edits and propose decisions as you. They never change a doc's text: a person accepts every suggestion and decides every decision. With the tasks scopes they can search goals and tasks, propose draft tasks a person sends to planning, and comment on tasks as you."),
       h("div", { class: "card set-card" },
         h("div", { class: "set-row" },
           h("span", { class: "set-label" }, h("span", {}, "MCP server"),
@@ -827,6 +827,8 @@ export function createSettings({ state, h, send, toast, render, ago }) {
             oninput: (e) => { mint.label = e.target.value; render(); }, onkeydown: (e) => e.key === "Enter" && ready && !mcpBusy && create() }))),
         toggle("docs:read", "List and read docs.", mint.read, (on) => { mint.read = on; render(); }),
         toggle("docs:write", "Comment, reply, resolve threads, suggest edits and propose decisions, as you.", mint.write, (on) => { mint.write = on; render(); }),
+        toggle("tasks:read", "List, search and read goals and tasks.", mint.tasksRead, (on) => { mint.tasksRead = on; render(); }),
+        toggle("tasks:write", "Propose draft tasks and comment on tasks, as you.", mint.tasksWrite, (on) => { mint.tasksWrite = on; render(); }),
         h("div", { class: "set-actions" }, h("span", { class: "spacer" }),
           h("button", { type: "button", class: "btn primary", disabled: !ready || mcpBusy, onclick: create }, mcpBusy ? "Working…" : "Create"))),
     ];

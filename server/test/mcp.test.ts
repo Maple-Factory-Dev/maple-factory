@@ -4,8 +4,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { d1 } from "./d1.ts";
-import { bearerKind, mcpCaller, parseScopes, redirectUriOk, verifyPkce } from "../src/mcp-auth.ts";
-import { toolAllowed, toolsForScopes } from "../src/mcp-tools.ts";
+import { bearerKind, mcpCaller, parseScopes, redirectUriOk, SCOPE_ALLOWS, SCOPES, verifyPkce } from "../src/mcp-auth.ts";
+import { TOOL_SCOPES, toolAllowed, toolsForScopes } from "../src/mcp-tools.ts";
+import { MCP_TASK_TOOLS, toolsFor } from "../src/factory/tools.ts";
 import { currentMember } from "../src/auth.ts";
 import { sha256 } from "../src/util.ts";
 
@@ -37,8 +38,37 @@ test("scopes: known ones only; tools/list and tools/call follow them", () => {
     ["comment_on_doc", "reply_to_doc_thread", "resolve_doc_thread", "suggest_doc_edit", "propose_decision"]);
   assert.equal(toolsForScopes(["docs:read", "docs:write"]).length, 7);
   assert.equal(toolAllowed(["docs:read"], "comment_on_doc"), false);
-  assert.equal(toolAllowed(["docs:read", "docs:write"], "save_repo_setup"), false, "only doc tools, ever");
+  assert.equal(toolAllowed(["docs:read", "docs:write"], "save_repo_setup"), false, "only MCP tools, ever");
   assert.equal(toolAllowed(["docs:read"], "__proto__"), false);
+});
+
+test("task scopes: four scopes; a docs-only token sees no task tool, tasks:read can't write", () => {
+  assert.deepEqual([...SCOPES], ["docs:read", "docs:write", "tasks:read", "tasks:write"]);
+  assert.deepEqual(parseScopes("tasks:write docs:read tasks:read nope"), ["docs:read", "tasks:read", "tasks:write"]);
+  assert.deepEqual(parseScopes(null), ["docs:read"], "an empty ask is still docs:read alone");
+  for (const s of SCOPES) assert.ok(SCOPE_ALLOWS[s].length > 10, `the consent page says what ${s} allows`);
+  const taskTools = MCP_TASK_TOOLS.map((t) => t.name);
+  assert.deepEqual(taskTools, ["list_goals", "list_tasks", "get_task", "propose_tasks", "comment_on_task"]);
+  assert.equal(toolsForScopes(["docs:read", "docs:write"]).filter((t) => taskTools.includes(t.name)).length, 0, "a docs-only token sees 0 task tools");
+  assert.deepEqual(toolsForScopes(["tasks:read"]).map((t) => t.name), ["list_goals", "list_tasks", "get_task"]);
+  assert.deepEqual(toolsForScopes(["tasks:write"]).map((t) => t.name), ["propose_tasks", "comment_on_task"]);
+  assert.equal(toolsForScopes([...SCOPES]).length, 12);
+  for (const tool of ["propose_tasks", "comment_on_task"]) {
+    assert.equal(toolAllowed(["tasks:read"], tool), false, `tasks:read can't ${tool}`);
+    assert.equal(toolAllowed(["docs:read", "docs:write"], tool), false, `docs scopes can't ${tool}`);
+    assert.equal(toolAllowed(["tasks:write"], tool), true);
+  }
+  assert.equal(toolAllowed(["tasks:write"], "get_task"), false, "writing doesn't imply reading");
+  // Nothing else in the factory's tool list is reachable, whatever the scopes.
+  const outside = new Set(Object.keys(TOOL_SCOPES));
+  for (const role of ["planner", "builder", "reviewer"] as const) {
+    for (const t of toolsFor(role)) if (!outside.has(t.name)) assert.equal(toolAllowed([...SCOPES], t.name), false, `${t.name} stays unreachable`);
+  }
+  for (const tool of ["submit_plan", "save_repo_setup", "finish", "attest", "progress", "reply", "raise_hand", "submit_findings"]) assert.equal(toolAllowed([...SCOPES], tool), false, tool);
+  // The outside get_task and propose_tasks aren't the sessions' own: those keep their schemas.
+  const own = toolsFor("builder").find((t) => t.name === "propose_tasks")!;
+  assert.deepEqual((own.inputSchema as { required: string[] }).required, ["tasks"]);
+  assert.deepEqual((MCP_TASK_TOOLS.find((t) => t.name === "propose_tasks")!.inputSchema as { required: string[] }).required, ["goal", "tasks"]);
 });
 
 test("token kinds: mfp_ only at /mcp, mft_ never there", async () => {
@@ -80,7 +110,7 @@ test("SECURITY-AUDIT.md covers MCP: every new route in the route table, each fin
     assert.ok(table.includes(route), `${route} is in the route table`);
   }
   assert.ok(audit.includes("## MCP: outside clients at `/mcp`"));
-  for (let n = 22; n <= 30; n++) {
+  for (let n = 22; n <= 31; n++) {
     const row = new RegExp(`^\\| F-${n} \\|.*\\| (fixed|follow-up|no change)[^|]*\\|$`, "m");
     assert.ok(row.test(audit), `F-${n} has a status`);
     assert.ok(new RegExp(`^### F-${n} · .* — (fixed|follow-up|no change)`, "m").test(audit), `F-${n} has a section`);

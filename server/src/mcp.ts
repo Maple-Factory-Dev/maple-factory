@@ -1,7 +1,8 @@
 // The factory as a remote MCP server: streamable HTTP at POST /mcp (JSON responses, no SSE stream yet), so a
-// member's Claude Desktop, claude.ai, Claude Code or Cursor can work on the org's shared docs as them. The tools are
-// the runner's doc tools (factory/tools.ts DOC_TOOLS), filtered by the token's scopes, and run through the org hub's
-// DocTools as the member with a "<client> via MCP" badge. Auth: src/mcp-auth.ts.
+// member's Claude Desktop, claude.ai, Claude Code or Cursor can work on the org's shared docs, goals and tasks as
+// them. The tools are the runner's doc tools (factory/tools.ts DOC_TOOLS) and the outside-only task tools
+// (MCP_TASK_TOOLS), filtered by the token's scopes, and run in the org hub (DocTools, engine.mcpTool) as the member
+// with a "<client> via MCP" badge. Auth: src/mcp-auth.ts.
 
 import type { Env } from "./env.ts";
 import { mcpCaller, unauthorized } from "./mcp-auth.ts";
@@ -16,7 +17,7 @@ type Id = string | number | null;
 const reply = (id: Id, result: unknown) => Response.json({ jsonrpc: "2.0", id, result });
 const rpcError = (id: Id, code: number, message: string, status = 200) => Response.json({ jsonrpc: "2.0", id, error: { code, message } }, { status });
 
-const INSTRUCTIONS = "Maple Factory's shared planning docs. You act as the member who connected you; anything you write shows as them with a 'via MCP' badge. You can't edit a doc's text: comment, suggest edits a person accepts, or propose decisions a person decides. Start with list_docs, then read_doc for block ids and threads.";
+const INSTRUCTIONS = "Maple Factory's shared planning docs, goals and tasks; which tools you have depends on the scopes you were given. You act as the member who connected you; anything you write shows as them with a 'via MCP' badge. Docs: you can't edit a doc's text: comment, suggest edits a person accepts, or propose decisions a person decides. Start with list_docs, then read_doc for block ids and threads. Tasks: search first with list_goals `q` and list_tasks `q` (plus its goal, state, owner, priority and effort filters) rather than listing everything, then get_task for one task's brief, plan and comments. propose_tasks only makes drafts a person sends to planning, and comment_on_task comments as the member; you can't approve, steer, merge or cancel a task."
 
 export async function handleMcp(request: Request, env: Env): Promise<Response> {
   if (request.method !== "POST") return new Response("POST JSON-RPC here; there's no event stream.", { status: 405, headers: { allow: "POST" } });

@@ -230,6 +230,56 @@ enum class DecisionAction(val raw: String) {
     object Serializer : WireEnumSerializer<DecisionAction>("DecisionAction", entries, { it.raw }, Unknown)
 }
 
+/** How widely a shared memory applies (MF-391). */
+@Serializable(with = MemoryScopeKind.Serializer::class)
+enum class MemoryScopeKind(val raw: String) {
+    /** The whole factory. */
+    Org("org"),
+    /** One repo. */
+    Repo("repo"),
+    /** One goal. */
+    Goal("goal"),
+    /** A value this build doesn't know yet; newer servers may send them. */
+    Unknown("unknown"),
+    ;
+
+    object Serializer : WireEnumSerializer<MemoryScopeKind>("MemoryScopeKind", entries, { it.raw }, Unknown)
+}
+
+/** What sort of thing a shared memory records. */
+@Serializable(with = MemoryKind.Serializer::class)
+enum class MemoryKind(val raw: String) {
+    /** Something true about the code or the product. */
+    Fact("fact"),
+    /** How things are done here. */
+    Convention("convention"),
+    /** A trap worth knowing before you step in it. */
+    Gotcha("gotcha"),
+    /** How a person or the team likes things. */
+    Preference("preference"),
+    /** A value this build doesn't know yet; newer servers may send them. */
+    Unknown("unknown"),
+    ;
+
+    object Serializer : WireEnumSerializer<MemoryKind>("MemoryKind", entries, { it.raw }, Unknown)
+}
+
+/** Where a shared memory stands. */
+@Serializable(with = MemoryStatus.Serializer::class)
+enum class MemoryStatus(val raw: String) {
+    /** In use: agents are given it. */
+    Active("active"),
+    /** Waiting for a person to accept it. */
+    Proposed("proposed"),
+    /** Kept for history; no longer given to agents. */
+    Archived("archived"),
+    /** A value this build doesn't know yet; newer servers may send them. */
+    Unknown("unknown"),
+    ;
+
+    object Serializer : WireEnumSerializer<MemoryStatus>("MemoryStatus", entries, { it.raw }, Unknown)
+}
+
 /** githubstatus.com's overall indicator. */
 @Serializable(with = GitHubIndicator.Serializer::class)
 enum class GitHubIndicator(val raw: String) {
@@ -2264,6 +2314,54 @@ data class DecisionEvent(
     val why: String? = null,
     val before: Decision? = null,
     val after: Decision? = null,
+)
+
+/** Where a shared memory applies. */
+@Serializable
+data class MemoryScope(
+    val kind: MemoryScopeKind,
+    /** The repo (`owner/name`) or the goal's id. None for the whole org. */
+    val key: String? = null,
+)
+
+/** Where a shared memory came from. */
+@Serializable
+data class MemorySource(
+    /** The member who wrote it (or, for an agent, the person it works for). */
+    val by: String,
+    /** The task it was learned on, e.g. "MF-391". */
+    val task: String? = null,
+    /** The agent's role on that task. */
+    val role: String? = null,
+    /** Set when an agent wrote it, e.g. "MF-391 builder". */
+    val agent: String? = null,
+    /** The machine the agent ran on. */
+    val machine: String? = null,
+    /** The accepted doc decision it records. */
+    val decision: String? = null,
+)
+
+/** One thing the factory's agents remember between tasks (MF-391): a short note scoped to the org, a repo or a goal. The server owns it and keeps the previous text of every edit. */
+@Serializable
+data class Memory(
+    val id: String,
+    val scope: MemoryScope,
+    val kind: MemoryKind,
+    /** At most 600 characters. */
+    val text: String,
+    /** Lowercase, at most 8. */
+    val tags: List<String> = emptyList(),
+    val status: MemoryStatus,
+    val source: MemorySource,
+    /** The older memory this one replaces: that one is archived when this becomes active. */
+    val supersedes: String? = null,
+    val createdAt: Long,
+    /** Last change to its text, tags, kind, scope or status. */
+    val updatedAt: Long,
+    /** When it was last given to an agent. */
+    val lastUsedAt: Long? = null,
+    /** How many times it has been given to an agent. */
+    val uses: Long,
 )
 
 /** Someone with the app open, and the task they're looking at. */
@@ -4469,6 +4567,7 @@ sealed class ServerToClient {
         /** Every shared doc, archived ones too. None: an older server. */
         val docs: List<dev.maplefactory.wire.Doc>? = null,
         val decisions: List<dev.maplefactory.wire.Decision>? = null,
+        val memories: List<dev.maplefactory.wire.Memory>? = null,
         val follows: List<dev.maplefactory.wire.GoalFollow> = emptyList(),
         /** Your quiet hours. None: none set, or an older server. */
         val quietHours: dev.maplefactory.wire.QuietHours? = null,
@@ -4583,6 +4682,16 @@ sealed class ServerToClient {
     data class DecisionLog(
         val id: String,
         val events: List<dev.maplefactory.wire.DecisionEvent> = emptyList(),
+    ) : ServerToClient()
+    /** A shared memory was added or changed (archiving included), to every member. */
+    @Serializable
+    data class MemoryUpdated(
+        val memory: dev.maplefactory.wire.Memory,
+    ) : ServerToClient()
+    /** A shared memory was deleted for good. */
+    @Serializable
+    data class MemoryRemoved(
+        val id: String,
     ) : ServerToClient()
     /** Your draft, to your apps only. */
     @Serializable
@@ -4771,6 +4880,8 @@ sealed class ServerToClient {
             "doc.thread.updated" -> json.decodeFromJsonElement(DocThreadUpdated.serializer(), body)
             "decision.updated" -> json.decodeFromJsonElement(DecisionUpdated.serializer(), body)
             "decision.log" -> json.decodeFromJsonElement(DecisionLog.serializer(), body)
+            "memory.updated" -> json.decodeFromJsonElement(MemoryUpdated.serializer(), body)
+            "memory.removed" -> json.decodeFromJsonElement(MemoryRemoved.serializer(), body)
             "draft.updated" -> json.decodeFromJsonElement(DraftUpdated.serializer(), body)
             "scout.updated" -> json.decodeFromJsonElement(ScoutUpdated.serializer(), body)
             "recurring.updated" -> json.decodeFromJsonElement(RecurringUpdated.serializer(), body)
@@ -4820,6 +4931,8 @@ sealed class ServerToClient {
             is DocThreadUpdated -> "doc.thread.updated" to json.encodeToJsonElement(DocThreadUpdated.serializer(), value)
             is DecisionUpdated -> "decision.updated" to json.encodeToJsonElement(DecisionUpdated.serializer(), value)
             is DecisionLog -> "decision.log" to json.encodeToJsonElement(DecisionLog.serializer(), value)
+            is MemoryUpdated -> "memory.updated" to json.encodeToJsonElement(MemoryUpdated.serializer(), value)
+            is MemoryRemoved -> "memory.removed" to json.encodeToJsonElement(MemoryRemoved.serializer(), value)
             is DraftUpdated -> "draft.updated" to json.encodeToJsonElement(DraftUpdated.serializer(), value)
             is ScoutUpdated -> "scout.updated" to json.encodeToJsonElement(ScoutUpdated.serializer(), value)
             is RecurringUpdated -> "recurring.updated" to json.encodeToJsonElement(RecurringUpdated.serializer(), value)

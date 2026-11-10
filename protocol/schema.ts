@@ -75,6 +75,18 @@ export const enums: Record<string, Enum> = {
     doc: "What one entry in a decision's append-only log did.",
     values: { proposed: "Proposed.", edited: "Edited while still proposed.", accepted: "Accepted.", rejected: "Rejected.", superseded: "Replaced by a newer accepted decision." },
   },
+  MemoryScopeKind: {
+    doc: "How widely a shared memory applies (MF-391).",
+    values: { org: "The whole factory.", repo: "One repo.", goal: "One goal." },
+  },
+  MemoryKind: {
+    doc: "What sort of thing a shared memory records.",
+    values: { fact: "Something true about the code or the product.", convention: "How things are done here.", gotcha: "A trap worth knowing before you step in it.", preference: "How a person or the team likes things." },
+  },
+  MemoryStatus: {
+    doc: "Where a shared memory stands.",
+    values: { active: "In use: agents are given it.", proposed: "Waiting for a person to accept it.", archived: "Kept for history; no longer given to agents." },
+  },
   GitHubIndicator: {
     doc: "githubstatus.com's overall indicator.",
     values: {
@@ -1116,6 +1128,21 @@ export const structs: Record<string, Struct> = {
     fields: { seq: "u64", decision: "uuid", at: "u64", by: "string", agent: "string?", action: "DecisionAction", why: "string?", before: "Decision?", after: "Decision?" },
     fieldDocs: { seq: "Its place in the org's log.", by: "The member (or, for an agent proposal, the person it works for)." },
   },
+  MemoryScope: {
+    doc: "Where a shared memory applies.",
+    fields: { kind: "MemoryScopeKind", key: "string?" },
+    fieldDocs: { key: "The repo (`owner/name`) or the goal's id. None for the whole org." },
+  },
+  MemorySource: {
+    doc: "Where a shared memory came from.",
+    fields: { by: "string", task: "string?", role: "string?", agent: "string?", machine: "string?", decision: "uuid?" },
+    fieldDocs: { by: "The member who wrote it (or, for an agent, the person it works for).", task: "The task it was learned on, e.g. \"MF-391\".", role: "The agent's role on that task.", agent: "Set when an agent wrote it, e.g. \"MF-391 builder\".", machine: "The machine the agent ran on.", decision: "The accepted doc decision it records." },
+  },
+  Memory: {
+    doc: "One thing the factory's agents remember between tasks (MF-391): a short note scoped to the org, a repo or a goal. The server owns it and keeps the previous text of every edit.",
+    fields: { id: "uuid", scope: "MemoryScope", kind: "MemoryKind", text: "string", tags: "string[]", status: "MemoryStatus", source: "MemorySource", supersedes: "uuid?", createdAt: "u64", updatedAt: "u64", lastUsedAt: "u64?", uses: "u32" },
+    fieldDocs: { text: "At most 600 characters.", tags: "Lowercase, at most 8.", supersedes: "The older memory this one replaces: that one is archived when this becomes active.", updatedAt: "Last change to its text, tags, kind, scope or status.", lastUsedAt: "When it was last given to an agent.", uses: "How many times it has been given to an agent." },
+  },
   Presence: {
     doc: "Someone with the app open, and the task they're looking at.",
     fields: { login: "string", viewing: "string?", since: "u64", mobile: "bool?" },
@@ -2055,6 +2082,7 @@ export const unions: Record<string, Union> = {
           notes: "Note[]",
           docs: "Doc[]?",
           decisions: "Decision[]?",
+          memories: "Memory[]?",
           follows: "GoalFollow[]",
           quietHours: "QuietHours?",
           intake: "IntakeRequest[]",
@@ -2123,6 +2151,8 @@ export const unions: Record<string, Union> = {
       "doc.thread.updated": { doc: "A doc comment thread changed, to every member.", fields: { thread: "DocThread" } },
       "decision.updated": { doc: "A decision was proposed or changed, to every member.", fields: { decision: "Decision" } },
       "decision.log": { doc: "A decision's log, oldest first, to the connection that asked.", fields: { id: "uuid", events: "DecisionEvent[]" } },
+      "memory.updated": { doc: "A shared memory was added or changed (archiving included), to every member.", fields: { memory: "Memory" } },
+      "memory.removed": { doc: "A shared memory was deleted for good.", fields: { id: "uuid" } },
       "draft.updated": { doc: "Your draft, to your apps only.", fields: { draft: "Draft" } },
       "scout.updated": { doc: "How a goal's Scout run is going.", fields: { run: "ScoutRun" } },
       "recurring.updated": { doc: "A recurring task was saved or ran.", fields: { recurring: "Recurring" } },
