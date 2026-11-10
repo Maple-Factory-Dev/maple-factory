@@ -741,3 +741,65 @@ test("a session that resumes its own conversation isn't sent the prompt, so its 
   assert.equal(open?.resumeFrom?.session, f.session);
   for (const id of Object.values(f.ids)) assert.equal(f.store.memory(id)!.uses, 0, id);
 });
+
+// MF-428: each question, hand and permission prompt keeps a snapshot on the timeline of what was offered
+// and, on the answer, what was picked.
+const mcp = (f: ReturnType<typeof building>, tool: string, args: Record<string, unknown>) =>
+  f.engine.fromRunner("mac", { type: "mcp.request", session: f.session, tool, args } as never);
+const asked = (f: ReturnType<typeof building>) => f.store.task("MF-1")!.events.filter((e) => e.ask);
+
+test("an ask keeps its question and every option, and the answer the option picked or the text typed", async () => {
+  const f = building(60_000);
+  await mcp(f, "ask", { question: "Which store?", options: ["SQLite", "Postgres", "Both"] });
+  await f.engine.command({ type: "task.answer", id: "MF-1", text: "postgres" } as never, ME);
+  const [ask, answer] = asked(f);
+  assert.equal(ask.text, "asked: Which store?");
+  assert.deepEqual(ask.ask, { kind: "question", text: "Which store?", options: [{ title: "SQLite" }, { title: "Postgres" }, { title: "Both" }] });
+  assert.equal(answer.who, "me");
+  assert.equal(answer.ask?.picked, "Postgres");
+  assert.equal(answer.ask?.note, undefined);
+  assert.equal(answer.ask?.options.length, 3);
+
+  await mcp(f, "ask", { question: "Name it?", options: ["a", "b"] });
+  await f.engine.command({ type: "task.answer", id: "MF-1", text: "call it maple" } as never, ME);
+  const free = asked(f).at(-1)!.ask!;
+  assert.equal(free.picked, undefined);
+  assert.equal(free.note, "call it maple");
+});
+
+test("a raised hand keeps its summary, reason and options, and its resolve the pick and note", async () => {
+  const f = building(60_000);
+  const options = [
+    { title: "Split it", detail: "Two tasks, one per app.", recommended: true },
+    { title: "Keep going", detail: "One more hour." },
+    { title: "Attest it for me", detail: "" },
+  ];
+  await mcp(f, "raise_hand", { reason: "overBudget", summary: "It's bigger than planned.", options });
+  await f.engine.command({ type: "task.resolveHand", id: "MF-1", option: "Split it", note: "Web first, please." } as never, ME);
+  const [raised, resolved] = asked(f);
+  assert.deepEqual(raised.ask, {
+    kind: "hand", text: "It's bigger than planned.", reason: "overBudget",
+    options: [{ title: "Split it", detail: "Two tasks, one per app.", recommended: true }, { title: "Keep going", detail: "One more hour." }, { title: "Attest it for me" }],
+  });
+  assert.equal(resolved.who, "me");
+  assert.equal(resolved.ask?.picked, "Split it");
+  assert.equal(resolved.ask?.note, "Web first, please.");
+  assert.equal(resolved.ask?.options.length, 3);
+});
+
+test("answering a permission prompt keeps the tool, its command and the choice", async () => {
+  const f = building(60_000);
+  const activity = { state: "waiting", at: 5, message: null, question: { permission: { tool: "Bash", summary: "Rebuild", detail: "rm -rf build && npm run build" } } };
+  (f.engine as unknown as { hooks: { machines: () => Promise<unknown[]> } }).hooks.machines = async () =>
+    [{ id: "mac", name: "Mac", owner: "me", online: true, sessions: [{ session: { id: f.session }, activity }] }];
+  await f.engine.command({ type: "task.answerPrompt", id: "MF-1", choice: "no" } as never, ME);
+  const [prompt] = asked(f);
+  assert.equal(prompt.text, "denied Bash");
+  assert.deepEqual(prompt.ask, { kind: "prompt", text: "Bash: Rebuild", options: [{ title: "Yes" }, { title: "No" }], command: "rm -rf build && npm run build", picked: "No" });
+});
+
+test("events without a snapshot stay plain { who, text, at }", async () => {
+  const f = building(60_000);
+  await f.engine.command({ type: "task.edit", id: "MF-1", title: "Fix it now" } as never, ME).catch(() => {});
+  for (const e of f.store.task("MF-1")!.events) assert.equal("ask" in e, false);
+});
