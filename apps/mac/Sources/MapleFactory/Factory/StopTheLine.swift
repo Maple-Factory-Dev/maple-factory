@@ -6,6 +6,7 @@ import MapleKit
 struct StopTheLineButton: View {
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
+    @State private var frame: CGRect = .zero
 
     var body: some View {
         @Bindable var state = state
@@ -34,6 +35,12 @@ struct StopTheLineButton: View {
         .accessibilityLabel(stopped ? (LineStop.pillLabel(holds) ?? "Line stopped") : "Stop the line")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { state.showsStopTheLine.toggle() }
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame = $0 }
+        // Headless shots draw a popover from what it points at (a background app's popover sits off on its own).
+        .onChange(of: state.showsStopTheLine) { _, open in
+            guard Headless.isOn else { return }
+            Headless.popoverAnchor = open ? frame : nil
+        }
         .popover(isPresented: $state.showsStopTheLine, arrowEdge: .bottom) {
             StopTheLinePopover()
                 .environment(state)
@@ -47,8 +54,14 @@ struct StopTheLineButton: View {
 struct StopTheLinePopover: View {
     @Environment(AppState.self) private var state
     @Environment(FactoryClient.self) private var client
-    @State private var target: LineStop.Target?
-    @State private var reason = ""
+    /// A headless script's `stopline:go`.
+    static let demoSubmit = Notification.Name("StopTheLinePopover.demoSubmit")
+
+    private var target: LineStop.Target? {
+        get { state.stopLineTarget }
+        nonmutating set { state.stopLineTarget = newValue }
+    }
+    private var reason: String { state.stopLineReason }
 
     private var goals: [Wire.Goal] { client.goals.filter { $0.archived != true } }
     private var currentRepo: String? { state.currentGoalName.flatMap { LineStop.repo(of: client.goal(named: $0)) } }
@@ -94,7 +107,7 @@ struct StopTheLinePopover: View {
                     }
                 }
                 .pickerStyle(.menu)
-                TextField("Why? e.g. Incident #42: bad deploy, rolling back", text: $reason)
+                TextField("Why? e.g. Incident #42: bad deploy, rolling back", text: Bindable(state).stopLineReason)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit(submit)
                 if trimmedCount > LineStop.maxReason {
@@ -116,12 +129,13 @@ struct StopTheLinePopover: View {
         }
         .padding(16)
         .frame(width: 400)
+        .onReceive(NotificationCenter.default.publisher(for: Self.demoSubmit)) { _ in submit() }
     }
 
     private func submit() {
         guard let why = LineStop.validReason(reason), !toHold.isEmpty else { return }
         client.stopLine(repos: toHold, reason: why)
-        reason = ""
+        state.stopLineReason = ""
         target = nil
         state.showsStopTheLine = false
     }

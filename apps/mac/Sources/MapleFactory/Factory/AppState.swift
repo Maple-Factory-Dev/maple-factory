@@ -240,6 +240,9 @@ final class AppState {
     var showsFeedback = false
     /// The top bar's "Stop the line" popover is open (MF-397).
     var showsStopTheLine = false
+    /// The popover's reason and repo choice, kept here so a closed-and-reopened popover (and a headless script) keeps them.
+    var stopLineReason = ""
+    var stopLineTarget: LineStop.Target?
     /// The palette's "Restart the line" is asking before it lifts every hold.
     var confirmsRestartLine = false
     /// The CI check whose log is open in the log sheet.
@@ -2537,6 +2540,13 @@ final class AppState {
             case "pass": passAutoReview(parts[1])
             case "merge": merge(parts[1])
             case "hold": holdMerge(parts[1])
+            // Stop the line (MF-397): `stopline:open` opens the top bar's popover, `stopline:reason:<text>` types the
+            // reason, `stopline:repo:<owner/name>` picks a repo, `stopline:go` stops it, `stopline:lift` is the banner's Lift.
+            case "stopline" where parts[1] == "open": showsStopTheLine = true
+            case "stopline" where parts[1] == "reason": stopLineReason = parts.dropFirst(2).joined(separator: ":")
+            case "stopline" where parts[1] == "repo": stopLineTarget = .repo(parts.dropFirst(2).joined(separator: ":"))
+            case "stopline" where parts[1] == "go": NotificationCenter.default.post(name: StopTheLinePopover.demoSubmit, object: nil)
+            case "stopline" where parts[1] == "lift": if let hold = client?.mergeHolds.first { client?.releaseMerges(repo: hold.repo) }
             // The ⋯ menu's Cancel task…, then its confirmation's Cancel Task.
             case "cancelask": confirmingCancel = parts[1]
             case "cancel": confirmingCancel = nil; cancel(parts[1])
