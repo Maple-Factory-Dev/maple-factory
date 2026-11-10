@@ -2640,11 +2640,12 @@ final class AppState {
             case "merge": merge(parts[1])
             case "hold": holdMerge(parts[1])
             // Stop the line (MF-397): `stopline:open` opens the top bar's popover, `stopline:reason:<text>` types the
-            // reason, `stopline:repo:<owner/name>` picks a repo, `stopline:go` stops it, `stopline:lift` is the banner's Lift.
+            // reason, `stopline:repo:<owner/name>` picks a repo, `stopline:go` stops it, `stopline:lift` is the banner's Lift (no asking), `stopline:liftask[:<repo>]` its confirmation.
             case "stopline" where parts[1] == "open": showsStopTheLine = true
             case "stopline" where parts[1] == "reason": stopLineReason = parts.dropFirst(2).joined(separator: ":")
             case "stopline" where parts[1] == "repo": stopLineTarget = .repo(parts.dropFirst(2).joined(separator: ":"))
             case "stopline" where parts[1] == "go": NotificationCenter.default.post(name: StopTheLinePopover.demoSubmit, object: nil)
+            case "stopline" where parts[1] == "liftask": NotificationCenter.default.post(name: LineStoppedBanner.demoLift, object: parts.count > 2 ? parts.dropFirst(2).joined(separator: ":") : nil)
             case "stopline" where parts[1] == "lift": if let hold = client?.mergeHolds.first { client?.releaseMerges(repo: hold.repo) }
             // The ⋯ menu's Cancel task…, then its confirmation's Cancel Task.
             case "cancelask": confirmingCancel = parts[1]

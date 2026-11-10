@@ -73,4 +73,29 @@ struct LineStopTests {
         #expect(PaletteAction.available(taskPanel: true, signedIn: true, holds: 2).contains(.restartTheLine))
         #expect(!PaletteAction.available(taskPanel: false, signedIn: true, holds: 0).contains(.toggleTaskPanel))
     }
+
+    // MF-412: the lift confirmation's copy.
+    @Test func liftTitleNamesOneRepoAndRestartsTheLineForSeveral() {
+        #expect(LineStop.liftTitle(repos: ["acme/api"]) == "Lift the hold on acme/api?")
+        #expect(LineStop.liftTitle(repos: ["acme/api", "acme/web"]) == "Restart the line?")
+    }
+
+    @Test func liftButtonCountsSeveralHolds() {
+        #expect(LineStop.liftButton(count: 1) == "Lift hold")
+        #expect(LineStop.liftButton(count: 3) == "Lift all 3 holds")
+    }
+
+    @Test func liftMessageSaysWhoHeldItAndWhy() {
+        #expect(LineStop.liftMessage(holds: [hold("acme/api")])
+                == "Merges into acme/api go again; the tasks waiting merge on their own. Held by jo: Incident #42.")
+    }
+
+    @Test func liftMessageListsEveryRepoAndHoldForSeveral() {
+        let other = Wire.MergeHold(repo: "acme/web", reason: "Bad deploy", by: "sam", at: 0)
+        #expect(LineStop.liftMessage(holds: [hold("acme/api"), other]) == """
+            Merges into acme/api, acme/web go again; the tasks waiting merge on their own.
+            acme/api, held by jo: Incident #42.
+            acme/web, held by sam: Bad deploy.
+            """)
+    }
 }
