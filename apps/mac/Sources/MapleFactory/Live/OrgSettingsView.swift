@@ -845,6 +845,9 @@ struct MergingSettings: View {
                     SettingsToggle("Fix merges automatically",
                                    detail: "When an approved change won't merge into its base, a builder brings the branch up to date, resolves the conflicts and pushes, and review runs again. It tries twice before asking you. Off: the factory raises its hand and you pick what to do.",
                                    isOn: policy(\.autoFixMerges))
+                    SettingsToggle("Fix failing CI automatically",
+                                   detail: "When a change in review fails its CI checks, its builder gets each failed check's step and log, fixes it and pushes. It tries twice before leaving it to you. Off: use Fix with builder on the pull request.",
+                                   isOn: policy(\.autoFixChecks))
                     if !isAdmin {
                         SettingsNote("Only admins can change this.")
                     }

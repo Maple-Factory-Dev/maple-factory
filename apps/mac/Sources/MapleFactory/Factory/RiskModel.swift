@@ -69,6 +69,8 @@ struct RiskPolicy {
     var autoMerge: [RiskLevel: Bool] = [.low: true, .medium: false, .high: false]
     /// An approved change that won't merge goes back to a builder to fix before anyone's asked.
     var autoFixMerges = true
+    /// A change in review whose CI fails goes back to its builder to fix before anyone's asked.
+    var autoFixChecks = true
     /// Off for the whole factory: nothing merges on its own, whatever the levels or a goal's acceptance say.
     var autoMerges = true
     /// The most leftovers one Scout run turns into drafted plans (1–10).
