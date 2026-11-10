@@ -2827,6 +2827,8 @@ final class AppState {
             // The goal view's Everyone | You switch, through the same persisted preference: `goaltasks:mine|everyone`.
             case "goaltasks": if let filter = GoalTaskFilter(argument: parts[1]) { goalTaskFilter = filter }
             case "go": destination = Destination(argument: parts[1])
+            // The Stats merge calendar's 30d / 60d / 90d / 1y picker, through the same persisted preference: `calrange:30`.
+            case "calrange": if let n = Int(parts[1]) { AppDefaults.set(n, forKey: "mergeCalendarDays") }
             // The ⌘K palette: `palette:open`, `palette:type:state:reviewing`, `palette:down` (or `up`), `palette:run`, `palette:close`.
             case "palette":
                 switch parts[1] {

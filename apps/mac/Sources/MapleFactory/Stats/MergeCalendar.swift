@@ -78,9 +78,11 @@ struct MergeCalendarModel: Equatable {
                 lastMonth = month
             }
         }
-        if months.count > 1, months[1].0 - months[0].0 < 3 { months.removeFirst() }
+        // A short window (30–90 days) draws wide columns, so a label only needs its own column there.
+        let room = weeks.count > 20 ? 3 : 1
+        if months.count > 1, months[1].0 - months[0].0 < room { months.removeFirst() }
         // Likewise a month that only just started in the last week or two: its label would run off the end.
-        if months.count > 1, let last = months.last, weeks.count - last.0 < 3 { months.removeLast() }
+        if months.count > 1, let last = months.last, weeks.count - last.0 < room { months.removeLast() }
         self.months = months.map { (week: $0.0, name: $0.1) }
 
         total = counts.reduce(0, +)
@@ -97,6 +99,13 @@ struct MergeCalendarModel: Equatable {
         }
         currentStreak = current
         busiest = all.filter { $0.merges > 0 }.max { $0.merges < $1.merges || ($0.merges == $1.merges && $0.day > $1.day) }
+    }
+
+    /// The trailing `n` days (all of them when there are no more than `n`), so the calendar can show
+    /// the last 30, 60 or 90 days of the year the server sends (MF-386).
+    static func window(_ days: [Wire.StatsCalendarDay], last n: Int) -> [Wire.StatsCalendarDay] {
+        guard n > 0, n < days.count else { return days }
+        return Array(days.suffix(n))
     }
 
     /// The 90th percentile of the days with any merge: shades scale linearly up to it, so one huge
@@ -131,6 +140,10 @@ enum MapleShade {
 struct MergeCalendar: View {
     let days: [Wire.StatsCalendarDay]
     @State private var hovered: String?
+    /// How many trailing days the card shows; saved, and settable headlessly with `-mergeCalendarDays 30`.
+    @AppStorage("mergeCalendarDays") private var range = 365
+
+    static let ranges: [(days: Int, label: String)] = [(30, "30d"), (60, "60d"), (90, "90d"), (365, "1y")]
 
     /// Headless: hover a day as the pointer would (`YYYY-MM-DD`).
     static let demo = Notification.Name("MergeCalendar.demo")
@@ -139,18 +152,23 @@ struct MergeCalendar: View {
     private static let labelWidth: CGFloat = 28
 
     var body: some View {
-        let model = MergeCalendarModel(days)
+        let model = MergeCalendarModel(MergeCalendarModel.window(days, last: range))
         StatsCard {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("\(model.total) PRs merged in the last year")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Theme.text)
-                    Spacer()
-                    Text(readout(model))
-                        .font(.system(size: 11.5).monospacedDigit())
-                        .foregroundStyle(hovered == nil ? Theme.textFaint : Theme.text)
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .center, spacing: 12) {
+                        title(model)
+                        picker
+                        Spacer(minLength: 12)
+                        readoutText(model)
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(alignment: .firstTextBaseline) { title(model); Spacer(minLength: 12); readoutText(model) }
+                        picker
+                    }
+                    VStack(alignment: .leading, spacing: 8) { title(model); picker; readoutText(model) }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 // Measured on the full-width header, not the grid, so the grid's own size never feeds back into its cells.
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
                 if width > 0 { grid(model, cell: cellSize(model, width: width)) }
@@ -160,18 +178,53 @@ struct MergeCalendar: View {
         .onReceive(NotificationCenter.default.publisher(for: Self.demo)) { note in
             hovered = (note.object as? [String])?.first
         }
+        .onChange(of: range) { hovered = nil }
+    }
+
+    private func title(_ model: MergeCalendarModel) -> some View {
+        Text("\(model.total) PRs merged in \(Self.span(range))")
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(Theme.text)
+            .fixedSize()
+    }
+
+    /// "the last year", or "the last 30 days".
+    static func span(_ days: Int) -> String {
+        days >= 365 ? "the last year" : "the last \(days) days"
+    }
+
+    private var picker: some View {
+        Picker("Calendar range", selection: $range) {
+            ForEach(Self.ranges, id: \.days) { r in Text(r.label).tag(r.days) }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .controlSize(.small)
+        .fixedSize()
+    }
+
+    private func readoutText(_ model: MergeCalendarModel) -> some View {
+        Text(readout(model))
+            .font(.system(size: 11.5).monospacedDigit())
+            .foregroundStyle(hovered == nil ? Theme.textFaint : Theme.text)
+            .fixedSize()
     }
 
     /// The card's inner width, so the cells grow or shrink to fill it (narrow layout included).
     @State private var width: CGFloat = 0
 
-    private func cellSize(_ model: MergeCalendarModel, width: CGFloat) -> CGFloat {
+    /// A year's cells are square and capped at 16pt. The 30–90 day grids (5–14 columns) stretch their
+    /// columns to fill the card's width, with rows capped at 24pt so seven of them don't tower.
+    private func cellSize(_ model: MergeCalendarModel, width: CGFloat) -> CGSize {
         let n = CGFloat(max(1, model.weeks.count))
-        return max(4, min(16, (width - Self.labelWidth - Self.gap * (n - 1)) / n))
+        let fit = max(4, (width - Self.labelWidth - Self.gap * (n - 1)) / n)
+        if model.weeks.count > 20 { let side = min(16, fit); return CGSize(width: side, height: side) }
+        return CGSize(width: fit, height: min(24, fit))
     }
 
-    private func grid(_ model: MergeCalendarModel, cell: CGFloat) -> some View {
-        let step = cell + Self.gap
+    private func grid(_ model: MergeCalendarModel, cell size: CGSize) -> some View {
+        let cell = size.height
+        let step = size.width + Self.gap
         return VStack(alignment: .leading, spacing: 4) {
             ZStack(alignment: .topLeading) {
                 ForEach(model.months, id: \.week) { m in
@@ -201,14 +254,14 @@ struct MergeCalendar: View {
                                     RoundedRectangle(cornerRadius: max(2, cell * 0.22))
                                         .fill(MapleShade.levels[day.level])
                                         .overlay(RoundedRectangle(cornerRadius: max(2, cell * 0.22)).strokeBorder(hovered == day.day ? Theme.text.opacity(0.7) : .clear, lineWidth: 1))
-                                        .frame(width: cell, height: cell)
+                                        .frame(width: size.width, height: cell)
                                         .contentShape(Rectangle())
                                         .onHover { inside in
                                             if inside { hovered = day.day } else if hovered == day.day { hovered = nil }
                                         }
                                         .help(Self.describe(day))
                                 } else {
-                                    Color.clear.frame(width: cell, height: cell)
+                                    Color.clear.frame(width: size.width, height: cell)
                                 }
                             }
                         }
