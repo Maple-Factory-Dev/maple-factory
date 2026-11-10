@@ -319,6 +319,11 @@ export async function updateMessage(token: string, channel: string, ts: string, 
   await slackApi(token, "chat.update", { channel, ts, text: said, blocks: blocks ?? [] });
 }
 
+/** Deletes one of the bot's messages (chat:write covers its own). */
+export async function deleteMessage(token: string, channel: string, ts: string): Promise<void> {
+  await slackApi(token, "chat.delete", { channel, ts });
+}
+
 /** Someone's display name, else their real name, else their id. */
 export async function userName(token: string, user: string): Promise<string> {
   const info = await slackApi(token, "users.info", { user }).catch(() => null);
