@@ -102,6 +102,10 @@ import kotlinx.coroutines.launch
 sealed class Route {
     data class GoalPage(val id: String) : Route()
     data class TaskPage(val id: String) : Route()
+    /** A goal's docs (MF-370). */
+    data class DocsPage(val goal: String) : Route()
+    /** A doc, on its Doc, Comments or Decisions tab. */
+    data class DocPage(val id: String, val tab: DocTab = DocTab.Doc) : Route()
 }
 
 /**
@@ -126,11 +130,12 @@ fun RootScreen(store: FactoryStore, args: LaunchArgs, onAddFactory: () -> Unit) 
     // Each factory opens where you left it; the first one launched can be pointed somewhere by its flags.
     LaunchedEffect(store.opened) {
         stacks.clear()
-        if (!argsUsed && (args.tab != null || args.goal != null || args.task != null)) {
+        if (!argsUsed && (args.tab != null || args.goal != null || args.task != null || args.doc != null)) {
             argsUsed = true
             tab = Tab.entries.firstOrNull { it.name.equals(args.tab, ignoreCase = true) } ?: Tab.Inbox
             if (tab == Tab.Goals) args.goal?.let { stacks[Tab.Goals] = listOf(Route.GoalPage(it)) }
             args.task?.let { store.pendingTask = it }
+            args.doc?.let { store.pendingDoc = it }
         } else {
             val place = store.place(store.currentKey)
             tab = place.tab
@@ -149,6 +154,16 @@ fun RootScreen(store: FactoryStore, args: LaunchArgs, onAddFactory: () -> Unit) 
             if (tab != Tab.Inbox) tab = Tab.Inbox
             stacks[Tab.Inbox] = listOf(Route.TaskPage(id))
         }
+    }
+
+    // A doc link, or -doc: on the Goals tab under its goal's docs.
+    LaunchedEffect(store.pendingDoc, store.feed.hasSnapshot) {
+        val id = store.pendingDoc ?: return@LaunchedEffect
+        val doc = store.feed.doc(id) ?: return@LaunchedEffect
+        store.pendingDoc = null
+        tab = Tab.Goals
+        val docTab = DocTab.entries.firstOrNull { it.name.equals(args.docTab, ignoreCase = true) } ?: DocTab.Doc
+        stacks[Tab.Goals] = (doc.goal?.let { listOf(Route.GoalPage(it), Route.DocsPage(it)) } ?: emptyList()) + Route.DocPage(id, docTab)
     }
 
     LaunchedEffect(tab, stacks[Tab.Goals]) {
@@ -179,6 +194,8 @@ fun RootScreen(store: FactoryStore, args: LaunchArgs, onAddFactory: () -> Unit) 
                             when (route) {
                                 is Route.TaskPage -> route.id
                                 is Route.GoalPage -> store.feed.goal(route.id)?.name ?: "Goal"
+                                is Route.DocsPage -> "Docs"
+                                is Route.DocPage -> store.feed.doc(route.id)?.title ?: "Doc"
                                 null -> when (tab) {
                                     Tab.Inbox -> "Inbox"
                                     Tab.Goals -> "Goals"
@@ -221,7 +238,9 @@ fun RootScreen(store: FactoryStore, args: LaunchArgs, onAddFactory: () -> Unit) 
             Box(Modifier.padding(padding).fillMaxSize()) {
                 when (val route = stack.lastOrNull()) {
                     is Route.TaskPage -> TaskDetailScreen(store, route.id)
-                    is Route.GoalPage -> GoalScreen(store, route.id) { push(Route.TaskPage(it)) }
+                    is Route.GoalPage -> GoalScreen(store, route.id, openDocs = { push(Route.DocsPage(route.id)) }) { push(Route.TaskPage(it)) }
+                    is Route.DocsPage -> DocsListScreen(store, route.goal) { push(Route.DocPage(it)) }
+                    is Route.DocPage -> DocScreen(store, route.id, route.tab, onTab = { t -> stacks[tab] = stack.dropLast(1) + route.copy(tab = t) }) { push(Route.TaskPage(it)) }
                     null -> when (tab) {
                         Tab.Inbox -> InboxScreen(store) { push(Route.TaskPage(it)) }
                         Tab.Goals -> GoalsScreen(store) { push(Route.GoalPage(it)) }
@@ -477,7 +496,7 @@ private val stages = listOf(
 )
 
 @Composable
-fun GoalScreen(store: FactoryStore, id: String, open: (String) -> Unit) {
+fun GoalScreen(store: FactoryStore, id: String, openDocs: () -> Unit = {}, open: (String) -> Unit) {
     val goal = store.feed.goal(id)
     if (goal == null) {
         if (store.feed.hasSnapshot) EmptyState("Goal not found", Icons.Outlined.Cancel) else Loading()
@@ -503,6 +522,7 @@ fun GoalScreen(store: FactoryStore, id: String, open: (String) -> Unit) {
                     }
                 }
             }
+            item(key = "docs") { GoalDocsRow(store, id, openDocs) }
             for (stage in stages) {
                 val staged = tasks.filter { it.state == stage }
                 if (staged.isEmpty()) continue

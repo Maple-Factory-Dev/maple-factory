@@ -79,9 +79,15 @@ struct RootView: View {
             case .session(let machine, let id):
                 tab = .machines
                 machinesPath = NavigationPath([SessionRoute(machine: machine, session: id)])
-            case .doc:
-                // The iPhone app has no Docs screen yet, so a maplefactory://doc link is ignored.
-                break
+            case .doc(let id):
+                // A doc link or push (MF-370) opens the doc's screen over its goal.
+                let tab = store.pendingDocTab ?? .doc
+                store.pendingDocTab = nil
+                self.tab = .goals
+                var path = NavigationPath()
+                if let goal = store.feed.docs.first(where: { $0.id == id })?.goal { path.append(GoalRoute(id: goal)) }
+                path.append(DocRoute(id: id, tab: tab))
+                goalsPath = path
             }
         }
         // Live, who you are arrives with the snapshot, after the first appearance.
@@ -103,6 +109,8 @@ extension View {
     func withTaskDestinations() -> some View {
         navigationDestination(for: TaskRoute.self) { TaskDetailView(id: $0.id) }
             .navigationDestination(for: GoalRoute.self) { GoalView(id: $0.id) }
+            .navigationDestination(for: DocsListRoute.self) { DocsListView(goal: $0.goal) }
+            .navigationDestination(for: DocRoute.self) { DocScreen(id: $0.id, initialTab: $0.tab) }
             .navigationDestination(for: SessionRoute.self) { SessionTerminalView(machineID: $0.machine, sessionID: $0.session) }
             .navigationDestination(for: ActivityRoute.self) { _ in ActivityView() }
             .navigationDestination(for: IntakeRoute.self) { _ in IntakeListView() }

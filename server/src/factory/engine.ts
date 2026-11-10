@@ -12,7 +12,7 @@ import type { MemoryCaller } from "./memory-tools.ts";
 import { ArtifactKindValues, PriorityValues, RoleValues, TaskStateValues } from "../wire.ts";
 import type {
   Artifact, ArtifactKind, AskSnapshot, ChangeRequest, CheckRun, ClientMessage, Comment, DiffCommit, Evidence, Finding, Goal, Hand, OrgRepo, Question, Machine, Member, Mockup, ReviewCheck, ReviewThread, Role, RunnerMessage, ServerToClient,
-  AgentState, Classification, DocAgentRun, DocThread, McpConnector, NotRunCheck, Priority, PromptAdditions, RiskLevel, ServerToRunner, SessionEnd, SessionInfo, Task, WorktreeScripts,
+  AgentState, Classification, Decision, DocAgentRun, DocThread, McpConnector, NotRunCheck, Priority, PromptAdditions, RiskLevel, ServerToRunner, SessionEnd, SessionInfo, Task, WorktreeScripts,
   TaskDocSource, Memory, MemoryScope,
 } from "../wire.ts";
 import { audit, machineHub } from "../util.ts";
@@ -96,6 +96,8 @@ type Hooks = {
   langfuse?: LangfuseSink;
   /** Push a doc thread's newest @mentions (MF-365's doc tools). */
   docMentions?(thread: DocThread): void;
+  /** Push a newly proposed doc decision to the members it @mentions (and an agent's person). */
+  decisionPushes?(decision: Decision): void;
 };
 
 /** How a "didn't merge" for missing approving reviews starts: a builder can't fix that, so it goes to a person. */
@@ -254,7 +256,7 @@ export class Engine {
   constructor(private env: Env, private store: Store, private hooks: Hooks, private intake: Intake, private secrets: Secrets) {
     this.memories = new Memories(store, { broadcast: (m) => hooks.broadcast(m) });
     this.memoryTools = new MemoryTools(store, this.memories);
-    this.docs = new DocTools(env, store, { broadcast: (m) => hooks.broadcast(m), members: () => hooks.members(), notify: (t) => hooks.docMentions?.(t) });
+    this.docs = new DocTools(env, store, { broadcast: (m) => hooks.broadcast(m), members: () => hooks.members(), notify: (t) => hooks.docMentions?.(t), proposed: (d) => hooks.decisionPushes?.(d) });
     // Maple's own one-off runs (Draft with AI, Scout, Set up with AI, @Maple in Slack) only stop for an
     // "Everything" pause; Pause New Work holds back tasks, not these.
     const stopped = (m: { id: string }) => this.pause(m.id) === "all";

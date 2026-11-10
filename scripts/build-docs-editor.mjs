@@ -13,6 +13,9 @@ const SRC = join(root, "server/docs-editor/src");
 const OUT = join(root, "server/web/app/docs");
 // The Mac app bundles a copy of the embed for its signed-out demo doc (MF-362), served from its own scheme.
 const MAC = join(root, "apps/mac/Sources/MapleFactory/Resources/DocsEmbed");
+// The phone apps bundle it too, for their demo docs (MF-370): iOS as a folder resource, Android as app assets.
+const IOS = join(root, "apps/ios/Resources/DocsEmbed");
+const ANDROID = join(root, "apps/android/app/src/main/assets/docs");
 const check = process.argv.includes("--check");
 
 // The source hash covers the editor's sources, the task resolver it imports from /app, and the lockfile
@@ -46,7 +49,7 @@ const files = {
 const targets = Object.entries(files).map(([name, text]) => [join(OUT, name), text]);
 for (const name of ["embed.html", "editor.bundle.js", "editor.css"]) {
   const text = name === "embed.html" ? readFileSync(join(OUT, name), "utf8") : files[name];
-  targets.push([join(MAC, name), text]);
+  for (const dir of [MAC, IOS, ANDROID]) targets.push([join(dir, name), text]);
 }
 
 let stale = 0;

@@ -40,6 +40,11 @@ struct GoalView: View {
                         LabeledContent("All tasks", value: "\(allCount)")
                     }
                     .accessibilityIdentifier("goal-all-tasks")
+                    // The goal's shared docs (MF-370): read, comment and settle decisions on the go.
+                    NavigationLink(value: DocsListRoute(goal: id)) {
+                        LabeledContent { Text("\(store.feed.docs(goal: id).count)").monospacedDigit() } label: { Label("Docs", systemImage: "doc.richtext") }
+                    }
+                    .accessibilityIdentifier("goal-docs")
                     // Doc decisions still waiting for a person (MF-367); accepted or rejected in a doc.
                     let openDecisions = store.feed.openDecisionCount(goal: id)
                     if openDecisions > 0 {

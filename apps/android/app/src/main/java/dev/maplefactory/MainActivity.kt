@@ -21,7 +21,7 @@ import dev.maplefactory.ui.SignInScreen
 /**
  * Maple Factory for Android. `-demo YES` opens the sample factories; otherwise the last factory
  * signed into, or the sign-in screen. Task links (maplefactory://task/<ID>, a factory's https …/t/<ID>)
- * open the task, in its own factory when it's a saved one.
+ * open the task, in its own factory when it's a saved one; maplefactory://doc/<id> opens a doc.
  */
 class MainActivity : ComponentActivity() {
     private val store: FactoryStore by viewModels()
@@ -58,6 +58,11 @@ class MainActivity : ComponentActivity() {
     private fun openLink(uri: Uri?) {
         uri ?: return
         val segments = uri.pathSegments
+        // maplefactory://doc/<id> (MF-370).
+        if (uri.scheme == "maplefactory" && uri.host == "doc") {
+            segments.firstOrNull()?.let { store.pendingDoc = it }
+            return
+        }
         val id = when (uri.scheme) {
             // maplefactory://task/<ID> (the Mac app's), or maplefactory://t/<ID>.
             "maplefactory" -> if (uri.host == "task" || uri.host == "t") segments.firstOrNull() else null

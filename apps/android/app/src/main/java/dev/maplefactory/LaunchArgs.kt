@@ -4,7 +4,7 @@ import android.content.Intent
 
 /**
  * The iPhone app's launch flags, as intent extras (scripts/run-android.sh turns `-demo YES` into
- * `--es demo YES`): `demo`, `tab`, `goal`, `task`, `onboardingURL`, `onboardingContinue` and `devAs`.
+ * `--es demo YES`): `demo`, `tab`, `goal`, `task`, `onboardingURL`, `onboardingContinue` and `devAs`, plus `doc` and `docTab`.
  */
 data class LaunchArgs(
     val demo: Boolean = false,
@@ -14,6 +14,9 @@ data class LaunchArgs(
     val onboardingUrl: String? = null,
     val onboardingContinue: Boolean = false,
     val devAs: String? = null,
+    /** A doc to open (MF-370), and which of its tabs: doc, comments or decisions. */
+    val doc: String? = null,
+    val docTab: String? = null,
 ) {
     companion object {
         private fun yes(value: String?) = value != null && value.lowercase() in setOf("yes", "true", "1")
@@ -29,6 +32,8 @@ data class LaunchArgs(
                 onboardingUrl = text("onboardingURL"),
                 onboardingContinue = yes(text("onboardingContinue")),
                 devAs = text("devAs"),
+                doc = text("doc"),
+                docTab = text("docTab"),
             )
         }
     }

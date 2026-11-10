@@ -22,6 +22,8 @@ export interface DocToolHooks {
   members(): Promise<Member[]>;
   /** Push a thread's newest comment's @mentions (doc-threads notifyMentions). */
   notify(thread: DocThread): void;
+  /** Push a newly proposed decision to whoever it needs (decisions pushTargets). */
+  proposed?(decision: Decision): void;
 }
 
 /** Who's calling: `author` (a task id, or the machine's owner) and the agent badge its comments get. */
@@ -209,6 +211,7 @@ export class DocTools {
     if (opts.agent) await this.hub(doc!.id, "/insert-decision", { id, block: opts.block ?? null, quote: opts.quote ?? null });
     this.record(change);
     this.hooks.broadcast({ type: "doc.updated", doc: this.store.doc(doc!.id)! });
+    this.hooks.proposed?.(change.decision);
     return change.decision;
   }
 

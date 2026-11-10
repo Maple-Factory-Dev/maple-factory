@@ -2,6 +2,10 @@ package dev.maplefactory.kit
 
 import dev.maplefactory.wire.CheckStatus
 import dev.maplefactory.wire.ClientMessage
+import dev.maplefactory.wire.Decision
+import dev.maplefactory.wire.DecisionStatus
+import dev.maplefactory.wire.Doc
+import dev.maplefactory.wire.DocThread
 import dev.maplefactory.wire.GoalTally
 import dev.maplefactory.wire.Goal
 import dev.maplefactory.wire.IntakeRequest
@@ -45,7 +49,15 @@ data class FeedState(
     val olderCursor: Map<String, Pair<Long, String>> = emptyMap(),
     /** Tasks asked for by ID (`task.get`) that haven't come yet. */
     val fetching: Set<String> = emptySet(),
+    /** Shared planning docs' index entries, archived ones included (see [activeDocs]). */
+    val docs: List<Doc> = emptyList(),
+    /** Docs' comment threads (MF-364), by doc id: only for docs asked about with `doc.threads`. */
+    val docThreads: Map<String, List<DocThread>> = emptyMap(),
+    /** Doc decisions (MF-367): from the snapshot, kept current by `decision.updated`. */
+    val decisions: List<Decision> = emptyList(),
 ) {
+    enum class DecisionFilter(val title: String) { Open("Open"), Accepted("Accepted"), Rejected("Rejected"), Superseded("Superseded"), All("All") }
+
     /** What a message says that isn't state: a toast or an error to show. */
     sealed class Notice {
         data class Toast(val text: String, val taskId: String?) : Notice()
@@ -76,8 +88,18 @@ data class FeedState(
                 loadingOlder = emptySet(),
                 olderCursor = emptyMap(),
                 fetching = emptySet(),
+                docs = message.docs ?: emptyList(),
+                decisions = message.decisions ?: emptyList(),
             ),
         )
+        is ServerToClient.DocUpdated -> Applied(copy(docs = upsert(message.doc, docs, front = true) { it.id }))
+        is ServerToClient.DocRemoved -> Applied(copy(docs = docs.filter { it.id != message.id }))
+        // doc.threads replaces a doc's threads; doc.thread.updated upserts one.
+        is ServerToClient.DocThreads -> Applied(copy(docThreads = docThreads + (message.doc to message.threads)))
+        is ServerToClient.DocThreadUpdated -> Applied(
+            copy(docThreads = docThreads + (message.thread.doc to upsert(message.thread, docThreads[message.thread.doc].orEmpty(), front = false) { it.id })),
+        )
+        is ServerToClient.DecisionUpdated -> Applied(copy(decisions = upsert(message.decision, decisions, front = false) { it.id }))
         // A task asked for by ID (`task.get`), maybe one the snapshot left out.
         is ServerToClient.TaskUpdated -> Applied(
             if (message.task.id in fetching) copy(fetching = fetching - message.task.id).mergeOlder(listOf(message.task))
@@ -164,6 +186,19 @@ data class FeedState(
         return tasks.any { it.goal == goal.id && it.owner == me.login }
     }
 
+    // Docs
+
+    /** Docs not archived, last edited first. */
+    val activeDocs: List<Doc> get() = activeDocs(docs)
+    fun docs(goal: String): List<Doc> = activeDocs.filter { it.goal == goal }
+    fun doc(id: String): Doc? = docs.firstOrNull { it.id == id }
+    /** A doc's threads not yet resolved, oldest first. */
+    fun openThreads(doc: String): List<DocThread> = docThreads[doc].orEmpty().filter { it.resolved != true }
+    fun decisions(doc: String): List<Decision> = decisions.filter { it.doc == doc }
+
+    /** Decisions still proposed in a goal's docs. */
+    fun openDecisionCount(goal: String): Int = openDecisionCount(decisions, goal)
+
     // Inbox
 
     /**
@@ -213,6 +248,23 @@ data class FeedState(
                 tally.goal to OlderTasks(merged = maxOf(0, tally.merged.toInt() - sent.merged), finished = maxOf(0, finished - sent.finished))
             }
         }
+
+        fun activeDocs(docs: List<Doc>): List<Doc> = docs.filter { it.archived != true }.sortedByDescending { it.updatedAt }
+
+        fun openDecisionCount(list: List<Decision>, goal: String): Int = list.count { it.status == DecisionStatus.Proposed && it.goal == goal }
+
+        /** Decisions to list, newest change first. */
+        fun filterDecisions(list: List<Decision>, filter: DecisionFilter, person: String? = null, goal: String? = null): List<Decision> =
+            list.filter { d ->
+                val status = when (filter) {
+                    DecisionFilter.Open -> d.status == DecisionStatus.Proposed
+                    DecisionFilter.Accepted -> d.status == DecisionStatus.Accepted
+                    DecisionFilter.Rejected -> d.status == DecisionStatus.Rejected
+                    DecisionFilter.Superseded -> d.status == DecisionStatus.Superseded
+                    DecisionFilter.All -> true
+                }
+                status && (person == null || d.proposedBy == person || d.decidedBy == person) && (goal == null || d.goal == goal)
+            }.sortedByDescending { it.decidedAt ?: it.proposedAt }
 
         private fun <T> upsert(item: T, list: List<T>, front: Boolean, id: (T) -> String): List<T> {
             val index = list.indexOfFirst { id(it) == id(item) }

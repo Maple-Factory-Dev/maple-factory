@@ -43,6 +43,10 @@ enum DemoData {
             Wire.Goal(id: "g-onb", name: "Onboarding", prefix: "ONB", color: "#8E5BD8", summary: "A first run that gets a new teammate to their first merged task.", lead: me, repo: "acme/app", repos: ["acme/app", "acme/web"], team: "mobile"),
         ]
         feed.tasks = tasks()
+        // A shared doc on the Mobile app goal (MF-370): two open threads, one from an agent, and a proposed decision.
+        feed.docs = [docsDoc]
+        feed.docThreads = [docsDocId: docThreads]
+        feed.decisions = [docsDecision]
         feed.intake = intake()
         // Low-risk work merges on its own; Kit let the Public API auto-merge up to low.
         feed.policy = Wire.RiskPolicy(maxFiles: 20, maxLines: 400, planApprovals: ["low": 1, "medium": 1, "high": 2], finalReviews: ["low": 0, "medium": 1, "high": 2],
@@ -672,4 +676,46 @@ extension DemoData {
     fetch("https://example.com/").then(() => "reached example.com", () => "blocked (sandboxed)").then(t => { document.getElementById("net").textContent = "Network: " + t; });
     </script></body></html>
     """
+
+    // MARK: Docs (MF-370)
+
+    static let docsDocId = "demo-doc-1"
+    static var docsDoc: Wire.Doc {
+        .init(id: docsDocId, title: "Mobile docs plan", goal: "g-app", createdBy: me, createdAt: ago(60 * 24 * 3), updatedAt: ago(12),
+              openThreads: 2, openDecisions: 1)
+    }
+    static let docsMarkdown = """
+    # Mobile docs plan
+
+    Docs open on the phone next to the work: read the plan, answer a comment, settle a decision.
+
+    ## What ships
+
+    - [x] A Docs list on every goal
+    - [ ] The doc itself, in the shared editor
+    - [ ] Comments and decisions as native lists
+
+    > Push lands when someone @mentions you or a decision needs you.
+    """
+    static var docThreads: [Wire.DocThread] {
+        [
+            .init(id: "th-1", doc: docsDocId, anchor: .init(from: "0", to: "0", quote: "A Docs list on every goal"),
+                  comments: [.init(id: "c-1", author: "sam", text: "Should archived docs show here too, greyed out?", at: ago(50))],
+                  createdBy: "sam", createdAt: ago(50)),
+            .init(id: "th-2", doc: docsDocId, anchor: .init(from: "0", to: "0", quote: "Comments and decisions as native lists"),
+                  comments: [.init(id: "c-2", author: me, text: "The planner agent drafted the Android half; it reads well.", at: ago(30), agent: "planner")],
+                  createdBy: me, createdAt: ago(30)),
+            .init(id: "th-3", doc: docsDocId, anchor: .init(from: "0", to: "0", quote: "What ships"),
+                  comments: [.init(id: "c-3", author: "kit", text: "Typo fixed.", at: ago(200))],
+                  resolved: true, resolvedBy: "kit", resolvedAt: ago(190), createdBy: "kit", createdAt: ago(200)),
+        ]
+    }
+    static var docsDecision: Wire.Decision {
+        .init(id: "dec-1", doc: docsDocId, goal: "g-app", question: "How should Android get push for doc mentions?",
+              options: [.init(id: "o-1", label: "Firebase Cloud Messaging", note: "Needs a Firebase project first"),
+                        .init(id: "o-2", label: "Poll while open", note: "No setup, but no push when closed"),
+                        .init(id: "o-3", label: "Wait", note: "Ship iOS push now, Android later")],
+              chosen: "o-1", rationale: "FCM is the standard path; the relay already speaks APNs and can learn FCM.",
+              status: .proposed, proposedBy: me, agent: "planner", proposedAt: ago(20))
+    }
 }

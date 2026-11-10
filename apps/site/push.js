@@ -55,6 +55,7 @@ const REASON_TEXT = {
   approval: "Plan ready to approve",
   review: "Ready for your review",
   mention: "You were mentioned",
+  decision: "A decision needs you",
 };
 
 /** Checks a signed request; the body (parsed) and the factory's record, or a Response saying why not. */
@@ -205,7 +206,7 @@ export async function handlePush(request, env, nowS = Math.floor(Date.now() / 10
     const { token, platform, environment, ref, reason } = body ?? {};
     if (platform !== "apns" && platform !== "fcm") return plain("platform is apns or fcm.", 400);
     if (typeof token !== "string" || !token || token.length > 4096) return plain("Send a device token.", 400);
-    if (typeof ref !== "string" || !/^[\w-]{1,40}$/.test(ref)) return plain("ref is a task key, like MF-12.", 400);
+    if (typeof ref !== "string" || !/^(?:[\w-]{1,40}|doc:[\w-]{1,64})$/.test(ref)) return plain("ref is a task key, like MF-12, or doc:<doc id>.", 400);
     if (!(reason in REASON_TEXT)) return plain("That isn't a reason.", 400);
     if (platform === "apns" && environment !== "sandbox" && environment !== "production") return plain("environment is sandbox or production.", 400);
     if (!configured[platform](env)) return plain("push isn't configured yet", 503);

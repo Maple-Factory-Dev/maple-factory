@@ -13,6 +13,7 @@ import { maySignIn, recheckEvery, revoked, revokeMember, stillMember, toMember, 
 import { Store } from "./factory/store.ts";
 import * as threads from "./factory/doc-threads.ts";
 import * as asks from "./factory/doc-asks.ts";
+import * as decisions from "./factory/decisions.ts";
 import { docAgentsIn } from "./factory/mentions.ts";
 import { Secrets } from "./secrets.ts";
 import { Push, deviceId } from "./push.ts";
@@ -102,6 +103,7 @@ export class OrgHub extends DurableObject<Env> {
       userToken: (login) => userToken(env, login),
       langfuse: this.langfuse,
       docMentions: (t) => ctx.waitUntil(threads.notifyMentions(this.push, t).catch((e) => console.error("push:", e))),
+      decisionPushes: (d) => ctx.waitUntil(this.members().then((ms) => decisions.notifyProposed(this.push, d, ms)).catch((e) => console.error("push:", e))),
     }, this.intake, this.secrets);
   }
 

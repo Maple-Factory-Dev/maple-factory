@@ -8,7 +8,7 @@
      Bridge: window.mapleDocs.load({ docId, token, me, members, tasks, threads?, demo? }), updateTasks(tasks), updateThreads(threads), updateDecisions(decisions),
      setTheme('light'|'dark'), exportMarkdown(), focus(), destroy(). Events (ready, status, peers, synced, theme, error, openTask, plus MF-364's
      command {command} for the app to relay to its socket and threads {open} for badges) go to
-     window.webkit.messageHandlers.maple when it exists, else to window.parent via postMessage. See docs/planning-docs.md. -->
+     window.webkit.messageHandlers.maple when it exists, else to the Android app's MapleAndroid.postMessage(json), else to window.parent via postMessage. See docs/planning-docs.md. -->
 <link rel="stylesheet" href="editor.css">
 <style>
   :root { --bg: #fdfcfb; --raised: #f4f2f3; --card: #ffffff; --text: #1d2025; --muted: #6a707a; --faint: #a9aeb6;
@@ -27,6 +27,8 @@
     const msg = { type, ...data };
     try {
       if (window.webkit?.messageHandlers?.maple) window.webkit.messageHandlers.maple.postMessage(msg);
+      // The bridge reaches every frame, so the app hands this frame a nonce with load() and hears nothing else without it.
+      else if (window.MapleAndroid?.postMessage) window.MapleAndroid.postMessage(JSON.stringify({ ...msg, nonce: window.__mapleAndroidNonce }));
       else if (window.parent !== window) window.parent.postMessage({ source: "maple-docs", ...msg }, "*");
     } catch {}
     console.log("[maple-docs]", type, JSON.stringify(data));
