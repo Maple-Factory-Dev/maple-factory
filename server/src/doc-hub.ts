@@ -8,7 +8,7 @@ import * as encoding from "lib0/encoding";
 import * as decoding from "lib0/decoding";
 import * as syncProtocol from "y-protocols/sync";
 import type { Env } from "./env.ts";
-import { readDoc, anchorFor, applySuggestion, DocToolError } from "../docs-editor/src/headless.js";
+import { readDoc, anchorFor, applySuggestion, insertDecision, DocToolError } from "../docs-editor/src/headless.js";
 
 const MESSAGE_SYNC = 0;
 const MESSAGE_AWARENESS = 1;
@@ -80,7 +80,7 @@ export class DocHub extends DurableObject<Env> {
       return new Response(null, { status: 204 });
     }
     // From OrgHub's agent doc tools (MF-365): read as Markdown, anchor a quote or block, apply an accepted suggestion.
-    if (request.method === "POST" && ["/read", "/anchor", "/apply"].includes(url.pathname)) return this.tools(url.pathname, request);
+    if (request.method === "POST" && ["/read", "/anchor", "/apply", "/insert-decision"].includes(url.pathname)) return this.tools(url.pathname, request);
     if (url.pathname !== "/sync") return new Response("Not found.", { status: 404 });
     const login = request.headers.get("x-member-login");
     const docId = request.headers.get("x-doc-id");
@@ -103,7 +103,7 @@ export class DocHub extends DurableObject<Env> {
     return new Response(null, { status: 101, webSocket: pair[0], headers: tokenProtocol ? { "sec-websocket-protocol": "maple-token" } : {} });
   }
 
-  /** /read {threads} → ReadDoc; /anchor {block?, quote?} → DocAnchor; /apply {anchor, markdown} → {before}. 422: the agent's mistake. */
+  /** /read {threads} → ReadDoc; /anchor {block?, quote?} → DocAnchor; /apply {anchor, markdown} → {before}; /insert-decision {id, block?, quote?} → {block}. 422: the agent's mistake. */
   private async tools(path: string, request: Request): Promise<Response> {
     const docId = request.headers.get("x-doc-id");
     if (docId) this.sql.exec("INSERT INTO meta (key, value) VALUES ('id', ?) ON CONFLICT (key) DO NOTHING", docId);
@@ -111,16 +111,19 @@ export class DocHub extends DurableObject<Env> {
     try {
       if (path === "/read") return Response.json(readDoc(this.doc, Array.isArray(body.threads) ? body.threads : []));
       if (path === "/anchor") return Response.json(anchorFor(this.doc, { block: body.block ?? null, quote: body.quote ?? null }));
+      if (path === "/insert-decision" && (typeof body.id !== "string" || !/^[0-9a-f-]{36}$/i.test(body.id))) return new Response("That isn't a decision id.", { status: 422 });
       // Applied on a copy first, so the update's own size counts against the cap the way a socket's does.
       const copy = new Y.Doc();
       Y.applyUpdate(copy, Y.encodeStateAsUpdate(this.doc));
-      const { before } = applySuggestion(copy, body.anchor, String(body.markdown ?? ""), null);
+      const out = path === "/insert-decision"
+        ? insertDecision(copy, body.id, { block: body.block ?? null, quote: body.quote ?? null }, null)
+        : applySuggestion(copy, body.anchor, String(body.markdown ?? ""), null);
       const update = Y.encodeStateAsUpdate(copy, Y.encodeStateVector(this.doc));
       copy.destroy();
       if (this.bytes + update.byteLength > MAX_DOC_BYTES) return new Response("This doc is full.", { status: 422 });
       // origin null: onUpdate keeps it, sends it to every open socket as a sync update, and touches OrgHub.
       Y.applyUpdate(this.doc, update, null);
-      return Response.json({ before });
+      return Response.json("before" in out ? { before: out.before } : out);
     } catch (e) {
       if (e instanceof DocToolError) return new Response(e.message, { status: 422 });
       throw e;

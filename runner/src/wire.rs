@@ -131,6 +131,42 @@ pub enum DocSuggestionStatus {
     Other,
 }
 
+/// Where a doc decision stands (MF-367).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DecisionStatus {
+    /// Waiting for a person to accept or reject it.
+    Proposed,
+    /// Accepted: the chosen option stands.
+    Accepted,
+    /// Rejected.
+    Rejected,
+    /// Was accepted, then replaced by a newer accepted decision. Final.
+    Superseded,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
+/// What one entry in a decision's append-only log did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DecisionAction {
+    /// Proposed.
+    Proposed,
+    /// Edited while still proposed.
+    Edited,
+    /// Accepted.
+    Accepted,
+    /// Rejected.
+    Rejected,
+    /// Replaced by a newer accepted decision.
+    Superseded,
+    /// A value this build doesn't know yet; newer servers may send them.
+    #[serde(other)]
+    Other,
+}
+
 /// githubstatus.com's overall indicator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2334,6 +2370,9 @@ pub struct Doc {
     /// Comment threads on it not yet resolved.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub open_threads: Option<u32>,
+    /// Decisions in it still proposed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_decisions: Option<u32>,
 }
 
 /// Where a comment thread sits in a doc's text: two Yjs relative positions on its `prosemirror` fragment, so concurrent edits move it with the text. Opaque to the server.
@@ -2424,6 +2463,74 @@ pub struct DocThread {
     /// The newest agent asked in this thread (MF-366).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<DocAgentRun>,
+}
+
+/// One option a decision considered.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionOption {
+    pub id: String,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// A reviewable decision recorded in a doc (MF-367): the server owns it; the doc's text only holds an embed with its id.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Decision {
+    pub id: Uuid,
+    pub doc: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
+    pub question: String,
+    #[serde(default)]
+    pub options: Vec<DecisionOption>,
+    /// The id of the chosen option.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chosen: Option<String>,
+    pub rationale: String,
+    pub status: DecisionStatus,
+    pub proposed_by: String,
+    /// Set when an agent proposed it, e.g. "MF-367 builder".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    pub proposed_at: u64,
+    /// Who accepted or rejected it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decided_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decided_at: Option<u64>,
+    /// The optional reason given when it was accepted or rejected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
+    /// The accepted decision this one replaces once accepted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supersedes: Option<Uuid>,
+    /// The decision that replaced this one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_by: Option<Uuid>,
+}
+
+/// One entry in a decision's append-only log, kept server-side so history can't be silently edited.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionEvent {
+    /// Its place in the org's log.
+    pub seq: u64,
+    pub decision: Uuid,
+    pub at: u64,
+    /// The member (or, for an agent proposal, the person it works for).
+    pub by: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    pub action: DecisionAction,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before: Option<Decision>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<Decision>,
 }
 
 /// Someone with the app open, and the task they're looking at.
@@ -3804,6 +3911,52 @@ pub enum ClientMessage {
     DocThreads {
         doc: Uuid,
     },
+    /// Propose a decision in a doc (MF-367). The client makes the id, so the editor can insert the embed first.
+    #[serde(rename = "decision.propose")]
+    DecisionPropose {
+        id: Uuid,
+        doc: Uuid,
+        question: String,
+        #[serde(default)]
+        options: Vec<DecisionOption>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        chosen: Option<String>,
+        rationale: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        supersedes: Option<Uuid>,
+    },
+    /// Change a decision while it's still proposed.
+    #[serde(rename = "decision.edit")]
+    DecisionEdit {
+        id: Uuid,
+        question: String,
+        #[serde(default)]
+        options: Vec<DecisionOption>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        chosen: Option<String>,
+        rationale: String,
+    },
+    /// Accept a proposed decision; records who and when. People only.
+    #[serde(rename = "decision.accept")]
+    DecisionAccept {
+        id: Uuid,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        chosen: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        why: Option<String>,
+    },
+    /// Reject a proposed decision. People only.
+    #[serde(rename = "decision.reject")]
+    DecisionReject {
+        id: Uuid,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        why: Option<String>,
+    },
+    /// Ask for a decision's append-only log; answered with `decision.log` to this connection.
+    #[serde(rename = "decision.log")]
+    DecisionLog {
+        id: Uuid,
+    },
     /// The task this app is showing, if any, for teammates' presence.
     #[serde(rename = "presence")]
     Presence {
@@ -4466,6 +4619,8 @@ pub enum ServerToClient {
         /// Every shared doc, archived ones too. None: an older server.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         docs: Option<Vec<Doc>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        decisions: Option<Vec<Decision>>,
         #[serde(default)]
         follows: Vec<GoalFollow>,
         /// Your quiet hours. None: none set, or an older server.
@@ -4591,6 +4746,18 @@ pub enum ServerToClient {
     #[serde(rename = "doc.thread.updated")]
     DocThreadUpdated {
         thread: DocThread,
+    },
+    /// A decision was proposed or changed, to every member.
+    #[serde(rename = "decision.updated")]
+    DecisionUpdated {
+        decision: Decision,
+    },
+    /// A decision's log, oldest first, to the connection that asked.
+    #[serde(rename = "decision.log")]
+    DecisionLog {
+        id: Uuid,
+        #[serde(default)]
+        events: Vec<DecisionEvent>,
     },
     /// Your draft, to your apps only.
     #[serde(rename = "draft.updated")]

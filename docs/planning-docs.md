@@ -205,6 +205,17 @@ In the web editor a suggestion's text is struck through in red, and its rail car
 shows the original and the rendered replacement with Accept / Reject; decided ones sit under Resolved as Accepted or
 Rejected.
 
+## Decisions (MF-367)
+
+Decisions are kept out of the prose so they can be reviewed. Type `/decision` in a doc to add a decision card: the question, the options considered (2–10), the chosen option and the rationale. A decision is **proposed**, then a person **accepts** it (a chosen option is required) or **rejects** it, with an optional *Why?*. An accepted decision can be **superseded**: its Supersede button proposes a new decision with `supersedes` set, and when that one is accepted the old one becomes superseded (`supersededBy`), which is final. Proposed decisions can be edited; decided ones can't.
+
+The server owns decisions, not the doc text. OrgHub keeps each decision's current state in a `decisions` table, and every change is appended to `decision_log`. SQLite triggers (`decision_log_no_update`, `decision_log_no_delete`) abort any UPDATE or DELETE, and `Store.recordDecision` is the only way to write to it, so history can't be quietly edited. The doc's Yjs text only holds a `decision` embed with the id; the card draws live from the feed (`decision.updated`, plus `decisions` in the snapshot), so editing the text can't change what was decided. Markdown export writes `> [!DECISION] <id> · question · status → chosen`.
+
+- Client messages: `decision.propose`, `decision.edit` (only while proposed), `decision.accept`, `decision.reject` (members only, recorded as the member) and `decision.log` (the append-only log, to that connection).
+- Agents get `propose_decision` with the other doc tools. It records a proposed decision with `agent` set and inserts the card after the given block or quote, or at the end (DocHub `POST /insert-decision`). No agent tool accepts or rejects; only people decide. `read_doc` lists a doc's decisions.
+- Web: `#/decisions` lists every decision with Open / Accepted / Rejected / Superseded / All chips and Person and Goal filters. A row links to `#/docs/<doc>?decision=<id>`, which scrolls to and flashes the card, and History shows the log. The nav entry is badged with the open count.
+- Apps: `FeedState.decisions`, `openDecisionTotal` and `openDecisionCount(goal:)`. The Mac sidebar has a Decisions row badged with open decisions and a native list, and a goal's Docs section shows its open-decision badge. The iPhone goal overview shows the count.
+
 ## Side conversations (MF-366)
 
 Select text, choose **Ask an agent** in the bubble menu (or on a thread card), pick Planner or Researcher and

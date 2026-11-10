@@ -36,6 +36,8 @@ public struct FeedState: Sendable {
     public var docs: [Wire.Doc] = []
     /// Docs' comment threads (MF-364), by doc id: only for docs someone asked about with `doc.threads`.
     public var docThreads: [String: [Wire.DocThread]] = [:]
+    /// Doc decisions (MF-367): from the snapshot, kept current by `decision.updated`.
+    public var decisions: [Wire.Decision] = []
     public var hasSnapshot = false
     /// The finished tasks the snapshot left out (older than its 14 days) and not loaded since, by goal id.
     /// Empty from an older server, which sends every task.
@@ -84,6 +86,7 @@ public struct FeedState: Sendable {
             acceptances = snapshot.acceptances
             recurring = Dictionary((snapshot.recurring ?? []).map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
             docs = snapshot.docs ?? []
+            decisions = snapshot.decisions ?? []
             hasSnapshot = true
         case .taskUpdated(let update) where fetching.contains(update.task.id):
             // A task asked for by ID (`task.get`), maybe one the snapshot left out.
@@ -135,6 +138,8 @@ public struct FeedState: Sendable {
             docs.removeAll { $0.id == removed.id }
         case .docThreads, .docThreadUpdated:
             Self.applyThreads(message, to: &docThreads)
+        case .decisionUpdated(let update):
+            Self.upsertDecision(update.decision, into: &decisions)
         case .toast(let toast):
             return .toast(toast.text, taskId: toast.taskId)
         case .error(let error):
@@ -443,6 +448,38 @@ public extension FeedState {
     }
 }
 extension Wire.Goal: Identifiable {}
+extension Wire.Decision: Identifiable {}
+
+/// Doc decisions (MF-367): the open-decision badges and the Decisions list's filters.
+public extension FeedState {
+    enum DecisionFilter: String, CaseIterable, Sendable { case open = "Open", accepted = "Accepted", rejected = "Rejected", superseded = "Superseded", all = "All" }
+
+    /// Decisions still proposed in a goal's docs.
+    func openDecisionCount(goal: String) -> Int { Self.openDecisionCount(decisions, goal: goal) }
+    /// Decisions still proposed anywhere: the sidebar Decisions row's badge.
+    var openDecisionTotal: Int { Self.openDecisionTotal(decisions) }
+    static func openDecisionTotal(_ list: [Wire.Decision]) -> Int { list.filter { $0.status == .proposed }.count }
+    static func openDecisionCount(_ list: [Wire.Decision], goal: String) -> Int { list.filter { $0.status == .proposed && $0.goal == goal }.count }
+
+    /// Decisions to list, newest change first.
+    static func filterDecisions(_ list: [Wire.Decision], filter: DecisionFilter, person: String? = nil, goal: String? = nil) -> [Wire.Decision] {
+        list.filter { d in
+            let status: Bool = switch filter {
+            case .open: d.status == .proposed
+            case .accepted: d.status == .accepted
+            case .rejected: d.status == .rejected
+            case .superseded: d.status == .superseded
+            case .all: true
+            }
+            return status && (person == nil || d.proposedBy == person || d.decidedBy == person) && (goal == nil || d.goal == goal)
+        }
+        .sorted { ($0.decidedAt ?? $0.proposedAt) > ($1.decidedAt ?? $1.proposedAt) }
+    }
+
+    static func upsertDecision(_ d: Wire.Decision, into list: inout [Wire.Decision]) {
+        if let i = list.firstIndex(where: { $0.id == d.id }) { list[i] = d } else { list.append(d) }
+    }
+}
 public extension Int {
     /// The sidebar's open-thread badge text: nil for zero.
     var nonZeroBadge: String? { self > 0 ? "\(self)" : nil }

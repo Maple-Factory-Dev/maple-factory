@@ -14,6 +14,7 @@ import { schema as docSchema, schemaExtensions, TASK_ID } from "./schema.js";
 import { markdownPasteSlice, toMarkdown, fromMarkdown, taskResolver } from "./markdown.js";
 import { SlashMenu, mentionSuggestions, bubbleMenuElement } from "./menus.js";
 import { nodeForUpload } from "./nodes.js";
+import { proposeDecision, flash as flashDecision } from "./decisions.js";
 import { ensureStarterBlock, STARTER_ORIGIN } from "./starter.js";
 import { commentHighlights, createCommentRail, anchorFromRange, resolveAnchor, mappingOf } from "./comments.js";
 
@@ -76,8 +77,10 @@ function localProvider(ydoc) {
  * Comments (MF-364): threads() → DocThread[]; sendThreadCommand(cmd) relays doc.comment / doc.resolve /
  * doc.reopen to the server (no rail without it); call handle.threadsChanged() when threads() changes.
  * onEvent also gets threads {open} for badges.
+ * Decisions (MF-367): decisions() → Decision[]; sendDecisionCommand(msg) relays decision.propose / edit /
+ * accept / reject (no /decision without it); call handle.decisionsChanged() when decisions() changes.
  */
-export function createDocEditor({ el, docId, me, members = () => [], tasks = () => [], threads = () => [], sendThreadCommand = null, upload = null, mermaidPage = "/app/mermaid/diagram.html", theme, token, origin = location.origin, onEvent = () => {}, demo = null }) {
+export function createDocEditor({ el, docId, me, members = () => [], tasks = () => [], threads = () => [], sendThreadCommand = null, decisions = () => [], sendDecisionCommand = null, upload = null, mermaidPage = "/app/mermaid/diagram.html", theme, token, origin = location.origin, onEvent = () => {}, demo = null }) {
   const ydoc = new Y.Doc();
   let provider;
   if (demo) {
@@ -114,7 +117,10 @@ export function createDocEditor({ el, docId, me, members = () => [], tasks = () 
     return res.json();
   });
   // The node views' callbacks (nodes.js).
-  const host = { tasks, members, docId, onEvent, mermaidPage, origin, listeners: new Set() };
+  const host = {
+    tasks, members, docId, mermaidPage, origin, listeners: new Set(), decisions, me: me.login,
+    onEvent: (name, data) => (name === "decision" ? sendDecisionCommand?.(data) : onEvent(name, data)),
+  };
   /** Uploads files and inserts each as an image or file chip at `pos` (the selection when absent). */
   async function insertFiles(files, pos = null) {
     for (const file of files) {
@@ -140,7 +146,7 @@ export function createDocEditor({ el, docId, me, members = () => [], tasks = () 
         mention: { suggestions: mentionSuggestions({ members, tasks }) },
         host,
       }),
-      Extension.create({ name: "docVisuals", addStorage: () => ({ pick, embedNext: false }) }),
+      Extension.create({ name: "docVisuals", addStorage: () => ({ pick, embedNext: false, decide: sendDecisionCommand ? () => proposeDecision(editor, host) : null }) }),
       Collaboration.configure({ document: ydoc, field: SHARED_TYPE }),
       CollaborationCaret.configure({ provider, user }),
       // The empty doc's hint (MF-382): marks the first empty paragraph `is-editor-empty`; editor.css draws the text.
@@ -216,9 +222,19 @@ export function createDocEditor({ el, docId, me, members = () => [], tasks = () 
     editor,
     provider,
     ydoc,
-    exportMarkdown: () => toMarkdown(editor.state.doc, { tasks: resolver() }),
+    exportMarkdown: () => toMarkdown(editor.state.doc, { tasks: resolver(), decisions: (id) => decisions().find((d) => d.id === id) }),
     /** The host's tasks changed (a feed update): task embeds redraw, the selection stays. */
     tasksChanged: () => host.listeners.forEach((f) => f()),
+    /** The host's decisions changed (snapshot / decision.updated): decision cards redraw. */
+    decisionsChanged: () => host.listeners.forEach((f) => f()),
+    /** Scrolls to a decision's card and flashes it (a #/docs/<id>?decision=<id> link). False: not in the doc. */
+    showDecision: (id) => {
+      const card = root.querySelector(`[data-decision="${CSS.escape(id)}"]`);
+      if (!card) return false;
+      card.scrollIntoView({ block: "center" });
+      flashDecision(card);
+      return true;
+    },
     /** The host's threads changed (doc.threads / doc.thread.updated): highlights and the rail redraw. */
     threadsChanged: () => rail?.refresh(),
     /** Comment on the current selection (the bubble menu's Comment). */

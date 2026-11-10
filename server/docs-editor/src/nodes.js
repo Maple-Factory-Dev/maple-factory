@@ -9,6 +9,7 @@
 //   mermaidPage: the diagram page URL
 //   listeners: redraw callbacks, run by the editor's tasksChanged()
 import { Node, mergeAttributes } from "@tiptap/core";
+import { DecisionEmbed } from "./decisions.js";
 import { Table, TableRow, TableHeader, TableCell } from "@tiptap/extension-table";
 
 export const CALLOUT_TONES = ["note", "tip", "warning", "important"];
@@ -373,5 +374,6 @@ export function visualExtensions(host = null) {
     Callout,
     Toggle,
     TaskEmbed.configure({ host }),
+    DecisionEmbed.configure({ host }),
   ];
 }
