@@ -439,6 +439,9 @@ export function createSettings({ state, h, send, toast, render, ago }) {
             h("div", { class: "title mono" }, r.name),
             h("div", { class: "sub" }, r.source === "github" ? "GitHub App" : "Added by hand", r.isPrivate ? " · private" : " · public",
               r.defaultBranch ? ` · ${r.defaultBranch}` : "", r.description ? ` · ${r.description}` : "")),
+          // MF-394: what agents remember about this repo, on the Memory page.
+          h("a", { class: "btn small ghost", href: `#/memory?scope=${encodeURIComponent(`repo:${r.name}`)}`, "data-testid": "repo-memory-link" },
+            `Memory (${(state.memories ?? []).filter((m) => m.scope?.kind === "repo" && m.scope.key === r.name && m.status !== "archived").length})`),
           r.source !== "github" && (ask(`repo:${r.name}`, `Remove ${r.name}?`, "Remove",
             () => go({ type: "repos.remove", name: r.name }, { key: "repos", text: `Removed ${r.name}.` }))
             ?? h("button", { type: "button", class: "btn small danger-text", onclick: () => { confirming.add(`repo:${r.name}`); render(); } }, "Remove")))))

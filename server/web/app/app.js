@@ -15,6 +15,7 @@ import { bundleStale } from "./update.js";
 import { createSettings } from "./settings.js";
 import { createDocs, DOC_ROUTE } from "./docs.js";
 import { createDecisions } from "./decisions.js";
+import { createMemory } from "./memory.js";
 import { inQuietHours } from "./quiet-hours.js";
 import { canManage, machineStatus, meters, pauseSettings, pauseUntil, resumeSettings, sortMachines, teammatesTasks, usageRows } from "./machines.js";
 import { fillIcons, icon } from "./icons.js";
@@ -181,6 +182,8 @@ function send(msg) {
 
 function receive(m) {
   settings.receive(m);
+  // Shared memories (MF-394): state.memories from the snapshot, memory.updated and memory.removed.
+  if (memoryPage.receive(m)) return render();
   // Docs (MF-361): state.docs from the snapshot, doc.updated and doc.removed.
   const docMsg = docs.receive(m);
   if (docMsg === "quiet") return;
@@ -465,6 +468,7 @@ function route() {
   const doc = hash.match(DOC_ROUTE);
   if (doc) return { name: "doc", nav: "docs", id: doc[1], decision: new URLSearchParams(query).get("decision") };
   if (hash === "/decisions") return { name: "decisions", nav: "decisions", query };
+  if (hash === "/memory") return { name: "memory", nav: "memory", query };
   if (hash === "/docs") return { name: "docs", nav: "docs", query };
   const settings = hash.match(/^\/settings(?:\/([\w-]+))?$/);
   if (task) return { name: "task", nav: "tasks", id: task[1], artifact: new URLSearchParams(query).get("artifact") };
@@ -492,7 +496,7 @@ function render() {
   for (const [nav, label] of [["inbox", waiting ? `Inbox, ${waiting} waiting` : "Inbox"], ["machines", online() ? `Machines, ${online()} online` : "Machines"]])
     document.querySelector(`[data-nav="${nav}"]`)?.setAttribute("aria-label", label);
   document.title = `${waiting ? `(${waiting}) ` : ""}Maple Factory`;
-  const next = { task: () => taskView(r.id, r.artifact), tasks: tasksView, new: () => newTaskView(r), notes: notesView, docs: () => docs.listView(r), doc: () => docs.docView(r.id, r.decision), decisions: () => decisionsPage.view(r), machines: machinesView, note: () => noteView(r.id), settings: () => settings.view(r.section) }[r.name]?.() ?? inboxView();
+  const next = { task: () => taskView(r.id, r.artifact), tasks: tasksView, new: () => newTaskView(r), notes: notesView, docs: () => docs.listView(r), doc: () => docs.docView(r.id, r.decision), decisions: () => decisionsPage.view(r), memory: () => memoryPage.view(r), machines: machinesView, note: () => noteView(r.id), settings: () => settings.view(r.section) }[r.name]?.() ?? inboxView();
   // The open doc's editor never leaves the page: redraw only around it, or ProseMirror loses focus and typing.
   if (r.name === "doc" && docs.patch($("main"), next)) return;
   // Keep what someone's typing: re-render only around the boxes being typed in.
@@ -502,6 +506,7 @@ const view = render;
 const settings = createSettings({ state, h, send, toast, render, ago });
 const docs = createDocs({ state, h, send, render, toast, icon, ago, allTasks });
 const decisionsPage = createDecisions({ state, h, send, icon, ago });
+const memoryPage = createMemory({ state, h, send, icon, ago, render });
 
 // Sections of the Inbox and Tasks pages folded down to their heading, kept in this browser.
 const collapsed = loadCollapsed();
@@ -2040,12 +2045,23 @@ function askCard(e) {
     a.note && h("blockquote", { class: "ask-note" }, a.note));
 }
 
+/** MF-394: "Remembered N things" on the timeline when agents saved memories while working on the task. */
+function remembered(t) {
+  const mine = (state.memories ?? []).filter((m) => m.source?.task === t.id);
+  if (!mine.length) return [];
+  const at = Math.max(...mine.map((m) => m.createdAt));
+  return [{ at, el: h("div", { class: "event memory-event", "data-testid": "timeline-memory" }, icon("lightbulb", { size: 14 }), " ",
+    h("a", { href: `#/memory?task=${encodeURIComponent(t.id)}` }, `Remembered ${mine.length} ${mine.length === 1 ? "thing" : "things"}`),
+    h("span", { class: "when" }, ago(at))) }];
+}
+
 function timeline(t) {
   const known = knownTasks();
   const items = [
     ...t.events.map((e) => ({ at: e.at, el: e.ask ? askCard(e) : h("div", { class: "event" }, h("b", {}, name(e.who)), " ", e.text, h("span", { class: "when" }, ago(e.at))) })),
     ...threads(t.comments).map((th) => ({ at: th.at, el: thread(t, th, known) })),
     ...t.changes.map((c) => ({ at: c.at, el: h("div", { class: "comment" }, h("div", { class: "row" }, h("b", {}, name(c.author)), h("span", { class: "muted" }, `asked for a change${c.anchor ? ` · ${c.anchor}` : ""} · ${c.status}`), h("span", { class: "when faint" }, ago(c.at))), markdown(c.text, h, known)) })),
+    ...remembered(t),
   ].sort((a, b) => b.at - a.at);
   return [h("h2", {}, "Timeline"),
     compose(t, "comment", "Comment…", "Comment", (text) => send({ type: "task.comment", id: t.id, text })),
