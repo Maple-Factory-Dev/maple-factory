@@ -72,6 +72,8 @@ export const SLASH_ITEMS = [
   { title: "Callout", icon: "!", run: (c) => c.wrapIn("callout", { tone: "note" }) },
   { title: "Toggle", icon: "▸", run: (c) => c.wrapIn("toggle", { summary: "", open: true }) },
   { title: "Task embed", icon: "#", hint: "live card", run: (c, editor) => { if (editor.storage.docVisuals) editor.storage.docVisuals.embedNext = true; return c.insertContent("#"); } },
+  // MF-367: a reviewable decision, proposed on the server once inserted (only when the host can send it).
+  { title: "Decision", icon: "⚖", hint: "propose · accept", run: (c, editor) => { const v = editor.storage.docVisuals; if (v?.decide) setTimeout(() => v.decide()); return c; } },
 ];
 
 /** `/` at the start of a word opens the block menu. */

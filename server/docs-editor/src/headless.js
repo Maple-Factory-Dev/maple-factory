@@ -131,6 +131,37 @@ export function applySuggestion(ydoc, anchor, markdown, origin = null) {
   return { before: now, after: next };
 }
 
+/**
+ * Inserts a decision embed (MF-367) for decision `id`: after the top-level block holding `block` or `quote`,
+ * or at the end of the doc. One Yjs transaction on `ydoc`. Returns {block: the block it follows, or null}.
+ */
+export function insertDecision(ydoc, id, { block = null, quote = null } = {}, origin = null) {
+  const v = view(ydoc);
+  if (findDecision(v.doc, id)) fail(`Decision ${id} is already in this doc.`);
+  let after = null;
+  if (block || quote) {
+    let scope = block ? v.blocks.find((b) => b.id === block) ?? fail(`There's no block ${block} in this doc any more; read_doc again.`) : null;
+    if (quote) {
+      const hits = scope ? findQuote(scope.node, scope.from, quote) : findQuote(v.doc, -1, quote);
+      if (!hits.length) fail(`"${quote.slice(0, 80)}" isn't in ${scope ? `block ${block}` : "the doc"}.`);
+      if (hits.length > 1) fail(`"${quote.slice(0, 80)}" appears ${hits.length} times; quote more of it, or give its block.`);
+      scope = v.blocks.find((b) => hits[0][0] >= b.from && hits[0][0] < b.to) ?? scope;
+    }
+    after = scope;
+  }
+  const at = after ? after.to : v.doc.content.size;
+  const next = new Transform(v.doc).insert(at, schema.nodes.decision.create({ id })).doc;
+  ydoc.transact(() => updateYFragment(ydoc, v.fragment, next, v.meta), origin);
+  return { block: after?.id ?? null };
+}
+
+/** Whether the doc holds a decision embed for `id`. */
+export function findDecision(doc, id) {
+  let found = false;
+  doc.descendants((n) => { if (found) return false; if (n.type.name === "decision" && n.attrs.id === id) found = true; return !found; });
+  return found;
+}
+
 /** Seeds an empty Y.Doc from Markdown (tests, and DocHub's /seed for local dev). */
 export function seedDoc(ydoc, markdown) {
   const fragment = ydoc.getXmlFragment(SHARED_TYPE);

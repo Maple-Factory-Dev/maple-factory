@@ -93,7 +93,7 @@ function tokenizer({ members, tasks }) {
   return md;
 }
 
-const ALERT = /^\[!(NOTE|TIP|WARNING|IMPORTANT|TOGGLE|TASK)\][ \t]*([^\n]*)/;
+const ALERT = /^\[!(NOTE|TIP|WARNING|IMPORTANT|TOGGLE|TASK|DECISION)\][ \t]*([^\n]*)/;
 const ATTACHMENT = /^\/attachments\//;
 
 /** An image that isn't an attachment alone in its paragraph (those became image nodes), as a link to its src:
@@ -149,6 +149,14 @@ function visuals(state) {
       if (!m) continue;
       const [, kind, rest] = m;
       const j = closeOf(i);
+      if (kind === "DECISION") {
+        // An atom (MF-367): only the id is read back; the question, status and choice live on the server.
+        const id = rest.match(/^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i)?.[1] ?? null;
+        const t = new T("decision_embed", "", 0);
+        t.attrs = [["id", id]];
+        toks.splice(i, j - i + 1, t);
+        continue;
+      }
       if (kind === "TASK") {
         // An atom: only the marker line's id is read back; the rest (the task's live state) is a snapshot.
         const id = rest.match(new RegExp(`^(${TASK_ID.source})\\b`))?.[1] ?? null;
@@ -197,6 +205,7 @@ export function markdownParser(schema, ctx = {}) {
     callout: { block: "callout", getAttrs: (tok) => ({ tone: tok.attrGet("tone") }) },
     toggle: { block: "toggle", getAttrs: (tok) => ({ summary: tok.attrGet("summary") }) },
     task_embed: { node: "taskEmbed", getAttrs: (tok) => ({ id: tok.attrGet("id") }), noCloseToken: true },
+    decision_embed: { node: "decision", getAttrs: (tok) => ({ id: tok.attrGet("id") }), noCloseToken: true },
     hardbreak: { node: "hardBreak" },
     mention: { node: "mention", getAttrs: (tok) => ({ id: tok.attrGet("id"), label: tok.attrGet("label") }) },
     taskref: { node: "taskRef", getAttrs: (tok) => ({ id: tok.attrGet("id"), title: tok.attrGet("title") }) },
@@ -215,6 +224,7 @@ export function fromMarkdown(schema, text, ctx = {}) {
 
 // The task lookup an export snapshots embeds from (set by toMarkdown for the length of one serialize).
 let exportTasks = null;
+let exportDecisions = null;
 const oneLine = (s) => String(s ?? "").replace(/\s*\n\s*/g, " ").trim();
 const fence = (state, node, lang, body) => {
   const f = body.match(/`{3,}/gm) ? "~~~~" : "```";
@@ -287,6 +297,12 @@ export const serializer = new MarkdownSerializer(
     },
     callout: (state, node) => state.wrapBlock("> ", null, node, () => { state.write(`[!${node.attrs.tone.toUpperCase()}]\n`); state.renderContent(node); }),
     toggle: (state, node) => state.wrapBlock("> ", null, node, () => { state.write(`[!TOGGLE]${node.attrs.summary ? ` ${oneLine(node.attrs.summary)}` : ""}\n`); state.renderContent(node); }),
+    decision: (state, node) => {
+      const d = exportDecisions?.(node.attrs.id);
+      const chosen = d?.options?.find((o) => o.id === d.chosen)?.label;
+      const parts = [node.attrs.id ?? "", d ? oneLine(d.question) : null, d?.status ?? null];
+      alert(state, node, `[!DECISION] ${parts.filter(Boolean).join(" · ")}${chosen && d.status !== "proposed" ? ` → ${oneLine(chosen)}` : ""}`);
+    },
     taskEmbed: (state, node) => {
       const t = exportTasks?.(node.attrs.id);
       const parts = [node.attrs.id ?? "", t?.title && oneLine(t.title), t?.state, t?.pr?.number && `PR #${t.pr.number}`, t?.assignee && `@${t.assignee}`];
@@ -324,12 +340,14 @@ function backticks(node, side) {
 
 /** A ProseMirror doc → Markdown. `tasks` (an id → task lookup) snapshots task embeds' state, PR and owner,
  *  into the export. */
-export function toMarkdown(doc, { tasks = null } = {}) {
+export function toMarkdown(doc, { tasks = null, decisions = null } = {}) {
   exportTasks = tasks;
+  exportDecisions = decisions;
   try {
     return serializer.serialize(doc).replace(/\n+$/, "") + "\n";
   } finally {
     exportTasks = null;
+    exportDecisions = null;
   }
 }
 
