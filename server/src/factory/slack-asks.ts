@@ -5,7 +5,7 @@
 // OrgHub's kv for 30 minutes; each channel's goals (picked when Maple joins it) live there too.
 
 import type { Goal, Machine, ServerToRunner, Task } from "../wire.ts";
-import { postMessage, updateMessage, type Blocks, type SlackAction, type SlackAsk, type SlackAttachment } from "../slack.ts";
+import { deleteMessage, postMessage, updateMessage, type Blocks, type SlackAction, type SlackAsk, type SlackAttachment } from "../slack.ts";
 import { lastJson } from "./drafts.ts";
 import { goalMayFetch } from "./repos.ts";
 import type { Store } from "./store.ts";
@@ -34,8 +34,10 @@ export type Ask = {
   agent: string;
   channel: string;
   threadTs: string;
-  /** The bot's "Looking into it…" message, replaced by the answer. */
+  /** The bot's "Looking into it…" message, removed once the answer is posted. */
   replyTs: string;
+  /** The answer's own message (a new reply, so Slack notifies), which holds the card; null until then. */
+  answerTs: string | null;
   requester: string;
   /** The asker's factory login, when their Slack account is linked. */
   login: string | null;
@@ -192,7 +194,7 @@ export class SlackAsks {
       if (ask.machine !== machine || ask.expiresAt <= Date.now()) continue;
       ask.state = "answered";
       this.save(ask);
-      await this.update(ask.channel, ask.replyTs, `${name} went offline before answering. Mention me again in a moment.`);
+      await this.finish(ask, `${name} went offline before answering. Mention me again in a moment.`);
     }
   }
 
@@ -202,7 +204,7 @@ export class SlackAsks {
       if (ask.expiresAt > Date.now()) continue;
       ask.state = "answered";
       this.store.set(`slack:ask:${ask.id}`, JSON.stringify(ask));
-      await this.update(ask.channel, ask.replyTs, "I didn't hear back in time, so I don't have an answer. Mention me again to try once more.");
+      await this.finish(ask, "I didn't hear back in time, so I don't have an answer. Mention me again to try once more.");
     }
     this.prune();
     const next = Math.min(...this.ids().map((id) => this.load(id)?.expiresAt ?? Infinity));
@@ -258,6 +260,32 @@ export class SlackAsks {
     if (token) await updateMessage(token, channel, ts, said, blocks).catch((e) => this.deps.problem((e as Error).message));
   }
 
+  /** Removes "Looking into it…"; if Slack won't, it points at the answer instead. */
+  private async remove(channel: string, ts: string) {
+    const token = await this.deps.token();
+    if (!token) return;
+    try {
+      await deleteMessage(token, channel, ts);
+    } catch (e) {
+      this.deps.problem((e as Error).message);
+      await this.update(channel, ts, "Answered below.");
+    }
+  }
+
+  /** An ask's last word, as a new reply in its thread (Slack doesn't notify on an edit), then "Looking into it…" goes.
+   *  If the reply can't be posted, "Looking into it…" is edited into it instead, so it isn't lost. */
+  private async finish(ask: Ask, said: string, blocks?: Blocks) {
+    const ts = await this.post(ask.channel, ask.threadTs, said, blocks);
+    if (!ts) {
+      ask.answerTs = ask.replyTs;
+      this.store.set(`slack:ask:${ask.id}`, JSON.stringify(ask));
+      return this.update(ask.channel, ask.replyTs, said, blocks);
+    }
+    ask.answerTs = ts;
+    this.store.set(`slack:ask:${ask.id}`, JSON.stringify(ask));
+    await this.remove(ask.channel, ask.replyTs);
+  }
+
   /** Maple joined a channel (a message of its own), or someone mentioned it with `goals` (a reply in their thread, if they're in one): asks which goals the channel works on. */
   async picker(channel: string, threadTs?: string) {
     const active = this.store.goals().filter((g) => !g.archived);
@@ -307,7 +335,7 @@ export class SlackAsks {
     const replyTs = await this.post(input.channel, input.threadTs, "Looking into it…");
     if (!replyTs) return;
     const ask: Ask = {
-      id: SLACK_PREFIX + crypto.randomUUID(), machine: machine.id, owner: machine.owner, agent, channel: input.channel, threadTs: input.threadTs, replyTs,
+      id: SLACK_PREFIX + crypto.randomUUID(), machine: machine.id, owner: machine.owner, agent, channel: input.channel, threadTs: input.threadTs, replyTs, answerTs: null,
       requester: input.requester, login, question: input.question, thread: input.thread, attachments: input.attachments,
       goals: goals.map((g) => g.id), goal: goal.id, state: "running", proposal: null, answer: null, note, task: null, expiresAt: Date.now() + ASK_MS,
     };
@@ -317,11 +345,11 @@ export class SlackAsks {
     if (!(await this.deps.toRunner(machine.id, command))) {
       ask.expiresAt = 0;
       this.save(ask);
-      await this.update(ask.channel, replyTs, `I couldn't reach ${machine.name}. Mention me again in a moment.`);
+      await this.finish(ask, `I couldn't reach ${machine.name}. Mention me again in a moment.`);
     }
   }
 
-  /** The agent's answer replaces "Looking into it…"; a proposed task comes with its buttons. */
+  /** The agent's answer, posted as a new reply in place of "Looking into it…"; a proposed task comes with its buttons. */
   async done(runId: string, machine: string, output: string | null, error: string | null) {
     const ask = this.forRun(runId, machine);
     if (!ask || ask.state !== "running" || ask.expiresAt <= Date.now()) return;
@@ -330,7 +358,7 @@ export class SlackAsks {
     if (!parsed) {
       ask.state = "answered";
       this.save(ask);
-      return this.update(ask.channel, ask.replyTs, `I couldn't work that out${error ? ` (${error.slice(0, 200)})` : ""}. Try asking another way.`);
+      return this.finish(ask, `I couldn't work that out${error ? ` (${error.slice(0, 200)})` : ""}. Try asking another way.`);
     }
     ask.state = "answered";
     ask.proposal = parsed.proposal;
@@ -340,7 +368,7 @@ export class SlackAsks {
     this.deps.wakeIn(ASK_MS + 1000);
     const blocks = sections(ask.answer);
     if (ask.proposal) blocks.push(...card(ask, this.store.goal(ask.proposal.goal), null));
-    await this.update(ask.channel, ask.replyTs, ask.answer.slice(0, 3000), blocks);
+    await this.finish(ask, ask.answer.slice(0, 3000), blocks);
   }
 
   /** A click on one of Maple's messages. */
@@ -350,7 +378,7 @@ export class SlackAsks {
     const ask = a.value ? this.load(a.value) : null;
     if (!ask || ask.channel !== a.channel.id) return;
     const goal = ask.proposal ? this.store.goal(ask.proposal.goal) : null;
-    const answer = (footer: string) => this.update(ask.channel, ask.replyTs, (ask.answer ?? footer).slice(0, 3000), [...sections(ask.answer ?? ""), ...card(ask, goal, footer)]);
+    const answer = (footer: string) => this.update(ask.channel, ask.answerTs ?? ask.replyTs, (ask.answer ?? footer).slice(0, 3000), [...sections(ask.answer ?? ""), ...card(ask, goal, footer)]);
     if (ask.state === "created") return void (await this.post(ask.channel, ask.threadTs, `That's already ${ask.task}.`));
     if (ask.state === "dismissed") return void (await this.post(ask.channel, ask.threadTs, "That proposal was set aside. Mention me again to get a fresh one."));
     if (ask.state !== "answered" || !ask.proposal || ask.expiresAt <= Date.now()) {
