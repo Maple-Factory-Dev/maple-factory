@@ -362,6 +362,8 @@ struct ContentView: View {
             .animation(.snappy(duration: 0.25), value: Updater.shared.showsToast)
         }
         .sheet(isPresented: Bindable(Updater.shared).showsReleaseNotes) { ReleaseNotesSheet() }
+        // ⌘K's "Keyboard shortcuts": hosted here, since the palette closes as it opens this.
+        .sheet(isPresented: Bindable(state).showsKeyboardShortcuts) { KeyboardShortcutsSheet() }
         // ⌘K: above the sidebar, the slab and the toasts, below a proof shown large.
         .overlay {
             if state.showPalette {
@@ -503,8 +505,7 @@ struct ContentView: View {
 
     /// In a narrow window the task panel slides over the content instead of squeezing it.
     @ViewBuilder private var floatingInspector: some View {
-        if state.isCompact, state.showInspector, !state.isLoadingFactory, state.focusedTask == nil, !state.isComposing, state.goalSheet == nil,
-           ![.scratchpad, .dayReport, .usage, .statistics, .needsHand, .machines, .intake].contains(state.destination) {
+        if state.isCompact, state.taskPanelVisible {
             ZStack(alignment: .trailing) {
                 Color.black.opacity(0.12)
                     .contentShape(Rectangle())

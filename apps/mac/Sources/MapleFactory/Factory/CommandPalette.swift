@@ -44,7 +44,6 @@ struct CommandPalette: View {
             .defaultFocus($fieldFocused, true)
         }
         .onAppear(perform: focusField)
-        .sheet(isPresented: $state.showsKeyboardShortcuts) { KeyboardShortcutsSheet() }
     }
 
     /// The caret in the search field, so typing starts the search without a click. A runloop late: on appear the

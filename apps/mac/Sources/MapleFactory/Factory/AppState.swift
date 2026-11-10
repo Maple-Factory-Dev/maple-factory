@@ -389,6 +389,7 @@ final class AppState {
         closeFocus()
         isComposing = false
         destination = .inbox
+        loadRecent()
     }
 
     /// Signs out of this factory: on to the next saved one, or, the last gone, connect to another
@@ -424,10 +425,15 @@ final class AppState {
     var sidebarFloating: Bool { isCompact && !sidebarCollapsed }
     /// The sidebar's width plus the factory rail's beside it.
     var sidebarSpace: CGFloat { (sidebarCollapsed || isCompact ? 68 : 250) + railSpace }
-    var inspectorInline: Bool {
-        showInspector && !isCompact && !isLoadingFactory && focusedTask == nil && !isComposing && goalSheet == nil
+    /// The task panel is on screen: inline beside the content, or floating over it in a narrow window.
+    var taskPanelVisible: Bool {
+        showInspector && !isLoadingFactory && focusedTask == nil && !isComposing && goalSheet == nil
             && ![.scratchpad, .dayReport, .usage, .statistics, .needsHand, .machines, .intake].contains(destination)
     }
+    var inspectorInline: Bool { taskPanelVisible && !isCompact }
+    /// The task ⌘K's "This task" acts on: the full view, or the panel when it's on screen, so the
+    /// ⋯ menu that shows Schedule…, Assign…, Cancel… and Rename… is there too.
+    var paletteTask: String? { focusedTask ?? (taskPanelVisible ? selectedTask : nil) }
     /// Width left for the main content once the sidebar and an inline inspector take theirs.
     var contentWidth: CGFloat { windowWidth - sidebarSpace - (inspectorInline ? 380 : 0) }
 
@@ -1408,7 +1414,7 @@ final class AppState {
         if let moving = paletteMovingTask {
             return CommandPaletteModel.moveTargets(query: paletteQuery, task: moving, goals: moveTargets(moving).map(\.goal.name))
         }
-        let open = (focusedTask ?? openedTask).flatMap { id in tasks.first { $0.id == id } }
+        let open = paletteTask.flatMap { id in tasks.first { $0.id == id } }
         let factories = (client?.savedFactories ?? [])
             .filter { $0.id != client?.server.map(SavedFactory.key) }
             .map { PaletteFactory(id: $0.id, name: $0.name) }
@@ -1426,14 +1432,20 @@ final class AppState {
 
     private var recentKey: String { "paletteRecent.\(client?.server.map(SavedFactory.key) ?? "mockup")" }
 
+    /// The factory key the in-memory list was read from: a write never lands on another factory's
+    /// key, and the first open after launch or a switch adds to the saved list, not an empty one.
+    @ObservationIgnored private var recentLoadedKey: String?
+
     func rememberRecent(_ item: PaletteItem) {
+        if recentLoadedKey != recentKey { loadRecent() }
         recentPaletteItems = PaletteRecent.adding(item, to: recentPaletteItems)
-        AppDefaults.set(recentPaletteItems.compactMap(PaletteRecent.encode), forKey: recentKey)
+        boardDefaults.set(recentPaletteItems.compactMap(PaletteRecent.encode), forKey: recentKey)
     }
 
     /// The saved list for the factory now open.
     func loadRecent() {
-        recentPaletteItems = (AppDefaults.stringArray(forKey: recentKey) ?? []).compactMap(PaletteRecent.decode)
+        recentLoadedKey = recentKey
+        recentPaletteItems = (boardDefaults.stringArray(forKey: recentKey) ?? []).compactMap(PaletteRecent.decode)
     }
 
     /// A task or doc that's still here.
