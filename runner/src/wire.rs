@@ -2059,6 +2059,9 @@ pub struct RiskPolicy {
     /// When an approved change won't merge, send it back to a builder to fix (twice at most) before raising a hand. None: on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_fix_merges: Option<bool>,
+    /// When a task in review fails its CI checks, send it back to its builder to fix them (twice at most) before leaving it for a person. None: on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_fix_checks: Option<bool>,
     /// When off, nothing merges on its own: approved, proven changes wait in Pending merge for a person. None: on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_merges: Option<bool>,
@@ -4658,6 +4661,11 @@ pub enum ClientMessage {
     /// Run the pull request's failed CI checks again.
     #[serde(rename = "task.rerunChecks")]
     TaskRerunChecks {
+        id: String,
+    },
+    /// Send the task back to its builder to fix its failed CI checks.
+    #[serde(rename = "task.fixChecks")]
+    TaskFixChecks {
         id: String,
     },
     /// Read the pull request and its CI from GitHub again, for a webhook that didn't arrive.

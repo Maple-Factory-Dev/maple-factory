@@ -20,6 +20,7 @@ export const DEFAULT_POLICY: RiskPolicy = {
   finalReviews: { low: 0, medium: 1, high: 2 },
   autoMerge: { low: true, medium: false, high: false },
   autoFixMerges: true,
+  autoFixChecks: true,
   autoMerges: true,
   scoutItems: 3,
   taskMinutes: DEFAULT_TASK_MINUTES,

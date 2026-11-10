@@ -297,6 +297,10 @@ struct PullRequestCard: View {
                     if !failed.isEmpty {
                         smallButton("Re-run failed", icon: "arrow.clockwise") { state.rerunFailedChecks(task.id) }
                     }
+                    if !failed.isEmpty, task.state == .reviewing {
+                        smallButton("Fix with builder", icon: "wrench.and.screwdriver") { state.fixFailedChecks(task.id) }
+                            .help("Send it back to its builder with each failed check's step and log to fix")
+                    }
                     if !pr.isLocal {
                         smallButton("Recheck", icon: "arrow.triangle.2.circlepath") { state.recheckGitHub(task.id) }
                             .help("Read the pull request and its checks from GitHub again")
@@ -321,6 +325,9 @@ struct PullRequestCard: View {
             .disabled(pr.isLocal || check.status == .queued)
         Button("Re-run", systemImage: "arrow.clockwise") { state.rerunCheck(task.id, check: check.name) }
             .disabled(!Self.canRerun(check, pr: pr))
+        if check.status == .failed, pr.state != .merged, task.state == .reviewing {
+            Button("Fix with Builder", systemImage: "wrench.and.screwdriver") { state.fixFailedChecks(task.id) }
+        }
         Divider()
         Link(destination: Self.githubURL(check, pr: pr)) { Label("Open on GitHub", systemImage: "arrow.up.right.square") }
     }

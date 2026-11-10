@@ -37,6 +37,10 @@ export interface TaskPrivate {
   mergeHead?: string | null;
   /** Times the factory sent it back to fix a merge on its own (autoFixMerges). */
   mergeFixes?: number;
+  /** Times the factory sent it back to fix failed CI checks (autoFixChecks); reset when CI passes. */
+  checkFixes?: number;
+  /** The head it was last sent back for failed checks on, so the same failing head isn't sent twice. */
+  checkFixedHead?: string | null;
   /** A dry-run merge (`task.merge_check`) waiting for its answer: the head it checks, the task whose
    *  merge prompted it (none: the check before its own auto-merge), and when it was sent. */
   mergeCheck?: { head: string | null; since: string | null; at: number } | null;

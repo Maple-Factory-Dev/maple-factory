@@ -4242,6 +4242,8 @@ public enum Wire {
         public var autoMerge: [String: Bool]
         /// When an approved change won't merge, send it back to a builder to fix (twice at most) before raising a hand. None: on.
         public var autoFixMerges: Bool?
+        /// When a task in review fails its CI checks, send it back to its builder to fix them (twice at most) before leaving it for a person. None: on.
+        public var autoFixChecks: Bool?
         /// When off, nothing merges on its own: approved, proven changes wait in Pending merge for a person. None: on.
         public var autoMerges: Bool?
         /// The most leftovers one Scout run turns into drafted plans (1–10). None: 3.
@@ -4255,7 +4257,7 @@ public enum Wire {
         /// The optional risk classifier. None: off.
         public var classifier: RiskClassifier?
 
-        public init(maxFiles: UInt32, maxLines: UInt32, areas: [SensitiveArea] = [], planApprovals: [String: UInt32] = [:], finalReviews: [String: UInt32] = [:], autoMerge: [String: Bool] = [:], autoFixMerges: Bool? = nil, autoMerges: Bool? = nil, scoutItems: UInt32? = nil, taskMinutes: UInt32? = nil, taskCostUsd: Double? = nil, overBudget: String? = nil, classifier: RiskClassifier? = nil) {
+        public init(maxFiles: UInt32, maxLines: UInt32, areas: [SensitiveArea] = [], planApprovals: [String: UInt32] = [:], finalReviews: [String: UInt32] = [:], autoMerge: [String: Bool] = [:], autoFixMerges: Bool? = nil, autoFixChecks: Bool? = nil, autoMerges: Bool? = nil, scoutItems: UInt32? = nil, taskMinutes: UInt32? = nil, taskCostUsd: Double? = nil, overBudget: String? = nil, classifier: RiskClassifier? = nil) {
             self.maxFiles = maxFiles
             self.maxLines = maxLines
             self.areas = areas
@@ -4263,6 +4265,7 @@ public enum Wire {
             self.finalReviews = finalReviews
             self.autoMerge = autoMerge
             self.autoFixMerges = autoFixMerges
+            self.autoFixChecks = autoFixChecks
             self.autoMerges = autoMerges
             self.scoutItems = scoutItems
             self.taskMinutes = taskMinutes
@@ -4280,6 +4283,7 @@ public enum Wire {
             finalReviews = try c.decodeIfPresent([String: UInt32].self, forKey: .finalReviews) ?? [:]
             autoMerge = try c.decodeIfPresent([String: Bool].self, forKey: .autoMerge) ?? [:]
             autoFixMerges = try c.decodeIfPresent(Bool.self, forKey: .autoFixMerges)
+            autoFixChecks = try c.decodeIfPresent(Bool.self, forKey: .autoFixChecks)
             autoMerges = try c.decodeIfPresent(Bool.self, forKey: .autoMerges)
             scoutItems = try c.decodeIfPresent(UInt32.self, forKey: .scoutItems)
             taskMinutes = try c.decodeIfPresent(UInt32.self, forKey: .taskMinutes)
@@ -8830,6 +8834,15 @@ public enum Wire {
         }
     }
 
+    /// Send the task back to its builder to fix its failed CI checks.
+    public struct ClientMessageTaskFixChecks: Codable, Hashable, Sendable {
+        public var id: String
+
+        public init(id: String) {
+            self.id = id
+        }
+    }
+
     /// Read the pull request and its CI from GitHub again, for a webhook that didn't arrive.
     public struct ClientMessageTaskRecheckGitHub: Codable, Hashable, Sendable {
         public var id: String
@@ -9059,6 +9072,7 @@ public enum Wire {
         case taskQueue(ClientMessageTaskQueue)
         case taskRankDraft(ClientMessageTaskRankDraft)
         case taskRerunChecks(ClientMessageTaskRerunChecks)
+        case taskFixChecks(ClientMessageTaskFixChecks)
         case taskRecheckGitHub(ClientMessageTaskRecheckGitHub)
         case taskRerunCheck(ClientMessageTaskRerunCheck)
         case taskCheckLog(ClientMessageTaskCheckLog)
@@ -9176,6 +9190,7 @@ public enum Wire {
             case "task.queue": self = .taskQueue(try ClientMessageTaskQueue(from: decoder))
             case "task.rankDraft": self = .taskRankDraft(try ClientMessageTaskRankDraft(from: decoder))
             case "task.rerunChecks": self = .taskRerunChecks(try ClientMessageTaskRerunChecks(from: decoder))
+            case "task.fixChecks": self = .taskFixChecks(try ClientMessageTaskFixChecks(from: decoder))
             case "task.recheckGitHub": self = .taskRecheckGitHub(try ClientMessageTaskRecheckGitHub(from: decoder))
             case "task.rerunCheck": self = .taskRerunCheck(try ClientMessageTaskRerunCheck(from: decoder))
             case "task.checkLog": self = .taskCheckLog(try ClientMessageTaskCheckLog(from: decoder))
@@ -9484,6 +9499,9 @@ public enum Wire {
                 try body.encode(to: encoder)
             case .taskRerunChecks(let body):
                 try c.encode("task.rerunChecks", forKey: .type)
+                try body.encode(to: encoder)
+            case .taskFixChecks(let body):
+                try c.encode("task.fixChecks", forKey: .type)
                 try body.encode(to: encoder)
             case .taskRecheckGitHub(let body):
                 try c.encode("task.recheckGitHub", forKey: .type)

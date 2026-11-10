@@ -2412,6 +2412,25 @@ final class AppState {
         }
     }
 
+    /// Sends the task back to its builder to fix its failed CI checks (`task.fixChecks`): the server
+    /// writes the change request from each check's failed step and log.
+    func fixFailedChecks(_ id: String) {
+        if let client, isLive {
+            client.send(.taskFixChecks(.init(id: id)))
+            showToast("Sent \(id) back to its builder to fix CI", icon: "wrench.and.screwdriver")
+            return
+        }
+        let failed = task(id).pr?.checks.filter { $0.status == .failed }.map(\.name) ?? []
+        guard !failed.isEmpty else { return }
+        withAnimation(.snappy(duration: 0.25)) {
+            steering[id, default: []].append(ChangeRequest(author: FactoryData.me, text: "CI failed on the pull request: \(failed.joined(separator: ", ")). Reproduce each failure locally, fix it, keep the tests passing and push.", anchor: "CI", timing: task(id).steerTiming))
+            update(id) { task in
+                task.activity.insert(ActivityItem(who: FactoryData.me.name, text: "Sent it back to fix \(failed.joined(separator: ", "))", when: "now"), at: 0)
+            }
+        }
+        showToast("Sent \(id) back to its builder to fix CI", icon: "wrench.and.screwdriver", color: Theme.State.building)
+    }
+
     func rerunFailedChecks(_ id: String) {
         if let client, isLive {
             client.send(.taskRerunChecks(.init(id: id)))
