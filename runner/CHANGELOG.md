@@ -5,6 +5,10 @@ Newest first. A release adds its `## <version> — <date>` section here before r
 publishes it, with the sections of earlier releases, to the feed's `maple-runner/changes.json`: the Mac app's
 "What's new" for runners.
 
+## 0.114.0 — 2026-11-10
+
+The runner understands task history that records what each question, hand and permission prompt offered and which option was picked; nothing changes in how tasks run.
+
 ## 0.113.0 — 2026-11-10
 
 The runner understands the factory's shared memory store; nothing changes in how tasks run.
