@@ -185,7 +185,7 @@ jobs:
 
       - name: Upload the dir feed
         if: inputs.dry_run == true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: maple-server-${{ steps.bump.outputs.version }}-feed
           path: ${{ runner.temp }}/feed
