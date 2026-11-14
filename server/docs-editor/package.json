@@ -16,7 +16,7 @@
     "@tiptap/extension-list": "^3",
     "@tiptap/extension-mention": "^3",
     "@tiptap/extension-table": "^3.33.0",
-    "@tiptap/extensions": "^3",
+    "@tiptap/extensions": "^3.33.1",
     "@tiptap/pm": "^3",
     "@tiptap/starter-kit": "^3",
     "@tiptap/suggestion": "^3",
