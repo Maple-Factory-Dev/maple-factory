@@ -11,7 +11,7 @@
     "@tiptap/core": "^3",
     "@tiptap/extension-bubble-menu": "^3",
     "@tiptap/extension-code-block-lowlight": "^3.33.0",
-    "@tiptap/extension-collaboration": "^3",
+    "@tiptap/extension-collaboration": "^3.33.1",
     "@tiptap/extension-collaboration-caret": "^3",
     "@tiptap/extension-list": "^3",
     "@tiptap/extension-mention": "^3",
