@@ -8,6 +8,7 @@
     "test": "node --test ../test/docs-markdown.test.ts"
   },
   "dependencies": {
+    "@cloudflare/workers-types": "^5.20261110.1",
     "@tiptap/core": "^3",
     "@tiptap/extension-bubble-menu": "^3",
     "@tiptap/extension-code-block-lowlight": "^3.33.0",
