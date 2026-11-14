@@ -12,7 +12,7 @@
     "test": "node --no-warnings=ExperimentalWarning --experimental-transform-types --test test/*.test.ts"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20261108.1",
+    "@cloudflare/workers-types": "^5.20261110.1",
     "typescript": "^7.0.2",
     "wrangler": "^4.158.0"
   },
