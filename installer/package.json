@@ -10,6 +10,6 @@
   "scripts": { "test": "node --test" },
   "engines": { "node": ">=20" },
   "dependencies": {
-    "wrangler": "^4.158.0"
+    "wrangler": "^4.162.0"
   }
 }
